@@ -1,0 +1,17 @@
+numpy
+scipy
+sklearn
+matplotlib
+seaborn
+torch
+future  # for TensorBoard
+pillow  # for TensorBoard
+tensorflow
+tb-nightly
+nltk
+jupyter
+mypy
+flake8
+pytest
+tqdm
+pytorch-categorical
