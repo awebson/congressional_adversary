@@ -17,7 +17,7 @@ from tqdm import tqdm
 class ExperimentConfig():
 
     # Essential
-    corpus_dir: str
+    input_dir: str
     output_dir: str
     device: torch.device
 
@@ -85,12 +85,11 @@ class Experiment(ABC):
         self.optimizer = optimizer
         self.lr_scheduler = lr_scheduler
 
-    def __enter__(self):
+    def __enter__(self) -> 'Experiment':
         print(f'device = {self.config.device}')
         print(f'model = {self.model}')
-        self.config.num_train_examples = len(self.data)
+        self.config.num_train_examples = len(self.data)  # ?
         config = asdict(self.config)
-        pprint.pprint(config)
         self.tensorboard.add_text('config', pprint.pformat(config), global_step=0)
         # for key, val in vars(config).items():
         #     self.tensorboard.add_text(str(key), str(val), global_step=0)
@@ -99,7 +98,7 @@ class Experiment(ABC):
             pprint.pprint(config, file)
         return self
 
-    def __exit__(self, exception_type, exception_value, traceback):
+    def __exit__(self, exception_type, exception_value, traceback) -> None:
         if (exception_type is not None
                 and self.config.auto_save_before_quit):
             print(f'Experiment interrupted.')
