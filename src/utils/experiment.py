@@ -5,7 +5,7 @@ import pprint
 from abc import ABC, abstractmethod
 from datetime import datetime
 from dataclasses import dataclass, asdict
-from typing import Optional
+from typing import Tuple, Dict, Optional, Any
 
 import torch
 from torch.utils import tensorboard
@@ -21,24 +21,23 @@ class ExperimentConfig():
     output_dir: str
     device: torch.device
 
-    # Hyperparameters
-    batch_size: int
-    num_epochs: int
+    # # Hyperparameters
+    # batch_size: int
+    # num_epochs: int
 
     optimizer: functools.partial
     lr_scheduler: functools.partial
 
-    reload_state_dict_path: Optional[str]
-    reload_experiment_path: Optional[str]
+    reload_path: Optional[str]
     clear_tensorboard_log_in_output_dir: bool
     delete_all_exisiting_files_in_output_dir: bool
-    auto_save_every_epoch: bool
+    # auto_save_every_epoch: bool
 
     # Housekeeping
     auto_save_before_quit: bool
-    save_to_tensorboard_embedding_projector: bool
-    update_tensorboard_per_batch: int
-    print_stats_per_batch: int
+    # tensorboard_embedding_projector: bool
+    # update_tensorboard: int  # per batch
+    # print_stats: int  # per batch
 
 
 class Experiment(ABC):
@@ -78,19 +77,24 @@ class Experiment(ABC):
         timestamp = datetime.now().strftime("%m-%d_%H-%M-%S")
         log_dir = os.path.join(config.output_dir, f'tensorboard_{timestamp}')
         self.tensorboard = tensorboard.SummaryWriter(log_dir=log_dir)
+
+        # Boilerplate
         self.config = config
         self.data = data
         self.dataloader = dataloader
         self.model = model
         self.optimizer = optimizer
         self.lr_scheduler = lr_scheduler
+        self.custom_stats_format = None
+        self.tb_global_step = 0
 
     def __enter__(self) -> 'Experiment':
         print(f'device = {self.config.device}')
         print(f'model = {self.model}')
-        self.config.num_train_examples = len(self.data)  # ?
+        # self.config.num_train_examples = len(self.data)  # ?
         config = asdict(self.config)
-        self.tensorboard.add_text('config', pprint.pformat(config), global_step=0)
+        self.tensorboard.add_text(
+            'config', pprint.pformat(config, indent=4), global_step=0)
         # for key, val in vars(config).items():
         #     self.tensorboard.add_text(str(key), str(val), global_step=0)
         path = os.path.join(self.config.output_dir, 'config.txt')
@@ -98,75 +102,103 @@ class Experiment(ABC):
             pprint.pprint(config, file)
         return self
 
-    def __exit__(self, exception_type, exception_value, traceback) -> None:
+    def __exit__(self, exception_type, exception_value, traceback) -> None:  # type: ignore
         if (exception_type is not None
                 and self.config.auto_save_before_quit):
             print(f'Experiment interrupted.')
-            save_path = os.path.join(
-                self.config.output_dir, f'interrupted.pt')
-            torch.save(self.model.state_dict(), save_path)
-            print(f'💾 model.state_dict saved to {save_path}\n')
+            self.save_everything(os.path.join(
+                self.config.output_dir, f'interrupted.pt'))
+            # torch.save(self.model.state_dict(), save_path)
+            # print(f'💾 model.state_dict saved to {save_path}\n')
         self.tensorboard.close()
 
-    def save_state_dict(
-            self,
-            epoch_index: int,
-            tb_global_step: int,
-            ) -> None:
-        """PyTorch's recommended method of saving a model"""
-        save_path = os.path.join(
-            self.config.output_dir, f'epoch{epoch_index}.pt')
-        torch.save(self.model.state_dict(), save_path)
-        timestamp = datetime.now().strftime("%b %d %H:%M")
-        tqdm.write(f'{timestamp}, Epoch {epoch_index}, '
-                   f'TensorBoard Global Step {tb_global_step:,}')
-        tqdm.write(f'💾 model.state_dict saved to {save_path}\n')
+    def save_state_dict(self, save_path: str) -> None:
+        """
+        PyTorch's recommended method of saving a model,
+        but this requires re-instantiate the model object first, along with
+        all of its required arguments, which I find to be finicky;
+        therefore, save_everything is used by default.
+        """
+        payload = {
+            'config': self.config,
+            'model': self.model.state_dict(),
+            'optimizer': self.optimizer.state_dict(),
+            'lr_scheduler': self.lr_scheduler.state_dict()
+        }
+        torch.save(payload, save_path)
+        tqdm.write(f'💾 state_dict saved to {save_path}\n')
 
-    def save_experiment(
+    def reload_state_dict():
+        raise NotImplementedError
+
+    def save_everything(
             self,
-            epoch_index: int,
-            tb_global_step: int,
+            save_path: str,
+            include_data: bool = False
             ) -> None:
         """
-        Save the entire Experiment class, similar to PyTorch's non-recommended
-        method of saving an entire model (as opposed to only the state_dict).
+        Directly serialize config, model, optimizer, and lr_scheduler,
+        similar to PyTorch's non-recommended method of saving
+        an entire model (as opposed to only the state_dict).
 
-        This also includes the optimizer and learning rate scheduler.
+        Unfortunately, the Experiment class itself is not picklable,
+        even with the dill module.
         """
-        save_path = os.path.join(
-            self.config.output_dir, f'epoch{epoch_index}.pt')
-        with open(save_path, 'wb') as save_file:
-            pickle.dump(self, save_file)
-        timestamp = datetime.now().strftime("%b %d %H:%M")
-        tqdm.write(f'{timestamp}, Epoch {epoch_index}, '
-                   f'TensorBoard Global Step {tb_global_step:,}')
+        if include_data:
+            payload = {
+                'config': self.config,
+                'model': self.model,
+                'optimizer': self.optimizer,
+                'lr_scheduler': self.lr_scheduler,
+                'data': self.data,
+                'dataloader': self.dataloader
+            }
+        else:
+            payload = {
+                'config': self.config,
+                'model': self.model,
+                'optimizer': self.optimizer,
+                'lr_scheduler': self.lr_scheduler
+            }
+        torch.save(payload, save_path, pickle_protocol=-1)
         tqdm.write(f'💾 Experiment saved to {save_path}\n')
 
     @staticmethod
-    def print_stats(loss: float, epoch_index: int, batch_index: int) -> None:
-        tqdm.write(f'Epoch {epoch_index}, Batch {batch_index:,}:\t'
-                   f'Loss = {loss:.5f}\t')
+    def reload_everything(
+            reload_path: str,
+            device: torch.device
+            ) -> Tuple[Any, ...]:
+        print(f'Reloading model and config from {reload_path}')
+        return torch.load(reload_path, map_location=device)
+
+    def print_stats(
+            self,
+            epoch_index: int,
+            batch_index: int,
+            stats: Dict
+            ) -> None:
+        tqdm.write(
+            f'Epoch {epoch_index} Batch {batch_index:,}:',
+            end='\t')
+        if self.custom_stats_format:
+            tqdm.write(self.custom_stats_format.format_map(stats))
+        else:
+            for key, val in stats.items():
+                tqdm.write(f'{key} = {val:.3f}', end='\t')
+            tqdm.write('')
+
+    def update_tensorboard(self, stats: Dict) -> None:
+        for key, val in stats.items():
+            self.tensorboard.add_scalar(key, val, self.tb_global_step)
+        self.tb_global_step += 1
+
+    # TODO format duration
+    def print_timestamp(self) -> None:
+        timestamp = datetime.now().strftime("%b %d %H:%M")
+        tqdm.write(
+            f'{timestamp}, '
+            f'TensorBoard Global Step {self.tb_global_step:,}\n')
 
     @abstractmethod
-    def train(self):
+    def train(self) -> Any:
         pass
-
-    # @property
-    # @abstractmethod
-    # def dataloader(self):
-    #     pass
-
-    # @property
-    # @abstractmethod
-    # def model(self) -> torch.nn.Module:
-    #     pass
-
-    # @property
-    # @abstractmethod
-    # def optimizer(self):
-    #     pass
-
-    # @property
-    # @abstractmethod
-    # def lr_scheduler(self):
-    #     pass

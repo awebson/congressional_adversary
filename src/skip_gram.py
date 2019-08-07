@@ -73,6 +73,11 @@ class SkipGramNegativeSampling(nn.Module):
             print(message)
             raise error
         cumulative_freq = sum(freq ** 0.75 for freq in word_frequency.values())
+        # detect missing vocab
+        for word, freq in word_frequency.items():
+            if word not in word_to_id:
+                print(freq, word)
+
         categorical_dist_probs: Dict[int, float] = {
             word_to_id[word]: (freq ** 0.75) / cumulative_freq
             for word, freq in word_frequency.items()
@@ -324,7 +329,7 @@ class SkipGramExperiment(Experiment):
 
 
 @dataclass
-class SkipGramConfig(ExperimentConfig):
+class SkipGramConfig():
 
     # Essential
     input_dir: str = '../data/processed/skip_gram/44_Obama_1e-5'
@@ -358,8 +363,7 @@ class SkipGramConfig(ExperimentConfig):
     #     gamma=0.25)
 
     # Housekeeping
-    reload_state_dict_path: Optional[str] = None
-    reload_experiment_path: Optional[str] = None
+    reload_path: Optional[str] = None
     clear_tensorboard_log_in_output_dir: bool = True
     delete_all_exisiting_files_in_output_dir: bool = False
     auto_save_every_epoch: bool = False

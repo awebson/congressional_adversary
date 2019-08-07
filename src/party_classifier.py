@@ -249,7 +249,7 @@ class NaiveWordClassifierExperiment(Experiment):
 
 
 @dataclass
-class NaiveWordClassifierConfig(ExperimentConfig):
+class NaiveWordClassifierConfig():
 
     # Essential
     input_dir: str = '../data/processed/word_classifier/UCSB_1e-5'
@@ -287,8 +287,7 @@ class NaiveWordClassifierConfig(ExperimentConfig):
     num_test_holdout: int = 10_000
     num_dataloader_threads: int = 0
 
-    reload_state_dict_path: Optional[str] = None
-    reload_experiment_path: Optional[str] = None
+    reload_path: Optional[str] = None
     clear_tensorboard_log_in_output_dir: bool = True
     delete_all_exisiting_files_in_output_dir: bool = False
     auto_save_every_epoch: bool = False
