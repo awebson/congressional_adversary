@@ -195,10 +195,10 @@ def balance_classes(
     minority = min(len(GOP_speeches), len(Dem_speeches))
     if len(GOP_speeches) > len(Dem_speeches):
         GOP_speeches = random.sample(GOP_speeches, k=minority)
-        print(f'Balancing training data by sampling GOP to {minority:,}.')
+        print(f'Balancing training data by sampling GOP to {minority:,} documents')
     else:
         Dem_speeches = random.sample(Dem_speeches, k=minority)
-        print(f'Balancing training data by sampling Dem to {minority:,}.')
+        print(f'Balancing training data by sampling Dem to {minority:,} documents')
     return Dem_speeches + GOP_speeches
 
 
@@ -556,21 +556,25 @@ def export_word_level_party_adversarial(
 
     Dem_word_count = 0
     GOP_word_count = 0
-    subsampled_frequency: CounterType[str] = Counter()
+    Dem_frequency: CounterType[str] = Counter()
+    GOP_frequency: CounterType[str] = Counter()
+    final_frequency: CounterType[str] = Counter()
     for speech in export_speeches:
-        subsampled_frequency.update(
-            [id_to_word[word_id] for word_id in speech.word_ids])
+        words = [id_to_word[word_id] for word_id in speech.word_ids]
+        final_frequency.update(words)
         if speech.party == 0:
+            Dem_frequency.update(words)
             Dem_word_count += len(speech.word_ids)
         else:
+            GOP_frequency.update(words)
             GOP_word_count += len(speech.word_ids)
     print(f'Post-balanced Dem word count = {Dem_word_count:,}')
     print(f'Post-balanced GOP word count = {GOP_word_count:,}')
     # print(f'Pre-sampled vocab size = {len(word_to_id):,}')
-    # print(f'Post-sampled vocab size = {len(subsampled_frequency):,}')
+    # print(f'Post-sampled vocab size = {len(final_frequency):,}')
 
     # word_to_id, id_to_word = build_vocabulary(
-    #     subsampled_frequency, min_frequency=0)
+    #     final_frequency, min_frequency=0)
 
     # validation_holdout = 50_000
     # train_data = export_speeches[validation_holdout:]
@@ -590,14 +594,14 @@ def export_word_level_party_adversarial(
             preview.write(' '.join(words) + '\n')
 
     sort_freq_and_write(
-        raw_frequency, subsampled_frequency, min_word_freq,
+        raw_frequency, final_frequency, min_word_freq,
         os.path.join(output_dir, 'vocabulary_frequency.txt'))
 
     train_data_path = os.path.join(output_dir, f'train_data.pickle')
     with open(train_data_path, 'wb') as export_file:
-        pickle.dump(
-            (word_to_id, id_to_word, subsampled_frequency, export_speeches),
-            export_file, protocol=-1)
+        payload = (word_to_id, id_to_word, final_frequency,
+                   Dem_frequency, GOP_frequency, export_speeches)
+        pickle.dump(payload, export_file, protocol=-1)
     print('All set.')
 
 
@@ -684,11 +688,11 @@ def skip_gram_from_plain_text(
 
 def main() -> None:
     # Just the corpus in plain text, no word_id. For external libraries
-    # sessions = range(102, 112)
-    # output_dir = '../corpora/skip_gram/plain_decade'
-    # underscored_dir = 'underscored_corpora'
-    # os.makedirs(output_dir, exist_ok=True)
-    # export_plain_text(sessions, output_dir, underscored_dir)
+    sessions = range(111, 112)
+    output_dir = '../../data/processed/plain_text/44_Obama_normalized'
+    underscored_dir = '../../data/interim/underscored_corpora_normalized'
+    os.makedirs(output_dir, exist_ok=True)
+    export_plain_text(sessions, output_dir, underscored_dir)
 
     # # tokenized corpus for skip-gram
     # sessions = range(111, 112)  # Obama 2008 - 2010
@@ -750,7 +754,7 @@ def main() -> None:
     #     subsampling_implementation, subsampling_threshold,
     #     min_word_freq, min_sentence_len)
 
-    # Adversarial
+    # # Adversarial
     sessions = range(111, 112)  # Obama 2008 - 2010
     # sessions = range(102, 112)  # 2000s
     # sessions = range(79, 112)   # post-WWII

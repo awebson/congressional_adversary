@@ -277,6 +277,7 @@ class RNNClassifierDataset(Dataset):
             preprocessed = pickle.load(file)
         # self.word_frequency: Dict[str, int] = preprocessed[2]
         sentences: List[Sentence] = preprocessed[3]
+        test_sentences: List[Sentence] = preprocessed[4]
         if config.pretrained_embedding is not None:
             self.pretrained_embedding, self.word_to_id, self.id_to_word = (
                 self.load_embeddings_from_plain_text(config.pretrained_embedding))
@@ -287,34 +288,37 @@ class RNNClassifierDataset(Dataset):
         self.max_seq_length = config.max_sequence_length
 
         # Prepare validation and test data
-        test_holdout = config.num_test_holdout
-        valid_holdout = config.num_valid_holdout
-        random.shuffle(sentences)
-        num_train_samples = len(sentences) - test_holdout - valid_holdout
-        self.train_data = sentences[:num_train_samples]
+        # test_holdout = config.num_test_holdout
+        # valid_holdout = config.num_valid_holdout
+        # random.shuffle(sentences)
+        # num_train_samples = len(sentences) - test_holdout - valid_holdout
+        self.train_data = sentences
         # self.train_data = sentences[:1024]  # for debugging
 
         valid_batch = []
-        for speech in sentences[num_train_samples:num_train_samples + valid_holdout]:
+        for speech in test_sentences:
             if len(speech.word_ids) > self.max_seq_length:
                 valid_batch.append((
                     speech.word_ids[:self.max_seq_length],
                     self.max_seq_length,
                     speech.party))
             else:
-                valid_batch.append((speech.word_ids, len(speech.word_ids), speech.party))
+                valid_batch.append(
+                    (speech.word_ids, len(speech.word_ids), speech.party))
         self.validation_batch = self.pad_sequences(valid_batch)
-
-        test_batch = []
-        for speech in sentences[num_train_samples + valid_holdout:]:
-            if len(speech.word_ids) > self.max_seq_length:
-                test_batch.append((
-                    speech.word_ids[:self.max_seq_length],
-                    self.max_seq_length,
-                    speech.party))
-            else:
-                test_batch.append((speech.word_ids, len(speech.word_ids), speech.party))
-        self.test_batch = self.pad_sequences(test_batch)
+        print('\n\n', self.validation_batch[0].shape)
+        print(len(sentences))
+        print(len(test_sentences))
+        # test_batch = []
+        # for speech in sentences[num_train_samples + valid_holdout:]:
+        #     if len(speech.word_ids) > self.max_seq_length:
+        #         test_batch.append((
+        #             speech.word_ids[:self.max_seq_length],
+        #             self.max_seq_length,
+        #             speech.party))
+        #     else:
+        #         test_batch.append((speech.word_ids, len(speech.word_ids), speech.party))
+        # self.test_batch = self.pad_sequences(test_batch)
 
     def __len__(self):
         return len(self.train_data)
@@ -418,9 +422,9 @@ class RNNClassifierExperiment(Experiment):
             if config.auto_save_every_epoch or epoch_index == config.num_epochs:
                 self.save_state_dict(epoch_index, tb_global_step)
         # end epoch
-        test_accuracy = self.model.accuracy(self.data.test_batch)
-        self.tensorboard.add_scalar('test accuracy', test_accuracy, global_step=0)
-        print(f'Test Accuracy = {test_accuracy:.2%}')
+        # test_accuracy = self.model.accuracy(self.data.test_batch)
+        # self.tensorboard.add_scalar('test accuracy', test_accuracy, global_step=0)
+        # print(f'Test Accuracy = {test_accuracy:.2%}')
         print('\n✅ Training Complete')
 
 
@@ -428,11 +432,11 @@ class RNNClassifierExperiment(Experiment):
 class RNNClassifierConfig(ExperimentConfig):
 
     # Essential
-    # corpus_dir: str = '../data/processed/party_classifier/UCSB_1e-5'
-    # output_dir: str = '../results/party_classifier/presidency/uniform_1e-5'
-    corpus_dir: str = '../data/processed/party_classifier/44_Obama_len30sent_1e-3'
-    output_dir: str = '../results/party_classifier/RNN/Obama_uniform_.9drop_1e-3'
-    device: torch.device = torch.device('cuda:1')
+    corpus_dir: str = '../data/processed/party_classifier/UCSB_split_1e-3'
+    output_dir: str = '../results/party_classifier/presidency/uniform_split_1e-3_.9dropout'
+    # corpus_dir: str = '../data/processed/party_classifier/44_Obama_len30sent_1e-3'
+    # output_dir: str = '../results/party_classifier/RNN/Obama_uniform_.9drop_1e-3'
+    device: torch.device = torch.device('cuda:0')
 
     # Hyperparmeters
     model: nn.Module = LSTMClassifier

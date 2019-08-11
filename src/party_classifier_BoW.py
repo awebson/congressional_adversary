@@ -155,6 +155,7 @@ class BoWClassifierDataset(Dataset):
             preprocessed = pickle.load(file)
         # self.word_frequency: Dict[str, int] = preprocessed[2]
         sentences: List[Sentence] = preprocessed[3]
+        test_sentences: List[Sentence] = preprocessed[4]
         if config.pretrained_embedding is not None:
             self.pretrained_embedding, self.word_to_id, self.id_to_word = (
                 self.load_embeddings_from_plain_text(config.pretrained_embedding))
@@ -164,18 +165,17 @@ class BoWClassifierDataset(Dataset):
             self.id_to_word: Dict[int, str] = preprocessed[1]
 
         # Prepare validation and test data
-        test_holdout = config.num_test_holdout
-        valid_holdout = config.num_valid_holdout
-        random.shuffle(sentences)
-        num_train = len(sentences) - test_holdout - valid_holdout
-        self.train_data = sentences[:num_train]
+        # test_holdout = config.num_test_holdout
+        # valid_holdout = config.num_valid_holdout
+        # random.shuffle(sentences)
+        # num_train = len(sentences) - test_holdout - valid_holdout
+        self.train_data = sentences
 
-        valid_data = sentences[num_train:num_train + valid_holdout]
-        test_data = sentences[num_train + test_holdout:]
+        # test_data = sentences[num_train + test_holdout:]
         self.valid_batch = self.collate_bag_of_words(
-            valid_data, include_original_seq=True)
-        self.test_batch = self.collate_bag_of_words(
-            test_data, include_original_seq=True)
+            test_sentences, include_original_seq=True)
+        # self.test_batch = self.collate_bag_of_words(
+        #     test_data, include_original_seq=True)
 
     def __len__(self):
         return len(self.train_data)
@@ -287,9 +287,9 @@ class BoWClassifierExperiment(Experiment):
             if config.auto_save_every_epoch or epoch_index == config.num_epochs:
                 self.save_state_dict(epoch_index, tb_global_step)
         # end epoch
-        test_accuracy = self.model.accuracy(self.data.test_batch)
-        self.tensorboard.add_scalar('test accuracy', test_accuracy, global_step=0)
-        print(f'Test Accuracy = {test_accuracy:.2%}')
+        # test_accuracy = self.model.accuracy(self.data.test_batch)
+        # self.tensorboard.add_scalar('test accuracy', test_accuracy, global_step=0)
+        # print(f'Test Accuracy = {test_accuracy:.2%}')
         print('\n✅ Training Complete')
 
 
@@ -298,8 +298,8 @@ class BoWClassifierConfig(ExperimentConfig):
 
     # Essential
     # corpus_dir='../data/processed/party_classification/44_Obama_doc_1e-5',
-    corpus_dir: str = '../data/processed/party_classifier/UCSB_nosub'
-    output_dir: str = '../results/party_classifier/presidency/BoW/uniform_nosub_.9dropout'
+    corpus_dir: str = '../data/processed/party_classifier/UCSB_split_1e-5'
+    output_dir: str = '../results/party_classifier/presidency/BoW/uniform_split_1e-5_.9dropout'
     device: torch.device = torch.device('cuda:0')
 
     # Hyperparmeters
@@ -308,8 +308,8 @@ class BoWClassifierConfig(ExperimentConfig):
     batch_size: int = 1024
     num_epochs: int = 50
     max_sequence_length: int = 30
-    pretrained_embedding: Optional[str] = None
-    # pretrained_embedding: Optional[str] = '../results/baseline/word2vec_president.txt'
+    # pretrained_embedding: Optional[str] = None
+    pretrained_embedding: Optional[str] = '../results/baseline/word2vec_president.txt'
     freeze_embedding: bool = False
     dropout_p: float = 0.9
 
@@ -339,7 +339,7 @@ class BoWClassifierConfig(ExperimentConfig):
     clear_tensorboard_log_in_output_dir: bool = True
     delete_all_exisiting_files_in_output_dir: bool = False
     auto_save_every_epoch: bool = False
-    export_error_analysis: bool = True
+    export_error_analysis: bool = False
 
     auto_save_before_quit: bool = True
     save_to_tensorboard_embedding_projector: bool = False

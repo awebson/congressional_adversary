@@ -73,10 +73,10 @@ class SkipGramNegativeSampling(nn.Module):
             print(message)
             raise error
         cumulative_freq = sum(freq ** 0.75 for freq in word_frequency.values())
-        # detect missing vocab
-        for word, freq in word_frequency.items():
-            if word not in word_to_id:
-                print(freq, word)
+        # debug missing vocab
+        # for word, freq in word_frequency.items():
+        #     if word not in word_to_id:
+        #         print(freq, word)
 
         categorical_dist_probs: Dict[int, float] = {
             word_to_id[word]: (freq ** 0.75) / cumulative_freq
@@ -91,57 +91,59 @@ class SkipGramNegativeSampling(nn.Module):
         self.negative_sampling_dist = pytorch_categorical.Categorical(
             categorical_dist_probs, self.device)
 
-    # def forward(
-    #         self,
-    #         center_ids: Vector,
-    #         context_ids: Vector
-    #         ) -> Scalar:
-    #     center_vectors = self.center_embedding(center_ids)
-    #     context_vectors = self.context_embedding(context_ids)
-
-    #     batch_size = len(center_ids)
-    #     neg_center_ids = center_ids.unsqueeze(1).expand(
-    #         batch_size, self.num_negative_samples)
-    #     neg_context_ids = self.negative_sampling_dist.sample(
-    #         (batch_size, self.num_negative_samples))
-    #     neg_center_vectors = self.center_embedding(neg_center_ids)
-    #     neg_context_vectors = self.context_embedding(neg_context_ids)
-
-    #     # batch_size * embed_size
-    #     pos_objective = torch.einsum(
-    #         'bd,bd->b', center_vectors, context_vectors)
-    #     pos_objective = nn.functional.logsigmoid(pos_objective)
-
-    #     # batch_size * num_negative_examples * embed_size
-    #     neg_objective = torch.einsum(
-    #         'bnd,bnd->b', neg_center_vectors, neg_context_vectors)
-    #     neg_objective = nn.functional.logsigmoid(0 - neg_objective)
-    #     return 0 - torch.mean(pos_objective + neg_objective)
-
     def forward(
             self,
             center_ids: Vector,
             context_ids: Vector
             ) -> Scalar:
-        """
-        Reference implementation
-        """
         center_vectors = self.center_embedding(center_ids)
         context_vectors = self.context_embedding(context_ids)
 
-        score = torch.sum(torch.mul(center_vectors, context_vectors), dim=1)
-        score = torch.clamp(score, max=10, min=-10)
-        score = -nn.functional.logsigmoid(score)
-
         batch_size = len(center_ids)
+        neg_center_ids = center_ids.unsqueeze(1).expand(
+            batch_size, self.num_negative_samples)
         neg_context_ids = self.negative_sampling_dist.sample(
             (batch_size, self.num_negative_samples))
+        neg_center_vectors = self.center_embedding(neg_center_ids)
         neg_context_vectors = self.context_embedding(neg_context_ids)
 
-        neg_score = torch.bmm(neg_context_vectors, center_vectors.unsqueeze(2)).squeeze()
-        neg_score = torch.clamp(neg_score, max=10, min=-10)
-        neg_score = -torch.sum(nn.functional.logsigmoid(-neg_score), dim=1)
-        return torch.mean(score + neg_score)
+        # batch_size * embed_size
+        pos_objective = torch.einsum(
+            'bd,bd->b', center_vectors, context_vectors)
+        pos_objective = nn.functional.logsigmoid(pos_objective)
+
+        # batch_size * num_negative_examples * embed_size
+        neg_objective = torch.einsum(
+            'bnd,bnd->b', neg_center_vectors, neg_context_vectors)
+        neg_objective = nn.functional.logsigmoid(0 - neg_objective)
+        return 0 - torch.mean(pos_objective + neg_objective)
+
+    # def forward(
+    #         self,
+    #         center_ids: Vector,
+    #         context_ids: Vector
+    #         ) -> Scalar:
+    #     """
+    #     Reference implementation
+    #     https://github.com/Andras7/word2vec-pytorch
+    #     """
+    #     center_vectors = self.center_embedding(center_ids)
+    #     context_vectors = self.context_embedding(context_ids)
+
+    #     score = torch.sum(torch.mul(center_vectors, context_vectors), dim=1)
+    #     score = torch.clamp(score, max=10, min=-10)
+    #     score = -nn.functional.logsigmoid(score)
+
+    #     batch_size = len(center_ids)
+    #     neg_context_ids = self.negative_sampling_dist.sample(
+    #         (batch_size, self.num_negative_samples))
+    #     neg_context_vectors = self.context_embedding(neg_context_ids)
+
+    #     neg_score = torch.bmm(
+    #         neg_context_vectors, center_vectors.unsqueeze(2)).squeeze()
+    #     neg_score = torch.clamp(neg_score, max=10, min=-10)
+    #     neg_score = -torch.sum(nn.functional.logsigmoid(-neg_score), dim=1)
+    #     return torch.mean(score + neg_score)
 
 
 class LegacySkipGramDataset(torch.utils.data.Dataset):
