@@ -26,9 +26,10 @@ class NaiveWordClassifier(nn.Module):
         super().__init__()
         self.word_to_id = data.word_to_id
         self.id_to_word = data.id_to_word
+        self.cherry_pick = config.cherry_pick
         self.device = config.device
 
-        if getattr(data, 'pretrained_embedding') is not None:
+        if data.pretrained_embedding is not None:
             config.embed_size = data.pretrained_embedding.shape[1]
             self.embedding = nn.Embedding.from_pretrained(
                 data.pretrained_embedding)
@@ -36,27 +37,37 @@ class NaiveWordClassifier(nn.Module):
             self.embedding = nn.Embedding(
                 len(self.word_to_id), config.embed_size)
             init_range = 1.0 / config.embed_size
-            nn.init.uniform_(
-                self.embedding.weight.data, -init_range, init_range)
+            nn.init.uniform_(self.embedding.weight.data,
+                             -init_range, init_range)
             # nn.init.normal_(self.embedding_bag.weight.data, 0, init_range)
         self.embedding.weight.requires_grad = not config.freeze_embedding
 
-        self.dropout = nn.Dropout(p=config.dropout_p)
-        self.linear = nn.Linear(config.embed_size, config.num_prediction_classes)
+        # Minimal working example when not freezing embeddings
+        # self.classifier = nn.Linear(
+        #     config.embed_size, config.num_prediction_classes)
 
-        # self.MLP_classifier = nn.Sequential(
-        #     nn.Linear(config.embed_size, config.embed_size),
-        #     nn.ReLU(),
-        #     nn.Dropout(p=config.dropout_p),
-        #     nn.Linear(config.embed_size, config.num_prediction_classes))
+        # One extra layer for frozen embeddings
+        self.classifier = nn.Sequential(
+            nn.Linear(config.embed_size, config.hidden_size),
+            # nn.ReLU(),
+            # nn.Dropout(p=config.dropout_p),
+            nn.Linear(config.hidden_size, config.num_prediction_classes)
+        )
 
         self.to(self.device)
 
     def forward(self, word_ids: Vector) -> Vector:
         features = self.embedding(word_ids)
-        logits = self.linear(self.dropout(features))
-        # logits = self.MLP_classifier(features)
+        logits = self.classifier(features)
         return logits
+
+    def predict(self, word_ids: Vector) -> Vector:
+        self.eval()
+        with torch.no_grad():
+            logits = self.forward(word_ids)
+            confidence = nn.functional.softmax(logits, dim=1)
+        self.train()
+        return confidence
 
     def accuracy(
             self,
@@ -65,37 +76,45 @@ class NaiveWordClassifier(nn.Module):
             ) -> float:
         word_ids = batch[1].to(self.device)
         labels = batch[0].to(self.device)
-        self.eval()
-        with torch.no_grad():
-            logits = self.forward(word_ids)
-            predictions = logits.argmax(dim=1)
-            accuracy = predictions.eq(labels).float().mean().item()
-
-            if export_error_analysis:
-                tqdm.write(
-                    f'Exporting error analysis to {export_error_analysis}')
-                confidence = nn.functional.softmax(logits, dim=1)
-                losses = nn.functional.cross_entropy(logits, labels, reduction='none')
-                losses = nn.functional.normalize(losses, dim=0)
-
-                output_iter = []
-                for conf, loss, label, word_id in zip(
-                        confidence, losses, labels, word_ids):
-                    word = self.id_to_word[word_id.item()]
-                    correctness = (label == torch.argmax(conf)).item()
-                    output_iter.append((conf.tolist(), label, loss, correctness, word))
-                output_iter.sort(key=lambda tup: tup[0][0])
-                self.accuracy_at_confidence_plot(output_iter)
-                with open(export_error_analysis, 'w') as file:
-                    file.write(f'accuracy = {accuracy:.4f}\n\n')
-                    file.write('(Dem confidence, GOP confidence)\n')
-                    for conf, label, loss, correct, word in output_iter:
-                        file.write(f'({conf[0]:.2%}, {conf[1]:.2%})\t'
-                                   #  f'{label}\t'
-                                   #  f'{loss:.2%}\t'
-                                   f'{word}\n')
-        self.train()
+        confidence = self.predict(word_ids)
+        predictions = confidence.argmax(dim=1)
+        correct_indicies = predictions.eq(labels)
+        accuracy = correct_indicies.float().mean().item()
         return accuracy
+
+    def all_vocab_confidence(
+            self,
+            export_path: Optional[str] = None
+            ) -> Vector:
+        all_vocab_ids = torch.arange(
+            len(self.word_to_id), dtype=torch.long, device=self.device)
+        confidence = self.predict(all_vocab_ids)
+        if not export_path:
+            return confidence
+
+        tqdm.write(f'Exporting all vocabulary confidence to {export_path}')
+        output = []
+        for conf, word_id in zip(confidence, all_vocab_ids):  # type: ignore
+            word = self.id_to_word[word_id.item()]
+            output.append((conf.tolist(), word))
+        output.sort(key=lambda tup: tup[0][0])  # ascending GOP confidence
+
+        if self.cherry_pick:
+            cherry_output = []
+            for cherry_word in self.cherry_pick:
+                cherry_conf = confidence[self.word_to_id[cherry_word]]
+                cherry_output.append(
+                    (cherry_conf.tolist(), cherry_word))
+            cherry_output.sort(key=lambda tup: tup[0][0])
+
+        with open(export_path, 'w') as file:
+            file.write('[Dem confidence, GOP confidence]\n')
+            if self.cherry_pick:
+                for conf, word in cherry_output:
+                    file.write(f'[{conf[0]:.2%}, {conf[1]:.2%}]\t{word}\n')
+                file.write('\n')
+            for conf, word in output:
+                file.write(f'[{conf[0]:.2%}, {conf[1]:.2%}]\t{word}\n')
 
     @staticmethod
     def accuracy_at_confidence_plot(output_iter: List) -> None:
@@ -123,6 +142,7 @@ class NaiveWordClassifier(nn.Module):
         # plt.legend()
         plt.savefig('x_confident_accuracy.png')
 
+
 class NaiveWordClassifierDataset(Dataset):
 
     def __init__(self, config: 'NaiveWordClassifierConfig'):
@@ -143,17 +163,16 @@ class NaiveWordClassifierDataset(Dataset):
             self.id_to_word = preprocessed[1]
 
         self.train_data = train
-
         # test_data = sentences[num_train + test_holdout:]
-        self.valid_batch = (
-            torch.tensor([label for label, _ in test]),
-            torch.tensor([word_id for _, word_id in test])
-        )
+        # self.valid_batch = (
+        #     torch.tensor([label for label, _ in test]),
+        #     torch.tensor([word_id for _, word_id in test])
+        # )
 
-        vocab_size = len(self.word_to_id)
-        self.error_analysis_batch = (
-            torch.zeros(vocab_size),    # placeholder party labels
-            torch.arange(vocab_size))   # all word ids
+        # vocab_size = len(self.word_to_id)
+        # self.error_analysis_batch = (
+        #     torch.zeros(vocab_size),    # placeholder party labels
+        #     torch.arange(vocab_size))   # all word ids
 
     def __len__(self) -> int:
         return len(self.train_data)
@@ -166,7 +185,6 @@ class NaiveWordClassifierDataset(Dataset):
             Matrix,
             Dict[str, int],
             Dict[int, str]]:
-        """TODO turn off auto_caching"""
         id_generator = 0
         word_to_id: Dict[str, int] = {}
         id_to_word: Dict[int, str] = {}
@@ -189,17 +207,33 @@ class NaiveWordClassifierDataset(Dataset):
 
 class NaiveWordClassifierExperiment(Experiment):
 
+    def __init__(self, config: 'NaiveWordClassifierConfig'):
+        super().__init__(config)
+        self.data = NaiveWordClassifierDataset(config)
+        self.dataloader = DataLoader(
+            self.data,
+            batch_size=config.batch_size,
+            shuffle=True,
+            num_workers=config.num_dataloader_threads)
+        self.model = NaiveWordClassifier(config, self.data)
+        self.optimizer = config.optimizer(
+            self.model.parameters(),
+            lr=config.learning_rate)
+        # self.lr_scheduler = config.lr_scheduler(self.optimizer)
+        self.to_be_saved = {
+            'config': self.config,
+            'model': self.model,
+            'optimizer': self.optimizer}
+
     def train(self) -> None:
         config = self.config
         cross_entropy = nn.CrossEntropyLoss()
-        tb_global_step = 0
-        epoch_progress = tqdm(range(1, config.num_epochs + 1), desc='Epochs')
-        for epoch_index in epoch_progress:
-            batch_progress = tqdm(
+        epoch_pbar = tqdm(range(1, config.num_epochs + 1), desc='Epochs')
+        for epoch_index in epoch_pbar:
+            batch_pbar = tqdm(
                 enumerate(self.dataloader), total=len(self.dataloader),
                 mininterval=1, desc='Batches')
-            for batch_index, batch in batch_progress:
-
+            for batch_index, batch in batch_pbar:
                 party_labels = batch[0].to(config.device)
                 word_ids = batch[1].to(config.device)
 
@@ -209,110 +243,95 @@ class NaiveWordClassifierExperiment(Experiment):
                 loss.backward()
                 self.optimizer.step()
 
-                if batch_index % config.update_tensorboard_per_batch == 0:
-                    batch_accuracy = self.model.accuracy(batch)
-                    tqdm.write(f'Epoch {epoch_index}, Batch {batch_index:,}:\t'
-                               f'Loss = {loss.item():.5f}\t'
-                               f'Batch accuracy = {batch_accuracy:.2%}')
+                if batch_index % config.update_tensorboard == 0:
+                    stats = {
+                        'Loss/train': loss.item(),
+                        'Accuracy/train': self.model.accuracy(batch)}
+                    self.update_tensorboard(stats)
+                if batch_index % config.print_stats == 0:
+                    self.print_stats(epoch_index, batch_index, stats)
+            # End Batches
+            self.print_timestamp()
+            # self.lr_scheduler.step()
+            self.auto_save(epoch_index)
 
-                    self.tensorboard.add_scalar(
-                        'training loss', loss.item(), tb_global_step)
-                    self.tensorboard.add_scalar(
-                        'Batch Accuracy', batch_accuracy, tb_global_step)
-                    tb_global_step += 1
-
-                # if (batch_index % config.print_stats_per_batch) == 0:
-                #     self.print_stats(loss.item(), epoch_index, batch_index)
-            # end batch
-            self.lr_scheduler.step()
-
-            valid_accuracy = self.model.accuracy(self.data.valid_batch)
-            tqdm.write(f'Epoch {epoch_index}  '
-                       f'Validation Accuracy = {valid_accuracy:.2%}\n\n')
-            self.tensorboard.add_scalar(
-                'validation accuracy', valid_accuracy, epoch_index)
             if config.export_error_analysis:
-                if epoch_index == 1 or epoch_index % 10 == 0:
-                    valid_accuracy = self.model.accuracy(
-                        self.data.valid_batch,  # error_analysis_batch,  # NOTE self.data.valid_batch
-                        export_error_analysis=os.path.join(
-                            config.output_dir,
-                            f'error_analysis_epoch{epoch_index}.txt'))
-
-            if config.auto_save_every_epoch or epoch_index == config.num_epochs:
-                self.save_state_dict(epoch_index, tb_global_step)
-        # end epoch
-        # test_accuracy = self.model.accuracy(self.data.test_batch)
-        # self.tensorboard.add_scalar('test accuracy', test_accuracy, global_step=0)
-        # print(f'Test Accuracy = {test_accuracy:.2%}')
-        print('\n✅ Training Complete')
+                if (epoch_index % config.export_error_analysis == 0
+                        or epoch_index == 1):
+                    export_path = os.path.join(
+                        config.output_dir,
+                        f'error_analysis_epoch{epoch_index}.txt')
+                    self.model.all_vocab_confidence(export_path)
+        # End Epochs
 
 
 @dataclass
 class NaiveWordClassifierConfig():
 
     # Essential
-    input_dir: str = '../data/processed/word_classifier/UCSB_1e-5'
-    output_dir: str = '../results/party_classifier/word/debug'
+    input_dir: str = '../data/processed/word_classifier/44_Obama_1e-5'
+    output_dir: str = '../results/party_classifier/word/frozen'
     device: torch.device = torch.device('cuda:0')
 
     # Hyperparameters
     embed_size: int = 300
+    hidden_size: int = 100
     batch_size: int = 4000
     num_epochs: int = 10
 
     pretrained_embedding: Optional[str] = None
-    # pretrained_embedding: Optional[str] = '../results/baseline/word2vec_president.txt'
-    freeze_embedding: bool = False
+    freeze_embedding: bool = True
     dropout_p: float = 0
 
-    # Optimizer
-    optimizer: functools.partial = functools.partial(
-        torch.optim.Adam,
-        lr=1e-3,
-        # weight_decay=1e-3
-    )
-    # optimizer=functools.partial(
-    #     torch.optim.SGD,
-    #     lr=1e-3,
-    #     momentum=0.9),
-    lr_scheduler: functools.partial = functools.partial(
-        torch.optim.lr_scheduler.StepLR,
-        step_size=30,
-        gamma=0.1
-    )
+    optimizer: torch.optim.Optimizer = torch.optim.Adam
+    learning_rate: float = 1e-3
 
     num_prediction_classes: int = 2
-    num_valid_holdout: int = 10_000
-    num_test_holdout: int = 10_000
+    # num_valid_holdout: int = 10_000
+    # num_test_holdout: int = 10_000
     num_dataloader_threads: int = 0
 
+    # Evaluation
+    cherry_pick: Optional[Tuple[str, ...]] = (
+        'estate_tax', 'death_tax',
+        'immigrants', 'illegal_immigrants', 'illegal_aliens',
+        'protection_and_affordable', 'the_affordable_care_act',
+        'obamacare', 'health_care_bill', 'socialized_medicine', 'public_option',
+        'the_wall_street_reform_legislation',
+        'financial_stability',
+        'capital_gains_tax',
+        'second_amendment_rights',
+        'government_spending',
+        'deficit_spending',
+        'bush_tax_cuts'
+    )
+
+    # Housekeeping
+    export_error_analysis: Optional[int] = 1  # per epoch
+    update_tensorboard: int = 1_000  # per batch
+    print_stats: int = 1_000  # per batch
     reload_path: Optional[str] = None
     clear_tensorboard_log_in_output_dir: bool = True
     delete_all_exisiting_files_in_output_dir: bool = False
-    auto_save_every_epoch: bool = False
-    export_error_analysis: bool = False
-
-    auto_save_before_quit: bool = True
+    auto_save: bool = False
+    auto_save_per_epoch: Optional[int] = None
     save_to_tensorboard_embedding_projector: bool = False
-    update_tensorboard_per_batch: int = 1_000
-    print_stats_per_batch: int = 1_000
 
 
 def main() -> None:
-    config = NaiveWordClassifierConfig()
-    data = NaiveWordClassifierDataset(config)
-    dataloader = DataLoader(
-        data,
-        batch_size=config.batch_size,
-        shuffle=True,
-        num_workers=config.num_dataloader_threads)
-    model = NaiveWordClassifier(config, data)
-    optimizer = config.optimizer(model.parameters())
-    lr_scheduler = config.lr_scheduler(optimizer)
+    # TODO try sparse gradient & optimizer
+    config = NaiveWordClassifierConfig(
+        output_dir='../results/party_classifier/word/linear_MLP',
+        # pretrained_embedding='../results/baseline/word2vec_Obama.txt',
+        freeze_embedding=True,
+        batch_size=1000,
+        hidden_size=300,
+        num_epochs=1000,
+        learning_rate=1e-3,
+        device=torch.device('cuda:0')
+    )
 
-    black_box = NaiveWordClassifierExperiment(
-        config, data, dataloader, model, optimizer, lr_scheduler)
+    black_box = NaiveWordClassifierExperiment(config)
     with black_box as auto_save_wrapped:
         auto_save_wrapped.train()
 

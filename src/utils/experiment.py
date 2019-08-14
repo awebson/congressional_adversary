@@ -1,6 +1,4 @@
 import os
-import pickle
-import functools
 import pprint
 from abc import ABC, abstractmethod
 from datetime import datetime
@@ -8,41 +6,35 @@ from dataclasses import dataclass, asdict
 from typing import Tuple, Dict, Optional, Any, no_type_check
 
 import torch
-from torch.utils import tensorboard
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
 
 @dataclass
 class ExperimentConfig():
 
-    # Essential
     input_dir: str
     output_dir: str
+    num_epochs: int
     device: torch.device
-
-    # optimizer: functools.partial
-    # lr_scheduler: functools.partial
 
     reload_path: Optional[str]
     clear_tensorboard_log_in_output_dir: bool
     delete_all_exisiting_files_in_output_dir: bool
-    auto_save_before_quit: bool
+    auto_save: bool
+    auto_save_per_epoch: Optional[int]
 
 
 class Experiment(ABC):
 
     def __init__(self, config: ExperimentConfig):
-
         self.tb_global_step = 0
         self.custom_stats_format = None
         self.config = config
+        self.device = config.device
 
     def __enter__(self) -> 'Experiment':
         config = self.config
-        print(f'device = {config.device}')
-        print(f'model = {self.model}')
-
         if not os.path.exists(config.output_dir):
             os.makedirs(config.output_dir)
             print(f'Created new directory {config.output_dir} as output_dir.')
@@ -64,7 +56,7 @@ class Experiment(ABC):
 
         timestamp = datetime.now().strftime("%m-%d_%H-%M-%S")
         log_dir = os.path.join(config.output_dir, f'tensorboard_{timestamp}')
-        self.tensorboard = tensorboard.SummaryWriter(log_dir=log_dir)
+        self.tensorboard = SummaryWriter(log_dir=log_dir)
 
         config_dict = asdict(self.config)
         self.tensorboard.add_text(
@@ -74,15 +66,26 @@ class Experiment(ABC):
             pprint.pprint(config_dict, preview_file)
         return self
 
-    def __exit__(self, exception_type, exception_value, traceback) -> None:  # type: ignore
-        if (exception_type is not None
-                and self.config.auto_save_before_quit):
+    @no_type_check
+    def __exit__(self, exception_type, exception_value, traceback) -> None:
+        if exception_type is not None:
             print(f'Experiment interrupted.')
-            self.save_everything(os.path.join(
-                self.config.output_dir, f'interrupted.pt'))
+            if self.config.auto_save:
+                self.save_everything(
+                    os.path.join(self.config.output_dir, f'interrupted.pt'))
         else:
             print('\n✅ Training Complete')
         self.tensorboard.close()
+
+    def auto_save(self, epoch_index: int) -> None:
+        if not self.config.auto_save:
+            return
+        if self.config.auto_save_per_epoch:
+            interim_save = epoch_index % self.config.auto_save_per_epoch == 0
+        final_save = epoch_index == self.config.num_epochs
+        if interim_save or final_save:
+            self.save_everything(
+                os.path.join(self.config.output_dir, f'epoch{epoch_index}.pt'))
 
     @no_type_check
     def save_state_dict(self, save_path: str) -> None:
@@ -96,7 +99,7 @@ class Experiment(ABC):
             'config': self.config,
             'model': self.model.state_dict(),
             'optimizer': self.optimizer.state_dict(),
-            'lr_scheduler': self.lr_scheduler.state_dict()
+            # 'lr_scheduler': self.lr_scheduler.state_dict()
         }
         torch.save(payload, save_path)
         tqdm.write(f'💾 state_dict saved to {save_path}\n')
@@ -145,7 +148,11 @@ class Experiment(ABC):
                 tqdm.write(f'{key} = {val:.3f}', end='\t')
             tqdm.write('')
 
-    def update_tensorboard(self, stats: Dict) -> None:
+    def update_tensorboard(self, stats: Dict[str, Any]) -> None:
+        """
+        Cannot simply use **kwargs because TensorBoard uses slashes to
+        organize scope, and slashes are not allowed as Python variable names.
+        """
         for key, val in stats.items():
             self.tensorboard.add_scalar(key, val, self.tb_global_step)
         self.tb_global_step += 1
