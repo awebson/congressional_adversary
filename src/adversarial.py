@@ -39,30 +39,31 @@ class AdversarialDecomposer(nn.Module):
         if data.pretrained_embedding is not None:
             config.embed_size = data.pretrained_embedding.shape[1]
             self.center_embedding = nn.Embedding.from_pretrained(
-                data.pretrained_embedding)
+                data.pretrained_embedding, sparse=config.sparse_embedding_grad)
         else:
             self.center_embedding = nn.Embedding(
-                vocab_size, embed_size, sparse=config.sparse_embedding)
+                vocab_size, embed_size, sparse=config.sparse_embedding_grad)
             init_range = 1.0 / embed_size
-            nn.init.uniform_(self.center_embedding.weight.data, -init_range, init_range)
+            nn.init.uniform_(self.center_embedding.weight.data,
+                             -init_range, init_range)
         self.center_embedding.weight.requires_grad = not config.freeze_embedding
 
         # Adversarial Encoder
         # one-layer version
-        self.encoder = nn.Sequential(
-            nn.Linear(embed_size, config.repr_size),
-            # nn.ReLU(),
-            # nn.Dropout(p=config.dropout_p)
-        )
+        # self.encoder = nn.Sequential(
+        #     nn.Linear(embed_size, config.repr_size),
+        #     # nn.ReLU(),
+        #     # nn.Dropout(p=config.dropout_p)
+        # )
 
         # two-layer version
-        # self.encoder = nn.Sequential(
-        #     nn.Linear(embed_size, config.hidden_size),
-        #     nn.ReLU(),
-        #     nn.Dropout(p=config.dropout_p),
-        #     nn.Linear(config.hidden_size, config.repr_size),
-        #     nn.ReLU()
-        # )
+        self.encoder = nn.Sequential(
+            nn.Linear(embed_size, config.hidden_size),
+            nn.ReLU(),
+            # nn.Dropout(p=config.dropout_p),
+            nn.Linear(config.hidden_size, config.repr_size),
+            # nn.ReLU()
+        )
 
         self.deno_loss_weight = config.denotation_weight
         self.cono_loss_weight = config.connotation_weight
@@ -70,7 +71,7 @@ class AdversarialDecomposer(nn.Module):
         # Denotation: Skip-Gram Negative Sampling
         self.denotation_decoder = nn.Linear(config.repr_size, embed_size)
         self.context_embedding = nn.Embedding(
-            vocab_size, embed_size, sparse=config.sparse_embedding)
+            vocab_size, embed_size, sparse=config.sparse_embedding_grad)
         nn.init.constant_(self.context_embedding.weight.data, 0)
         self.num_negative_samples = config.num_negative_samples
         SkipGramNegativeSampling.init_negative_sampling(
@@ -107,31 +108,60 @@ class AdversarialDecomposer(nn.Module):
         embed = self.center_embedding(center_word_ids)
         return self.encoder(embed)
 
+    # def deno_forward(
+    #         self,
+    #         encoded_dennotation: Matrix,
+    #         context_ids: Vector
+    #         ) -> Scalar:
+    #     center_vectors = self.denotation_decoder(encoded_dennotation)
+    #     context_vectors = self.context_embedding(context_ids)
+
+    #     batch_size = len(context_ids)
+    #     neg_center_vectors = center_vectors.unsqueeze(1).expand(
+    #         batch_size, self.num_negative_samples, -1)
+    #     neg_context_ids = self.negative_sampling_dist.sample(
+    #         (batch_size, self.num_negative_samples))
+    #     neg_context_vectors = self.context_embedding(neg_context_ids)
+
+    #     # batch_size * embed_size
+    #     pos_objective = torch.einsum(
+    #         'bd,bd->b', center_vectors, context_vectors)
+    #     pos_objective = nn.functional.logsigmoid(pos_objective)
+
+    #     # batch_size * num_negative_examples * embed_size
+    #     neg_objective = torch.einsum(
+    #         'bnd,bnd->b', neg_center_vectors, neg_context_vectors)
+    #     neg_objective = nn.functional.logsigmoid(-neg_objective)
+    #     return -torch.mean(pos_objective + neg_objective)
+
     def deno_forward(
             self,
             encoded_dennotation: Matrix,
             context_ids: Vector
             ) -> Scalar:
+        """faster but less readable"""
         center_vectors = self.denotation_decoder(encoded_dennotation)
         context_vectors = self.context_embedding(context_ids)
 
+        score = torch.sum(
+            torch.mul(center_vectors, context_vectors),
+            dim=1)
+        score = torch.clamp(score, -10, 10)
+        score = -nn.functional.logsigmoid(score)
+
         batch_size = len(context_ids)
-        neg_center_vectors = center_vectors.unsqueeze(1).expand(
-            batch_size, self.num_negative_samples, -1)
         neg_context_ids = self.negative_sampling_dist.sample(
             (batch_size, self.num_negative_samples))
         neg_context_vectors = self.context_embedding(neg_context_ids)
 
-        # batch_size * embed_size
-        pos_objective = torch.einsum(
-            'bd,bd->b', center_vectors, context_vectors)
-        pos_objective = nn.functional.logsigmoid(pos_objective)
-
-        # batch_size * num_negative_examples * embed_size
-        neg_objective = torch.einsum(
-            'bnd,bnd->b', neg_center_vectors, neg_context_vectors)
-        neg_objective = nn.functional.logsigmoid(-neg_objective)
-        return -torch.mean(pos_objective + neg_objective)
+        neg_score = torch.bmm(
+            neg_context_vectors, center_vectors.unsqueeze(2)
+            ).squeeze()
+        neg_score = torch.clamp(neg_score, -10, 10)
+        neg_score = -torch.sum(
+            nn.functional.logsigmoid(-neg_score),
+            dim=1)
+        return torch.mean(score + neg_score)
 
     def cono_forward(self, encoded_dennotation: Matrix) -> Vector:
         logits = self.party_classifier(encoded_dennotation)
@@ -159,6 +189,7 @@ class AdversarialDecomposer(nn.Module):
         correct_indicies = predictions.eq(labels)
         accuracy = correct_indicies.float().mean().item()
 
+        # Debug High Confidence Predictions
         # conf = [c[1].item() for c in confidence]
         # high_conf = [
         #     f'{self.id_to_word[word_ids[i].item()]}={c:.4f}'
@@ -200,7 +231,6 @@ class AdversarialDecomposer(nn.Module):
         # self.accuracy_at_confidence_plot(output)  # TODO
 
         with open(export_path, 'w') as file:
-            # file.write(f'accuracy = {accuracy:.2%}\n\n')
             file.write('[Dem confidence, GOP confidence]\t'
                        '(Dem frequency, GOP frequency)\n')
             if self.cherry_pick:
@@ -234,7 +264,7 @@ class AdversarialDecomposer(nn.Module):
                 self.id_to_word[word_id]
                 for word_id in all_vocab_ids]
             self.tensorboard.add_embedding(
-                decomposed, embedding_labels, global_step=0)
+                decomposed, embedding_labels, global_step=0)  # TODO .weight.data?
         return decomposed
 
 
@@ -267,8 +297,9 @@ class AdversarialDataset(Dataset):
         self.total_num_epochs = config.num_epochs
         self.min_doc_length = config.min_doc_length
         self.subsampling_power = config.subsampling_power
-        self.conf_threshold_schedule = iter(
-            config.subsampling_threshold_schedule)
+        if config.subsampling_threshold_schedule:
+            self.conf_threshold_schedule = iter(
+                config.subsampling_threshold_schedule)
 
     def __len__(self) -> int:
         return len(self.speeches)
@@ -394,25 +425,28 @@ class AdversarialExperiment(Experiment):
 
         if config.freeze_embedding:
             self.encoder_optimizer = config.optimizer(
-                self.model.encoder.parameters())
+                self.model.encoder.parameters(),
+                lr=config.learning_rate)
         else:
             self.encoder_optimizer = config.optimizer(
                 list(self.model.center_embedding.parameters()) +
-                list(self.model.encoder.parameters()))
+                list(self.model.encoder.parameters()),
+                lr=config.learning_rate)
 
         self.cono_optimizer = config.optimizer(
-            self.model.party_classifier.parameters())
+            self.model.party_classifier.parameters(),
+            lr=config.learning_rate)
         self.deno_optimizer = config.optimizer(
             list(self.model.denotation_decoder.parameters()) +
-            list(self.model.context_embedding.parameters()))
+            list(self.model.context_embedding.parameters()),
+            lr=config.learning_rate)
 
         self.to_be_saved = {
             'config': self.config,
             'model': self.model,
             'encoder_optimizer': self.encoder_optimizer,
             'deno_optimizer': self.deno_optimizer,
-            'cono_optimizer': self.cono_optimizer
-        }
+            'cono_optimizer': self.cono_optimizer}
 
         self.custom_stats_format = (
             '𝓁encoder = {Loss/encoder:.3f}\t'
@@ -496,7 +530,6 @@ class AdversarialExperiment(Experiment):
 
     def train(self) -> None:
         config = self.config
-        self.device = config.device
         epoch_pbar = tqdm(range(1, config.num_epochs + 1), desc='Epochs')
         for epoch_index in epoch_pbar:
             batch_pbar = tqdm(
@@ -507,7 +540,7 @@ class AdversarialExperiment(Experiment):
                 context_word_ids = batch[1].to(self.device)
                 party_labels = batch[2].to(self.device)
 
-                l_encoder, l_deno, l_cono = self.safe_train(
+                l_encoder, l_deno, l_cono = self._train(
                     center_word_ids, context_word_ids, party_labels)
 
                 if batch_index % config.update_tensorboard == 0:
@@ -515,14 +548,14 @@ class AdversarialExperiment(Experiment):
                         'Loss/encoder': l_encoder,
                         'Loss/denotation': l_deno,
                         'Loss/connotation': l_cono,
-                        'Accuracy/train': self.model.connotation_accuracy(batch)
-                    }
+                        'Accuracy/train': self.model.connotation_accuracy(batch)}
                     self.update_tensorboard(stats)
                 if batch_index % config.print_stats == 0:
                     self.print_stats(epoch_index, batch_index, stats)
             # End Batches
             self.print_timestamp()
-            # self.lr_scheduler.step()  # NOTE
+            # self.lr_scheduler.step()
+            self.auto_save(epoch_index)
             if config.export_error_analysis:
                 if (epoch_index % config.export_error_analysis == 0
                         or epoch_index == 1):
@@ -532,16 +565,14 @@ class AdversarialExperiment(Experiment):
                     self.model.all_vocab_connotation(export_path)
 
             # Discard partisan neutral words
-            vocab_party_confidence = self.model.all_vocab_connotation()
-            subsampled_num_words = self.data.subsample_neutral_words(
-                vocab_party_confidence)
-            if subsampled_num_words:
-                self.update_tensorboard(
-                    {'Accuracy/num_words_subsampled_corpus': subsampled_num_words})
-
-            if config.auto_save_every_epoch or epoch_index == config.num_epochs:
-                self.save_everything(os.path.join(
-                    config.output_dir, f'epoch{epoch_index}.pt'))
+            if config.subsampling_threshold_schedule:
+                vocab_party_confidence = self.model.all_vocab_connotation()
+                subsampled_num_words = self.data.subsample_neutral_words(
+                    vocab_party_confidence)
+                if subsampled_num_words:
+                    self.update_tensorboard(
+                        {'Accuracy/num_words_subsampled_corpus':
+                            subsampled_num_words})
         # End Epochs
 
 
@@ -565,43 +596,21 @@ class AdversarialConfig():
     num_negative_samples: int = 10
     dropout_p: float = 0
     num_epochs: int = 10
+    pretrained_embedding: Optional[str] = None
+    freeze_embedding: bool = True
+    optimizer: torch.optim.Optimizer = torch.optim.Adam
+    learning_rate: float = 1e-3
+    # lr_scheduler: torch.optim.lr_scheduler._LRScheduler
+    num_prediction_classes: int = 2
+    sparse_embedding_grad: bool = False  # faster if used with sparse optimizer
+    𝜀: float = 1e-5
 
     # Subsampling Trick
-    subsampling_threshold_schedule: Iterable[Optional[float]] = torch.linspace(
-        0.55, 0.75, steps=num_epochs - 1)
+    subsampling_threshold_schedule: Optional[Iterable[float]] = None
     subsampling_power: float = 8  # float('inf') for deterministic sampling
     min_doc_length: int = 2  # for subsampling partisan neutral words
 
-    # Model Construction
-    model: nn.Module = AdversarialDecomposer
-    pretrained_embedding: Optional[str] = None
-    freeze_embedding: bool = True
-    num_prediction_classes: int = 2
-    sparse_embedding: bool = False  # faster if used with sparse optimizer
-    𝜀: float = 1e-5
-
-    # Optimizer
-    optimizer: functools.partial = functools.partial(
-        torch.optim.Adam,
-        lr=1e-3,
-        # weight_decay=1e-3
-    )
-    # lr_scheduler: functools.partial = functools.partial(
-    #     torch.optim.lr_scheduler.StepLR,
-    #     step_size=10,
-    #     gamma=0.1
-    # )
-
-    update_tensorboard: int = 100  # per batch
-    print_stats: int = 1000  # per batch
-    export_error_analysis: Optional[int] = 1  # per epoch
-    reload_path: Optional[str] = None
-    clear_tensorboard_log_in_output_dir: bool = True
-    delete_all_exisiting_files_in_output_dir: bool = False
-    auto_save_every_epoch: bool = False
-    auto_save_before_quit: bool = True
-    tensorboard_embedding_projector: bool = False
-
+    # Evaluation
     cherry_pick: Optional[Tuple[str, ...]] = (
         'estate_tax', 'death_tax',
         'immigrants', 'illegal_immigrants', 'illegal_aliens',
@@ -616,81 +625,52 @@ class AdversarialConfig():
         'bush_tax_cuts'
     )
 
+    # Housekeeping
+    export_error_analysis: Optional[int] = 1  # per epoch
+    update_tensorboard: int = 1000  # per batch
+    print_stats: int = 1000  # per batch
+    reload_path: Optional[str] = None
+    clear_tensorboard_log_in_output_dir: bool = True
+    delete_all_exisiting_files_in_output_dir: bool = False
+    auto_save: bool = False
+    auto_save_per_epoch: Optional[int] = None
+    export_tensorboard_embedding_projector: bool = False
+
 
 def main() -> None:
-    no_subsample = [None] * 10
-    fixed65 = [None] * 4 + [.65] * 7
-    spaced = ([None] * 4 + [.65]) * 6
-    long_burnin = [None] * 15 + [.65] * 5
-    long_spaced = ([None] * 7 + [.6]) * 2
+    # fixed65 = [None] * 4 + [.65] * 7
+    # spaced = ([None] * 4 + [.65]) * 6
+    # long_burnin = [None] * 15 + [.65] * 5
+    # long_spaced = ([None] * 7 + [.6]) * 2
 
-    # minimal working example
+    # config = AdversarialConfig(
+    #     output_dir='../results/adversarial/Obama/H300_R300_d-0.1c1',
+    #     denotation_weight=-0.1,
+    #     connotation_weight=1,
+    #     # pretrained_embedding='../results/baseline/word2vec_Obama.txt',
+    #     freeze_embedding=True,
+    #     hidden_size=300,
+    #     repr_size=300,
+    #     num_epochs=50,
+    #     batch_size=8,
+    #     device=torch.device('cuda:0')
+    # )
+
     config = AdversarialConfig(
-        output_dir='../results/adversarial/Obama/p8_fixed.65/debug',
+        output_dir='../results/adversarial/Obama/H300_R300_d1c-1',
         denotation_weight=0,
-        connotation_weight=1,
+        connotation_weight=-1,
         # pretrained_embedding='../results/baseline/word2vec_Obama.txt',
-        freeze_embedding=False,
+        freeze_embedding=True,
+        hidden_size=300,
         repr_size=300,
-        subsampling_threshold_schedule=fixed65,
-        num_epochs=10,
+        num_epochs=50,
         batch_size=8,
-        device=torch.device('cuda:0')
+        auto_save=True,
+        auto_save_per_epoch=5,
+        device=torch.device('cuda:1')
     )
 
-    # complex thawed
-    # config = AdversarialConfig(
-    #     output_dir='../results/adversarial/Obama/p8_fixed.65/thawed_L2_H150_R300',
-    #     denotation_weight=0,
-    #     connotation_weight=1,
-    #     hidden_size=150,
-    #     repr_size=300,
-    #     subsampling_threshold_schedule=fixed7,
-    #     # num_epochs=30,
-    #     freeze_embedding=False,
-    #     device=torch.device('cuda:0')
-    # )
-
-    # config = AdversarialConfig(
-    #     output_dir='../results/adversarial/Obama/8fixed.6/frozen_w2v_d0_c1',
-    #     denotation_weight=0,
-    #     connotation_weight=1,
-    #     subsampling_threshold_schedule=fixed8,
-    #     pretrained_embedding='../results/baseline/word2vec_Obama.txt',
-    #     freeze_embedding=True,
-    #     device=torch.device('cuda:0')
-    # )
-
-    # config = AdversarialConfig(
-    #     output_dir='../results/adversarial/Obama/p8_spaced.65/L2_H150_R300',
-    #     denotation_weight=0,
-    #     connotation_weight=1,
-    #     subsampling_threshold_schedule=spaced,
-    #     subsampling_power=8,
-    #     hidden_size=150,
-    #     repr_size=300,
-    #     pretrained_embedding='../results/baseline/word2vec_Obama.txt',
-    #     freeze_embedding=True,
-    #     num_epochs=30,
-    #     export_error_analysis=3,
-    #     device=torch.device('cuda:0')
-    # )
-
-    # config = AdversarialConfig(
-    #     output_dir='../results/adversarial/Obama/p2_spaced.65/frozen_L2H150R50',
-    #     denotation_weight=0,
-    #     connotation_weight=1,
-    #     subsampling_threshold_schedule=spaced,
-    #     subsampling_power=2,
-    #     hidden_size=150,
-    #     repr_size=50,
-    #     # dropout_p=.5,
-    #     pretrained_embedding='../results/baseline/word2vec_Obama.txt',
-    #     freeze_embedding=True,
-    #     num_epochs=30,
-    #     export_error_analysis=3,
-    #     device=torch.device('cuda:1')
-    # )
 
     black_box = AdversarialExperiment(config)
     with black_box as auto_save_wrapped:

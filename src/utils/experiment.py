@@ -58,12 +58,16 @@ class Experiment(ABC):
         log_dir = os.path.join(config.output_dir, f'tensorboard_{timestamp}')
         self.tensorboard = SummaryWriter(log_dir=log_dir)
 
-        config_dict = asdict(self.config)
-        self.tensorboard.add_text(
-            'config', pprint.pformat(config_dict), global_step=0)
+        # config_dict = asdict(self.config)
+        # config_dict['_model'] = str(self.model)
+        # self.tensorboard.add_text(
+        #     'config', pprint.pformat(config_dict), global_step=0)
         preview_path = os.path.join(config.output_dir, 'config.txt')
         with open(preview_path, 'w') as preview_file:
-            pprint.pprint(config_dict, preview_file)
+            # pprint.pprint(config_dict, preview_file)
+            preview_file.write('architecture = ' + str(self.model) + '\n')
+            for key, val in asdict(self.config).items():
+                preview_file.write(f'{key} = {val}\n')
         return self
 
     @no_type_check

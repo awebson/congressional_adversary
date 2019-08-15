@@ -22,7 +22,6 @@ class NaiveWordClassifier(nn.Module):
             self,
             config: 'NaiveWordClassifierConfig',
             data: 'NaiveWordClassifierDataset'):
-        # nn.Module.__init__(self)
         super().__init__()
         self.word_to_id = data.word_to_id
         self.id_to_word = data.id_to_word
@@ -32,10 +31,12 @@ class NaiveWordClassifier(nn.Module):
         if data.pretrained_embedding is not None:
             config.embed_size = data.pretrained_embedding.shape[1]
             self.embedding = nn.Embedding.from_pretrained(
-                data.pretrained_embedding)
+                data.pretrained_embedding, sparse=config.sparse_embedding_grad)
         else:
             self.embedding = nn.Embedding(
-                len(self.word_to_id), config.embed_size)
+                len(self.word_to_id),
+                config.embed_size,
+                sparse=config.sparse_embedding_grad)
             init_range = 1.0 / config.embed_size
             nn.init.uniform_(self.embedding.weight.data,
                              -init_range, init_range)
@@ -49,7 +50,7 @@ class NaiveWordClassifier(nn.Module):
         # One extra layer for frozen embeddings
         self.classifier = nn.Sequential(
             nn.Linear(config.embed_size, config.hidden_size),
-            # nn.ReLU(),
+            nn.ReLU(),
             # nn.Dropout(p=config.dropout_p),
             nn.Linear(config.hidden_size, config.num_prediction_classes)
         )
@@ -229,6 +230,10 @@ class NaiveWordClassifierExperiment(Experiment):
         config = self.config
         cross_entropy = nn.CrossEntropyLoss()
         epoch_pbar = tqdm(range(1, config.num_epochs + 1), desc='Epochs')
+
+        # sanity check
+        # self.tensorboard.add_embedding(torch.randn(100, 5))
+
         for epoch_index in epoch_pbar:
             batch_pbar = tqdm(
                 enumerate(self.dataloader), total=len(self.dataloader),
@@ -264,6 +269,14 @@ class NaiveWordClassifierExperiment(Experiment):
                     self.model.all_vocab_confidence(export_path)
         # End Epochs
 
+        # if config.export_tensorboard_embedding_projector:
+        #     all_vocab_ids = torch.arange(
+        #         len(self.model.word_to_id), dtype=torch.long, device=self.device)
+        #     embedding_labels = [self.model.id_to_word[word_id.item()]
+        #                         for word_id in all_vocab_ids]  # type: ignore
+        #     self.tensorboard.add_embedding(
+        #         self.model.embedding.weight, embedding_labels, global_step=0)
+
 
 @dataclass
 class NaiveWordClassifierConfig():
@@ -276,11 +289,12 @@ class NaiveWordClassifierConfig():
     # Hyperparameters
     embed_size: int = 300
     hidden_size: int = 100
-    batch_size: int = 4000
+    batch_size: int = 500
     num_epochs: int = 10
 
     pretrained_embedding: Optional[str] = None
     freeze_embedding: bool = True
+    sparse_embedding_grad: bool = False
     dropout_p: float = 0
 
     optimizer: torch.optim.Optimizer = torch.optim.Adam
@@ -315,21 +329,35 @@ class NaiveWordClassifierConfig():
     delete_all_exisiting_files_in_output_dir: bool = False
     auto_save: bool = False
     auto_save_per_epoch: Optional[int] = None
-    save_to_tensorboard_embedding_projector: bool = False
+    export_tensorboard_embedding_projector: bool = False
 
 
 def main() -> None:
-    # TODO try sparse gradient & optimizer
+    # TODO add_pr_curve
     config = NaiveWordClassifierConfig(
-        output_dir='../results/party_classifier/word/linear_MLP',
+        output_dir='../results/party_classifier/word/MLP',
         # pretrained_embedding='../results/baseline/word2vec_Obama.txt',
         freeze_embedding=True,
-        batch_size=1000,
-        hidden_size=300,
-        num_epochs=1000,
+        batch_size=4000,
+        hidden_size=100,
+        # dropout_p=0,
+        num_epochs=1,
         learning_rate=1e-3,
-        device=torch.device('cuda:0')
+        # export_tensorboard_embedding_projector=True,
+        device=torch.device('cuda:1')
     )
+
+    # config = NaiveWordClassifierConfig(
+    #     output_dir='../results/party_classifier/word/MLP',
+    #     # pretrained_embedding='../results/baseline/word2vec_Obama.txt',
+    #     freeze_embedding=True,
+    #     batch_size=100,
+    #     hidden_size=300,
+    #     # dropout_p=0,
+    #     num_epochs=1000,
+    #     learning_rate=1e-4,
+    #     device=torch.device('cuda:1')
+    # )
 
     black_box = NaiveWordClassifierExperiment(config)
     with black_box as auto_save_wrapped:
