@@ -1,9 +1,8 @@
-import functools
+import random
 import pickle
 import os
-from datetime import datetime
 from dataclasses import dataclass
-from typing import Tuple, List, Dict, Union, Iterable, Optional
+from typing import Tuple, List, Dict, Iterable, Optional
 from typing import Counter as CounterType
 
 import torch
@@ -13,11 +12,10 @@ from tqdm import tqdm
 
 from party_classifier import NaiveWordClassifier
 from skip_gram import SkipGramNegativeSampling
-from utils.experiment import Experiment, ExperimentConfig
+from utils.experiment import Experiment
 from utils.improvised_typing import Scalar, Vector, Matrix, R3Tensor
 from preprocessing.S4_export_training_corpus import Document
 
-import random
 random.seed(42)
 torch.manual_seed(42)
 
@@ -33,7 +31,7 @@ class AdversarialDecomposer(nn.Module):
         embed_size = config.embed_size
         self.cherry_pick = config.cherry_pick
         self.device = config.device
-        self.𝜀 = config.𝜀
+        # self.𝜀 = config.𝜀
 
         # Initialize Embedding
         if data.pretrained_embedding is not None:
@@ -61,7 +59,7 @@ class AdversarialDecomposer(nn.Module):
             nn.Linear(embed_size, config.hidden_size),
             nn.ReLU(),
             # nn.Dropout(p=config.dropout_p),
-            nn.Linear(config.hidden_size, config.repr_size),
+            # nn.Linear(config.hidden_size, config.repr_size),
             # nn.ReLU()
         )
 
@@ -69,10 +67,12 @@ class AdversarialDecomposer(nn.Module):
         self.cono_loss_weight = config.connotation_weight
 
         # Denotation: Skip-Gram Negative Sampling
-        self.denotation_decoder = nn.Linear(config.repr_size, embed_size)
-        self.context_embedding = nn.Embedding(
-            vocab_size, embed_size, sparse=config.sparse_embedding_grad)
-        nn.init.constant_(self.context_embedding.weight.data, 0)
+        # self.denotation_decoder = nn.Linear(config.repr_size, embed_size)
+        self.denotation_decoder = nn.Sequential(
+            nn.Linear(config.repr_size, embed_size),
+            # nn.ReLU()
+        )
+
         self.num_negative_samples = config.num_negative_samples
         SkipGramNegativeSampling.init_negative_sampling(
             self, data.word_frequency, data.word_to_id)
@@ -90,18 +90,23 @@ class AdversarialDecomposer(nn.Module):
             context_word_ids: Matrix,
             party_label: Vector
             ) -> Tuple[Scalar, Scalar, Scalar]:
-        encoded_dennotation = self.encoder_forward(center_word_ids)
+        # Denotation
+        batch_size = len(context_word_ids)
+        negative_context_ids = self.negative_sampling_dist.sample(
+            (batch_size, self.num_negative_samples))
+        encoded_center = self.encoder_forward(center_word_ids)
+        encoded_true_context = self.encoder_forward(context_word_ids)
+        encoded_negative_context = self.encoder_forward(negative_context_ids)
+        deno_loss = self.deno_forward(
+            encoded_center, encoded_true_context, encoded_negative_context)
 
-        deno_loss = self.deno_forward(encoded_dennotation, context_word_ids)
-        deno_loss = torch.clamp(deno_loss, self.𝜀, 10)
-
-        cono_logits = self.cono_forward(encoded_dennotation)
+        # Connotation
+        cono_logits = self.cono_forward(encoded_center)
         cono_loss = self.cross_entropy(cono_logits, party_label)
-        cono_loss = torch.clamp(cono_loss, self.𝜀, 10)
 
+        # Combine both losses
         encoder_loss = (self.deno_loss_weight * deno_loss +
                         self.cono_loss_weight * cono_loss)
-        encoder_loss = torch.clamp(encoder_loss, self.𝜀)
         return encoder_loss, deno_loss, cono_loss
 
     def encoder_forward(self, center_word_ids: Vector) -> Vector:
@@ -110,61 +115,62 @@ class AdversarialDecomposer(nn.Module):
 
     # def deno_forward(
     #         self,
-    #         encoded_dennotation: Matrix,
-    #         context_ids: Vector
+    #         encoded_center: Matrix,
+    #         encoded_true_context: Matrix,
+    #         encoded_negative_context: R3Tensor
     #         ) -> Scalar:
-    #     center_vectors = self.denotation_decoder(encoded_dennotation)
-    #     context_vectors = self.context_embedding(context_ids)
-
-    #     batch_size = len(context_ids)
-    #     neg_center_vectors = center_vectors.unsqueeze(1).expand(
-    #         batch_size, self.num_negative_samples, -1)
-    #     neg_context_ids = self.negative_sampling_dist.sample(
-    #         (batch_size, self.num_negative_samples))
-    #     neg_context_vectors = self.context_embedding(neg_context_ids)
+    #     """readable einsum version"""
+    #     center = self.denotation_decoder(encoded_center)
+    #     true_context = self.denotation_decoder(encoded_true_context)
+    #     negative_context = self.denotation_decoder(encoded_negative_context)
 
     #     # batch_size * embed_size
-    #     pos_objective = torch.einsum(
-    #         'bd,bd->b', center_vectors, context_vectors)
-    #     pos_objective = nn.functional.logsigmoid(pos_objective)
+    #     objective = torch.einsum('be,be->b', center, true_context)
+    #     objective = nn.functional.logsigmoid(objective)
 
-    #     # batch_size * num_negative_examples * embed_size
-    #     neg_objective = torch.einsum(
-    #         'bnd,bnd->b', neg_center_vectors, neg_context_vectors)
-    #     neg_objective = nn.functional.logsigmoid(-neg_objective)
-    #     return -torch.mean(pos_objective + neg_objective)
+    #     # center: batch_size * embed_size
+    #     # -> batch_size * num_negative_examples * embed_size
+    #     repeated_center = center.unsqueeze(1).expand(
+    #         len(center), self.num_negative_samples, -1)
+    #     # repeated_center, negative_context = torch.broadcast_tensors(
+    #     #     center.unsqueeze(1), negative_context)
+    #     negative_objective = torch.einsum(
+    #         'bne,bne->b', repeated_center, negative_context)
+    #     negative_objective = nn.functional.logsigmoid(-negative_objective)
+    #     return -torch.mean(objective + negative_objective)
 
     def deno_forward(
             self,
-            encoded_dennotation: Matrix,
-            context_ids: Vector
+            encoded_center: Matrix,
+            encoded_true_context: Matrix,
+            encoded_negative_context: R3Tensor
             ) -> Scalar:
-        """faster but less readable"""
-        center_vectors = self.denotation_decoder(encoded_dennotation)
-        context_vectors = self.context_embedding(context_ids)
+        """Faster but less readable."""
+        center = self.denotation_decoder(encoded_center)
+        # true_context = self.denotation_decoder(encoded_true_context)
+        # negative_context = self.denotation_decoder(encoded_negative_context)
+        # HACK
+        true_context = encoded_true_context
+        negative_context = encoded_negative_context
 
-        score = torch.sum(
-            torch.mul(center_vectors, context_vectors),
-            dim=1)
-        score = torch.clamp(score, -10, 10)
-        score = -nn.functional.logsigmoid(score)
+        # batch_size * embed_size
+        objective = torch.sum(
+            torch.mul(center, true_context),  # Hadamard product
+            dim=1)  # be -> b
+        objective = nn.functional.logsigmoid(objective)
 
-        batch_size = len(context_ids)
-        neg_context_ids = self.negative_sampling_dist.sample(
-            (batch_size, self.num_negative_samples))
-        neg_context_vectors = self.context_embedding(neg_context_ids)
+        # batch_size * num_negative_examples * embed_size
+        # negative_context: bne
+        # center: be -> be1
+        negative_objective = torch.bmm(  # bne, be1 -> bn1
+            negative_context, center.unsqueeze(2)
+            ).squeeze()  # bn1 -> bn
+        negative_objective = nn.functional.logsigmoid(-negative_objective)
+        negative_objective = torch.sum(negative_objective, dim=1)  # bn -> b
+        return -torch.mean(objective + negative_objective)
 
-        neg_score = torch.bmm(
-            neg_context_vectors, center_vectors.unsqueeze(2)
-            ).squeeze()
-        neg_score = torch.clamp(neg_score, -10, 10)
-        neg_score = -torch.sum(
-            nn.functional.logsigmoid(-neg_score),
-            dim=1)
-        return torch.mean(score + neg_score)
-
-    def cono_forward(self, encoded_dennotation: Matrix) -> Vector:
-        logits = self.party_classifier(encoded_dennotation)
+    def cono_forward(self, encoded_center: Matrix) -> Vector:
+        logits = self.party_classifier(encoded_center)
         return logits
 
     def predict_connotation(self, word_ids: Vector) -> Vector:
@@ -268,7 +274,6 @@ class AdversarialDecomposer(nn.Module):
         return decomposed
 
 
-# TODO move load pretrained embedding to utils
 # TODO try torch.chunk, split
 class AdversarialDataset(Dataset):
 
@@ -437,8 +442,7 @@ class AdversarialExperiment(Experiment):
             self.model.party_classifier.parameters(),
             lr=config.learning_rate)
         self.deno_optimizer = config.optimizer(
-            list(self.model.denotation_decoder.parameters()) +
-            list(self.model.context_embedding.parameters()),
+            self.model.denotation_decoder.parameters(),
             lr=config.learning_rate)
 
         self.to_be_saved = {
@@ -499,14 +503,17 @@ class AdversarialExperiment(Experiment):
         l_encoder, l_deno, l_cono = self.model(
             center_word_ids, context_word_ids, party_labels)
         l_encoder.backward(retain_graph=True)
+        nn.utils.clip_grad_norm_(self.model.parameters(), 5)
         self.encoder_optimizer.step()
 
         self.model.zero_grad()
         l_deno.backward(retain_graph=True)
+        nn.utils.clip_grad_norm_(self.model.parameters(), 5)
         self.deno_optimizer.step()
 
         self.model.zero_grad()
         l_cono.backward()
+        nn.utils.clip_grad_norm_(self.model.parameters(), 5)
         self.cono_optimizer.step()
         return l_encoder.item(), l_deno.item(), l_cono.item()
 
@@ -565,14 +572,14 @@ class AdversarialExperiment(Experiment):
                     self.model.all_vocab_connotation(export_path)
 
             # Discard partisan neutral words
-            if config.subsampling_threshold_schedule:
-                vocab_party_confidence = self.model.all_vocab_connotation()
-                subsampled_num_words = self.data.subsample_neutral_words(
-                    vocab_party_confidence)
-                if subsampled_num_words:
-                    self.update_tensorboard(
-                        {'Accuracy/num_words_subsampled_corpus':
-                            subsampled_num_words})
+            # if config.subsampling_threshold_schedule:
+            #     vocab_party_confidence = self.model.all_vocab_connotation()
+            #     subsampled_num_words = self.data.subsample_neutral_words(
+            #         vocab_party_confidence)
+            #     if subsampled_num_words:
+            #         self.update_tensorboard(
+            #             {'Accuracy/num_words_subsampled_corpus':
+            #                 subsampled_num_words})
         # End Epochs
 
 
@@ -613,7 +620,7 @@ class AdversarialConfig():
     # Evaluation
     cherry_pick: Optional[Tuple[str, ...]] = (
         'estate_tax', 'death_tax',
-        'immigrants', 'illegal_immigrants', 'illegal_aliens',
+        'undocumented', 'immigrants', 'illegal_immigrants', 'illegal_aliens',
         'protection_and_affordable', 'the_affordable_care_act',
         'obamacare', 'health_care_bill', 'socialized_medicine', 'public_option',
         'the_wall_street_reform_legislation',
@@ -643,24 +650,11 @@ def main() -> None:
     # long_burnin = [None] * 15 + [.65] * 5
     # long_spaced = ([None] * 7 + [.6]) * 2
 
-    # config = AdversarialConfig(
-    #     output_dir='../results/adversarial/Obama/H300_R300_d-0.1c1',
-    #     denotation_weight=-0.1,
-    #     connotation_weight=1,
-    #     # pretrained_embedding='../results/baseline/word2vec_Obama.txt',
-    #     freeze_embedding=True,
-    #     hidden_size=300,
-    #     repr_size=300,
-    #     num_epochs=50,
-    #     batch_size=8,
-    #     device=torch.device('cuda:0')
-    # )
-
     config = AdversarialConfig(
-        output_dir='../results/adversarial/Obama/H300_R300_d1c-1',
-        denotation_weight=0,
-        connotation_weight=-1,
-        # pretrained_embedding='../results/baseline/word2vec_Obama.txt',
+        output_dir='../results/adversarial/Obama/debug/d1c0_UnifiedEmbed',
+        denotation_weight=1,
+        connotation_weight=0,
+        pretrained_embedding='../results/baseline/word2vec_Obama.txt',
         freeze_embedding=True,
         hidden_size=300,
         repr_size=300,
@@ -668,9 +662,23 @@ def main() -> None:
         batch_size=8,
         auto_save=True,
         auto_save_per_epoch=5,
-        device=torch.device('cuda:1')
+        device=torch.device('cuda:0')
     )
 
+    # config = AdversarialConfig(
+    #     output_dir='../results/adversarial/Obama/H300_R300/d0c1_UnifiedEmbed',
+    #     denotation_weight=0,
+    #     connotation_weight=1,
+    #     # pretrained_embedding='../results/baseline/word2vec_Obama.txt',
+    #     freeze_embedding=True,
+    #     hidden_size=300,
+    #     repr_size=300,
+    #     num_epochs=50,
+    #     batch_size=8,
+    #     auto_save=False,
+    #     auto_save_per_epoch=5,
+    #     device=torch.device('cuda:1')
+    # )
 
     black_box = AdversarialExperiment(config)
     with black_box as auto_save_wrapped:
