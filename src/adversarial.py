@@ -49,8 +49,8 @@ class AdversarialDecomposer(nn.Module):
 
         # Adversarial Encoder
         self.encoder = nn.Sequential(
-            nn.Linear(embed_size, config.hidden_size),
-            nn.ReLU(),
+            nn.Linear(embed_size, config.encoded_size),
+            # nn.ReLU(),
             # nn.Dropout(p=config.dropout_p),
             # nn.Linear(config.hidden_size, config.encoded_size),
             # nn.ReLU()
@@ -67,9 +67,24 @@ class AdversarialDecomposer(nn.Module):
             self, data.word_frequency, data.word_to_id)
 
         # Connotation: Party Classifier
-        self.party_classifier = nn.Linear(
-            config.encoded_size, config.num_prediction_classes)
+        # self.party_classifier = nn.Linear(
+        #     config.encoded_size, config.num_prediction_classes)
+        self.party_classifier = nn.Sequential(
+            nn.Linear(config.encoded_size, config.hidden_size),
+            nn.ReLU(),
+            # nn.Dropout(p=config.dropout_p),
+            nn.Linear(config.hidden_size, config.num_prediction_classes),
+        )
         self.cross_entropy = nn.CrossEntropyLoss()
+
+        # Initialization Tricks
+        if config.init_trick:
+            nn.init.eye_(self.encoder[0].weight)
+            nn.init.zeros_(self.encoder[0].bias)
+            nn.init.eye_(self.center_decoder.weight)
+            nn.init.zeros_(self.center_decoder.bias)
+            nn.init.eye_(self.context_decoder.weight)
+            nn.init.zeros_(self.context_decoder.bias)
 
         self.to(self.device)
 
@@ -239,11 +254,17 @@ class AdversarialDecomposer(nn.Module):
     def export_decomposed_embedding(
             self,
             export_path: Optional[str] = None,
-            tensorboard: bool = False
+            tensorboard: bool = False,
+            device: Optional[torch.device] = None
             ) -> None:
         """for querying nearest neighbors & visualization"""
         all_vocab_ids = torch.arange(
-            len(self.word_to_id), dtype=torch.long, device=self.device)
+            len(self.word_to_id), dtype=torch.long)
+        if device:
+            all_vocab_ids.to(device)
+        else:
+            all_vocab_ids.to(self.device)
+
         self.eval()
         with torch.no_grad():
             decomposed = self.encoder_forward(all_vocab_ids)
@@ -597,6 +618,7 @@ class AdversarialConfig():
     # lr_scheduler: torch.optim.lr_scheduler._LRScheduler
     num_prediction_classes: int = 2
     sparse_embedding_grad: bool = False  # faster if used with sparse optimizer
+    init_trick: bool = False
     𝜀: float = 1e-5
 
     # Subsampling Trick
@@ -638,35 +660,37 @@ def main() -> None:
     # long_burnin = [None] * 15 + [.65] * 5
     # long_spaced = ([None] * 7 + [.6]) * 2
 
-    # config = AdversarialConfig(
-    #     output_dir=f'../results/adversarial/Obama/{today}/0d 1c w2v',
-    #     denotation_weight=0,
-    #     connotation_weight=1,
-    #     pretrained_embedding='../results/baseline/word2vec_Obama.txt',
-    #     freeze_embedding=True,
-    #     hidden_size=300,
-    #     encoded_size=300,
-    #     num_epochs=50,
-    #     batch_size=8,
-    #     auto_save=True,
-    #     auto_save_per_epoch=5,
-    #     device=torch.device('cuda:0')
-    # )
-
     config = AdversarialConfig(
-        output_dir=f'../results/adversarial/Obama/{today}/-0.1d 1c',
-        denotation_weight=-0.1,
-        connotation_weight=1,
+        output_dir=f'../results/adversarial/Obama/{today}/1d0c frozen sanity InitTrick',
+        denotation_weight=1,
+        connotation_weight=0,
         # pretrained_embedding='../results/baseline/word2vec_Obama.txt',
         freeze_embedding=True,
-        hidden_size=300,
+        init_trick=True,
         encoded_size=300,
+        hidden_size=100,
         num_epochs=50,
         batch_size=8,
         auto_save=True,
-        auto_save_per_epoch=5,
-        device=torch.device('cuda:1')
+        auto_save_per_epoch=1,
+        device=torch.device('cuda:0')
     )
+
+    # config = AdversarialConfig(
+    #     output_dir=f'../results/adversarial/Obama/{today}/1d0c frozen w2v InitTrick',
+    #     denotation_weight=1,
+    #     connotation_weight=0,
+    #     pretrained_embedding='../results/baseline/word2vec_Obama.txt',
+    #     freeze_embedding=True,
+    #     init_trick=True,
+    #     encoded_size=300,
+    #     hidden_size=100,
+    #     num_epochs=50,
+    #     batch_size=8,
+    #     auto_save=True,
+    #     auto_save_per_epoch=1,
+    #     device=torch.device('cuda:1')
+    # )
 
     black_box = AdversarialExperiment(config)
     with black_box as auto_save_wrapped:
