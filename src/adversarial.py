@@ -2,6 +2,7 @@ import random
 import pickle
 import os
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Tuple, List, Dict, Iterable, Optional
 from typing import Counter as CounterType
 
@@ -36,42 +37,30 @@ class AdversarialDecomposer(nn.Module):
         # Initialize Embedding
         if data.pretrained_embedding is not None:
             config.embed_size = data.pretrained_embedding.shape[1]
-            self.center_embedding = nn.Embedding.from_pretrained(
+            self.embedding = nn.Embedding.from_pretrained(
                 data.pretrained_embedding, sparse=config.sparse_embedding_grad)
         else:
-            self.center_embedding = nn.Embedding(
+            self.embedding = nn.Embedding(
                 vocab_size, embed_size, sparse=config.sparse_embedding_grad)
             init_range = 1.0 / embed_size
-            nn.init.uniform_(self.center_embedding.weight.data,
+            nn.init.uniform_(self.embedding.weight.data,
                              -init_range, init_range)
-        self.center_embedding.weight.requires_grad = not config.freeze_embedding
+        self.embedding.weight.requires_grad = not config.freeze_embedding
 
         # Adversarial Encoder
-        # one-layer version
-        # self.encoder = nn.Sequential(
-        #     nn.Linear(embed_size, config.repr_size),
-        #     # nn.ReLU(),
-        #     # nn.Dropout(p=config.dropout_p)
-        # )
-
-        # two-layer version
         self.encoder = nn.Sequential(
             nn.Linear(embed_size, config.hidden_size),
             nn.ReLU(),
             # nn.Dropout(p=config.dropout_p),
-            # nn.Linear(config.hidden_size, config.repr_size),
+            # nn.Linear(config.hidden_size, config.encoded_size),
             # nn.ReLU()
         )
-
         self.deno_loss_weight = config.denotation_weight
         self.cono_loss_weight = config.connotation_weight
 
         # Denotation: Skip-Gram Negative Sampling
-        # self.denotation_decoder = nn.Linear(config.repr_size, embed_size)
-        self.denotation_decoder = nn.Sequential(
-            nn.Linear(config.repr_size, embed_size),
-            # nn.ReLU()
-        )
+        self.center_decoder = nn.Linear(config.encoded_size, embed_size)
+        self.context_decoder = nn.Linear(config.encoded_size, embed_size)
 
         self.num_negative_samples = config.num_negative_samples
         SkipGramNegativeSampling.init_negative_sampling(
@@ -79,7 +68,7 @@ class AdversarialDecomposer(nn.Module):
 
         # Connotation: Party Classifier
         self.party_classifier = nn.Linear(
-            config.repr_size, config.num_prediction_classes)
+            config.encoded_size, config.num_prediction_classes)
         self.cross_entropy = nn.CrossEntropyLoss()
 
         self.to(self.device)
@@ -110,7 +99,7 @@ class AdversarialDecomposer(nn.Module):
         return encoder_loss, deno_loss, cono_loss
 
     def encoder_forward(self, center_word_ids: Vector) -> Vector:
-        embed = self.center_embedding(center_word_ids)
+        embed = self.embedding(center_word_ids)
         return self.encoder(embed)
 
     # def deno_forward(
@@ -119,7 +108,7 @@ class AdversarialDecomposer(nn.Module):
     #         encoded_true_context: Matrix,
     #         encoded_negative_context: R3Tensor
     #         ) -> Scalar:
-    #     """readable einsum version"""
+    #     """readable einsum implementation of skip-gram negative sampling"""
     #     center = self.denotation_decoder(encoded_center)
     #     true_context = self.denotation_decoder(encoded_true_context)
     #     negative_context = self.denotation_decoder(encoded_negative_context)
@@ -146,12 +135,9 @@ class AdversarialDecomposer(nn.Module):
             encoded_negative_context: R3Tensor
             ) -> Scalar:
         """Faster but less readable."""
-        center = self.denotation_decoder(encoded_center)
-        # true_context = self.denotation_decoder(encoded_true_context)
-        # negative_context = self.denotation_decoder(encoded_negative_context)
-        # HACK
-        true_context = encoded_true_context
-        negative_context = encoded_negative_context
+        center = self.center_decoder(encoded_center)
+        true_context = self.context_decoder(encoded_true_context)
+        negative_context = self.context_decoder(encoded_negative_context)
 
         # batch_size * embed_size
         objective = torch.sum(
@@ -434,7 +420,7 @@ class AdversarialExperiment(Experiment):
                 lr=config.learning_rate)
         else:
             self.encoder_optimizer = config.optimizer(
-                list(self.model.center_embedding.parameters()) +
+                list(self.model.embedding.parameters()) +
                 list(self.model.encoder.parameters()),
                 lr=config.learning_rate)
 
@@ -442,7 +428,8 @@ class AdversarialExperiment(Experiment):
             self.model.party_classifier.parameters(),
             lr=config.learning_rate)
         self.deno_optimizer = config.optimizer(
-            self.model.denotation_decoder.parameters(),
+            list(self.model.center_decoder.parameters()) +
+            list(self.model.context_decoder.parameters()),
             lr=config.learning_rate)
 
         self.to_be_saved = {
@@ -598,7 +585,7 @@ class AdversarialConfig():
     batch_size: int = 8
     embed_size: int = 300
     hidden_size: int = 300  # MLP encoder
-    repr_size: int = 300  # encoder output
+    encoded_size: int = 300  # encoder output
     window_radius: int = 5  # context_size = 2 * window_radius
     num_negative_samples: int = 10
     dropout_p: float = 0
@@ -645,40 +632,41 @@ class AdversarialConfig():
 
 
 def main() -> None:
+    today = datetime.now().strftime("%m-%d %a")
     # fixed65 = [None] * 4 + [.65] * 7
     # spaced = ([None] * 4 + [.65]) * 6
     # long_burnin = [None] * 15 + [.65] * 5
     # long_spaced = ([None] * 7 + [.6]) * 2
 
+    # config = AdversarialConfig(
+    #     output_dir=f'../results/adversarial/Obama/{today}/0d 1c w2v',
+    #     denotation_weight=0,
+    #     connotation_weight=1,
+    #     pretrained_embedding='../results/baseline/word2vec_Obama.txt',
+    #     freeze_embedding=True,
+    #     hidden_size=300,
+    #     encoded_size=300,
+    #     num_epochs=50,
+    #     batch_size=8,
+    #     auto_save=True,
+    #     auto_save_per_epoch=5,
+    #     device=torch.device('cuda:0')
+    # )
+
     config = AdversarialConfig(
-        output_dir='../results/adversarial/Obama/debug/d1c0_UnifiedEmbed',
-        denotation_weight=1,
-        connotation_weight=0,
-        pretrained_embedding='../results/baseline/word2vec_Obama.txt',
+        output_dir=f'../results/adversarial/Obama/{today}/-0.1d 1c',
+        denotation_weight=-0.1,
+        connotation_weight=1,
+        # pretrained_embedding='../results/baseline/word2vec_Obama.txt',
         freeze_embedding=True,
         hidden_size=300,
-        repr_size=300,
+        encoded_size=300,
         num_epochs=50,
         batch_size=8,
         auto_save=True,
         auto_save_per_epoch=5,
-        device=torch.device('cuda:0')
+        device=torch.device('cuda:1')
     )
-
-    # config = AdversarialConfig(
-    #     output_dir='../results/adversarial/Obama/H300_R300/d0c1_UnifiedEmbed',
-    #     denotation_weight=0,
-    #     connotation_weight=1,
-    #     # pretrained_embedding='../results/baseline/word2vec_Obama.txt',
-    #     freeze_embedding=True,
-    #     hidden_size=300,
-    #     repr_size=300,
-    #     num_epochs=50,
-    #     batch_size=8,
-    #     auto_save=False,
-    #     auto_save_per_epoch=5,
-    #     device=torch.device('cuda:1')
-    # )
 
     black_box = AdversarialExperiment(config)
     with black_box as auto_save_wrapped:
