@@ -54,8 +54,8 @@ class Experiment(ABC):
                         shutil.rmtree(tb_log_dir)
                         print(f'Deleted {filename} in output_dir')
 
-        timestamp = datetime.now().strftime("%m-%d_%H-%M-%S")
-        log_dir = os.path.join(config.output_dir, f'tensorboard_{timestamp}')
+        timestamp = datetime.now().strftime("%m-%d %H-%M-%S")
+        log_dir = os.path.join(config.output_dir, f'TB {timestamp}')
         self.tensorboard = SummaryWriter(log_dir=log_dir)
 
         # config_dict = asdict(self.config)
@@ -65,7 +65,8 @@ class Experiment(ABC):
         preview_path = os.path.join(config.output_dir, 'config.txt')
         with open(preview_path, 'w') as preview_file:
             # pprint.pprint(config_dict, preview_file)
-            preview_file.write('architecture = ' + str(self.model) + '\n')
+            if hasattr(self, 'model'):
+                preview_file.write('architecture = ' + str(self.model) + '\n')
             for key, val in asdict(self.config).items():
                 preview_file.write(f'{key} = {val}\n')
         return self

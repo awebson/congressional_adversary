@@ -69,7 +69,7 @@ def partition(speeches: List, num_chunks: int) -> Iterable[List]:
     yield speeches[speech_index:-1]
 
 
-def sort_freq_and_write(
+def export_sorted_frequency(
         raw_frequency: CounterType[str],
         subsampled_frequency: CounterType[str],
         min_freq: int,
@@ -89,25 +89,61 @@ def sort_freq_and_write(
             out_file.write(f'{raw_freq:,}\t{final_freq:,}\t{phrase}\n')
 
 
-# def negative_sampling(
-#         subsampled_frequency: CounterType[str],
-#         id_to_word: Dict[int, str]
-#         ) -> List[float]:
-#     """
-#     A smoothed unigram distribution.
-#     A simplified case of Noise Contrasitive Estimate.
-#     where the seemingly aribitrary number of 0.75 is from the paper.
-#     """
-#     cumulative_freq = sum(freq ** 0.75 for freq in subsampled_frequency.values())
-#     sampling_dist: Dict[str, float] = {
-#         word: (freq ** 0.75) / cumulative_freq
-#         for word, freq in subsampled_frequency.items()
-#     }
-#     multinomial_dist_probs = [
-#         sampling_dist.get(id_to_word[word_id], 0)
-#         for word_id in range(len(id_to_word))
-#     ]
-#     return multinomial_dist_probs
+def export_sorted_frequency_by_party(
+        D_raw: CounterType[str],
+        R_raw: CounterType[str],
+        D_final: CounterType[str],
+        R_final: CounterType[str],
+        word_to_id: Dict[str, int],
+        out_path: str
+        ) -> None:
+
+    def sort_creteria(tup: Tuple) -> Tuple[bool, float]:
+        df, rf = tup[3], tup[4]  # final frequnecy
+        if df != 0:
+            ratio = rf / df
+        else:
+            ratio = rf / 1e-8
+        nontrivial = df + rf > 100
+        return (nontrivial, ratio)
+
+    output = []
+    for word in word_to_id:
+        output.append(
+            (word, D_raw[word], R_raw[word], D_final[word], R_final[word]))
+    output.sort(
+        key=sort_creteria,
+        reverse=True)
+    # output.sort(key=lambda tup: tup[4])
+    with open(out_path, 'w') as out_file:
+        out_file.write('Sorted by GOP/Dem Ratio    '
+                       'Original (Dem, GOP)    '
+                       'Sampled & Balanced [Dem, GOP]\n')
+        for word, dr, rr, df, rf in output:
+            raw_freq = f'({dr:,}, {rr:,})'
+            final_freq = f'[{df:,}, {rf:,}]'
+            out_file.write(f'{word:<30}{raw_freq:<20}{final_freq}\n')
+
+
+def negative_sampling(
+        subsampled_frequency: CounterType[str],
+        id_to_word: Dict[int, str]
+        ) -> List[float]:
+    """
+    A smoothed unigram distribution.
+    A simplified case of Noise Contrasitive Estimate.
+    where the seemingly aribitrary number of 0.75 is from the paper.
+    """
+    cumulative_freq = sum(freq ** 0.75 for freq in subsampled_frequency.values())
+    sampling_dist: Dict[str, float] = {
+        word: (freq ** 0.75) / cumulative_freq
+        for word, freq in subsampled_frequency.items()
+    }
+    multinomial_dist_probs = [
+        sampling_dist.get(id_to_word[word_id], 0)
+        for word_id in range(len(id_to_word))
+    ]
+    return multinomial_dist_probs
 
 
 def export_plain_text(
@@ -311,7 +347,7 @@ def export_sentence_level_party_classifier(
             else:
                 preview.write(f'R: {" ".join(words)}\n')
 
-    sort_freq_and_write(
+    export_sorted_frequency(
         raw_frequency, subsampled_frequency, min_word_freq,
         os.path.join(output_dir, 'vocabulary_frequency.txt'))
 
@@ -406,7 +442,7 @@ def export_word_level_party_classifier(
         #     else:
         #         preview.write(f'R: {" ".join(words)}\n')
 
-    sort_freq_and_write(
+    export_sorted_frequency(
         raw_frequency, subsampled_frequency, min_word_freq,
         os.path.join(output_dir, 'vocabulary_frequency.txt'))
 
@@ -473,7 +509,7 @@ def export_skip_gram_corpus(
         export_speech_in_word_ids = [word_to_id[word] for word in export_speech]
         export_speeches.append(export_speech_in_word_ids)
 
-    sort_freq_and_write(
+    export_sorted_frequency(
         raw_frequency, subsampled_frequency, min_word_freq,
         os.path.join(output_dir, 'vocabulary_frequency.txt'))
 
@@ -507,7 +543,7 @@ def export_skip_gram_corpus(
     print('All set.')
 
 
-def export_word_level_party_adversarial(
+def export_adversarial(
         sessions: Iterable[int],
         output_dir: str,
         input_dir: str,
@@ -532,6 +568,8 @@ def export_word_level_party_adversarial(
 
     Dem_speeches: List[Document] = []
     GOP_speeches: List[Document] = []
+    Dem_raw_frequency: CounterType[str] = Counter()
+    GOP_raw_frequency: CounterType[str] = Counter()
 
     for session in tqdm(sessions, desc=' Exporting Sessions'):
         for party in ('D', 'R'):
@@ -540,41 +578,44 @@ def export_word_level_party_adversarial(
             with open(underscored_path, 'r') as underscored_corpus:
                 for line in underscored_corpus:
                     line = line.translate(remove_punctutation)
+                    words = line.split()
                     subsampled_word_ids = [
-                        word_to_id[word] for word in line.split()
+                        word_to_id[word] for word in words
                         if (raw_frequency[word] > min_word_freq
                             and random.random() < keep_prob[word])
                     ]
                     if len(subsampled_word_ids) < min_document_len:
                         continue
                     if party == 'D':
+                        Dem_raw_frequency.update(words)
                         Dem_speeches.append(Document(subsampled_word_ids, 0))
                     else:
+                        GOP_raw_frequency.update(words)
                         GOP_speeches.append(Document(subsampled_word_ids, 1))
-
     export_speeches = balance_classes(Dem_speeches, GOP_speeches)
 
     Dem_word_count = 0
     GOP_word_count = 0
     Dem_frequency: CounterType[str] = Counter()
     GOP_frequency: CounterType[str] = Counter()
-    final_frequency: CounterType[str] = Counter()
+    combined_frequency: CounterType[str] = Counter()
     for speech in export_speeches:
         words = [id_to_word[word_id] for word_id in speech.word_ids]
-        final_frequency.update(words)
+        combined_frequency.update(words)
         if speech.party == 0:
             Dem_frequency.update(words)
             Dem_word_count += len(speech.word_ids)
         else:
             GOP_frequency.update(words)
             GOP_word_count += len(speech.word_ids)
+    print(f'Pre-sampled vocab size = {len(word_to_id):,}')
+    print(f'Post-sampled vocab size = {len(combined_frequency):,}')
     print(f'Post-balanced Dem word count = {Dem_word_count:,}')
     print(f'Post-balanced GOP word count = {GOP_word_count:,}')
-    # print(f'Pre-sampled vocab size = {len(word_to_id):,}')
-    # print(f'Post-sampled vocab size = {len(final_frequency):,}')
 
+    # Optionally rebuild vocabulary after sampling
     # word_to_id, id_to_word = build_vocabulary(
-    #     final_frequency, min_frequency=0)
+    #     combined_frequency, min_frequency=0)
 
     # validation_holdout = 50_000
     # train_data = export_speeches[validation_holdout:]
@@ -593,13 +634,16 @@ def export_word_level_party_adversarial(
             words = map(id_to_word.get, speech.word_ids)  # type: ignore
             preview.write(' '.join(words) + '\n')
 
-    sort_freq_and_write(
-        raw_frequency, final_frequency, min_word_freq,
-        os.path.join(output_dir, 'vocabulary_frequency.txt'))
+    export_sorted_frequency(
+        raw_frequency, combined_frequency, min_word_freq,
+        os.path.join(output_dir, 'vocabulary_subsampled_frequency.txt'))
+    export_sorted_frequency_by_party(
+        Dem_raw_frequency, GOP_raw_frequency, Dem_frequency, GOP_frequency, word_to_id,
+        os.path.join(output_dir, 'vocabulary_partisan_frequency.txt'))
 
     train_data_path = os.path.join(output_dir, f'train_data.pickle')
     with open(train_data_path, 'wb') as export_file:
-        payload = (word_to_id, id_to_word, final_frequency,
+        payload = (word_to_id, id_to_word, combined_frequency,
                    Dem_frequency, GOP_frequency, export_speeches)
         pickle.dump(payload, export_file, protocol=-1)
     print('All set.')
@@ -674,7 +718,7 @@ def skip_gram_from_plain_text(
             pickle.dump(export_speeches, export_file, protocol=-1)
     print(f'Total number of words = {num_words_exported:,}')
 
-    sort_freq_and_write(
+    export_sorted_frequency(
         raw_frequency, subsampled_frequency, min_word_freq,
         os.path.join(output_dir, 'vocabulary_frequency.txt'))
 
@@ -687,17 +731,29 @@ def skip_gram_from_plain_text(
 
 
 def main() -> None:
+    during: Dict[str, Iterable[int]] = {
+        # 'postwar': range(79, 112),
+        'Truman': range(79, 83),
+        'Eisenhower': range(83, 87),
+        'Kennedy': range(87, 88),
+        'Johnson': range(88, 91),
+        'Nixon': range(91, 94),
+        'Ford': range(94, 95),
+        'Carter': range(95, 97),
+        'Reagan': range(97, 101),
+        'H.W.Bush': range(101, 103),
+        'Clinton': range(103, 107),
+        'W.Bush': range(107, 111),
+        'Obama': range(111, 112)  # incomplete data in the Bound edition
+    }
+
     # Just the corpus in plain text, no word_id. For external libraries
-    sessions = range(111, 112)
-    output_dir = '../../data/processed/plain_text/44_Obama_normalized'
-    underscored_dir = '../../data/interim/underscored_corpora_normalized'
-    os.makedirs(output_dir, exist_ok=True)
-    export_plain_text(sessions, output_dir, underscored_dir)
+    # output_dir = '../../data/processed/plain_text/44_Obama_normalized'
+    # underscored_dir = '../../data/interim/underscored_corpora_normalized'
+    # os.makedirs(output_dir, exist_ok=True)
+    # export_plain_text(sessions, output_dir, underscored_dir)
 
     # # tokenized corpus for skip-gram
-    # sessions = range(111, 112)  # Obama 2008 - 2010
-    # # sessions = range(102, 112)  # 2000s
-    # # sessions = range(79, 112)   # post-WWII
     # output_dir = '../../data/processed/skip_gram/44_Obama_1e-5'
     # subsampling_implementation: Optional[str] = 'paper'
     # subsampling_threshold = 1e-5
@@ -712,7 +768,6 @@ def main() -> None:
     #     min_word_freq, min_speech_length)
 
     # # Naive word-level party classifier
-    # sessions = range(102, 112)
     # underscored_dir = '../../data/interim/underscored_corpora'
     # output_dir = '../../data/processed/word_classifier/2000s_1e-5'
     # subsampling_implementation: Optional[str] = 'paper'
@@ -737,9 +792,6 @@ def main() -> None:
     # end_to_end(corpus_path, output_dir, output_num_chunks, subsampling_implementation, subsampling_threshold, min_word_freq)
 
     # Party Prediction
-    # # sessions = range(111, 112)  # Obama 2008 - 2010
-    # sessions = range(102, 112)  # 2000s
-    # # sessions = range(79, 112)   # post-WWII
     # output_dir = '../../data/processed/party_classifier/2000s_len30sent_1e-3'
     # subsampling_implementation: Optional[str] = 'paper'
     # subsampling_threshold = 1e-3
@@ -755,21 +807,29 @@ def main() -> None:
     #     min_word_freq, min_sentence_len)
 
     # # Adversarial
-    sessions = range(111, 112)  # Obama 2008 - 2010
-    # sessions = range(102, 112)  # 2000s
-    # sessions = range(79, 112)   # post-WWII
-    output_dir = '../../data/processed/adversarial/44_Obama_1e-5'
+    # sessions = during['Obama']
+    # output_dir = '../../data/processed/adversarial/2000s'
     subsampling_implementation: Optional[str] = 'paper'
     subsampling_threshold = 1e-5
     underscored_dir = '../../data/interim/underscored_corpora'
     min_word_freq = 15
     min_speech_length = 20
-    os.makedirs(output_dir, exist_ok=True)
-    print(f'Reading {sessions}. Writing to {output_dir}')
-    export_word_level_party_adversarial(
-        sessions, output_dir, underscored_dir,
-        subsampling_implementation, subsampling_threshold,
-        min_word_freq, min_speech_length)
+
+    # os.makedirs(output_dir, exist_ok=True)
+    # print(f'Reading {sessions}. Writing to {output_dir}')
+    # export_adversarial(
+    #     sessions, output_dir, underscored_dir,
+    #     subsampling_implementation, subsampling_threshold,
+    #     min_word_freq, min_speech_length)
+
+    for presidency, session in during.items():
+        output_dir = f'../../data/processed/adversarial/1e-5/{presidency}'
+        os.makedirs(output_dir, exist_ok=True)
+        tqdm.write(f'Reading {presidency}. Writing to {output_dir}')
+        export_adversarial(
+            session, output_dir, underscored_dir,
+            subsampling_implementation, subsampling_threshold,
+            min_word_freq, min_speech_length)
 
 
 
