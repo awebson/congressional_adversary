@@ -49,7 +49,7 @@ class Experiment(ABC):
                 import shutil
                 stuff = os.listdir(config.output_dir)
                 for filename in stuff:
-                    if filename.startswith('tensorboard'):
+                    if filename.startswith('TB '):
                         tb_log_dir = os.path.join(config.output_dir, filename)
                         shutil.rmtree(tb_log_dir)
                         print(f'Deleted {filename} in output_dir')
