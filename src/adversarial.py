@@ -49,10 +49,10 @@ class AdversarialDecomposer(nn.Module):
 
         # Adversarial Encoder
         self.encoder = nn.Sequential(
-            nn.Linear(embed_size, config.encoded_size),
-            # nn.ReLU(),
+            nn.Linear(embed_size, config.hidden_size),
+            nn.PReLU(init=1),
             # nn.Dropout(p=config.dropout_p),
-            # nn.Linear(config.hidden_size, config.encoded_size),
+            nn.Linear(config.hidden_size, config.encoded_size),
             # nn.ReLU()
         )
         self.deno_loss_weight = config.denotation_weight
@@ -67,20 +67,22 @@ class AdversarialDecomposer(nn.Module):
             self, data.word_frequency, data.word_to_id)
 
         # Connotation: Party Classifier
-        # self.party_classifier = nn.Linear(
-        #     config.encoded_size, config.num_prediction_classes)
-        self.party_classifier = nn.Sequential(
-            nn.Linear(config.encoded_size, config.hidden_size),
-            nn.ReLU(),
-            # nn.Dropout(p=config.dropout_p),
-            nn.Linear(config.hidden_size, config.num_prediction_classes),
-        )
+        self.party_classifier = nn.Linear(
+            config.encoded_size, config.num_prediction_classes)
+        # self.party_classifier = nn.Sequential(
+        #     nn.Linear(config.encoded_size, config.hidden_size),
+        #     nn.ReLU(),
+        #     # nn.Dropout(p=config.dropout_p),
+        #     nn.Linear(config.hidden_size, config.num_prediction_classes),
+        # )
         self.cross_entropy = nn.CrossEntropyLoss()
 
         # Initialization Tricks
         if config.init_trick:
             nn.init.eye_(self.encoder[0].weight)
             nn.init.zeros_(self.encoder[0].bias)
+            nn.init.eye_(self.encoder[2].weight)
+            nn.init.zeros_(self.encoder[2].bias)
             nn.init.eye_(self.center_decoder.weight)
             nn.init.zeros_(self.center_decoder.bias)
             nn.init.eye_(self.context_decoder.weight)
@@ -661,34 +663,34 @@ def main() -> None:
     # long_spaced = ([None] * 7 + [.6]) * 2
 
     config = AdversarialConfig(
-        output_dir=f'../results/adversarial/Obama/{today}/1d0c frozen sanity InitTrick',
+        output_dir=f'../results/adversarial/PReLU/1d0c w2vTi',
         denotation_weight=1,
         connotation_weight=0,
-        # pretrained_embedding='../results/baseline/word2vec_Obama.txt',
+        pretrained_embedding='../results/baseline/word2vec_Obama.txt',
         freeze_embedding=True,
         init_trick=True,
         encoded_size=300,
-        hidden_size=100,
+        hidden_size=300,
         num_epochs=50,
         batch_size=8,
         auto_save=True,
-        auto_save_per_epoch=1,
+        auto_save_per_epoch=5,
         device=torch.device('cuda:0')
     )
 
     # config = AdversarialConfig(
-    #     output_dir=f'../results/adversarial/Obama/{today}/1d0c frozen w2v InitTrick',
-    #     denotation_weight=1,
-    #     connotation_weight=0,
+    #     output_dir=f'../results/adversarial/PReLU/0d1c w2vTi',
+    #     denotation_weight=0,
+    #     connotation_weight=1,
     #     pretrained_embedding='../results/baseline/word2vec_Obama.txt',
     #     freeze_embedding=True,
     #     init_trick=True,
     #     encoded_size=300,
-    #     hidden_size=100,
+    #     hidden_size=300,
     #     num_epochs=50,
     #     batch_size=8,
     #     auto_save=True,
-    #     auto_save_per_epoch=1,
+    #     auto_save_per_epoch=5,
     #     device=torch.device('cuda:1')
     # )
 
