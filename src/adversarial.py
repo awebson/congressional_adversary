@@ -59,8 +59,8 @@ class AdversarialDecomposer(nn.Module):
         self.cono_loss_weight = config.connotation_weight
 
         # Denotation: Skip-Gram Negative Sampling
-        self.center_decoder = nn.Linear(config.encoded_size, embed_size)
-        self.context_decoder = nn.Linear(config.encoded_size, embed_size)
+        self.deno_decoder = nn.Linear(config.encoded_size, embed_size)
+        # self.context_decoder = nn.Linear(config.encoded_size, embed_size)
 
         self.num_negative_samples = config.num_negative_samples
         SkipGramNegativeSampling.init_negative_sampling(
@@ -83,10 +83,10 @@ class AdversarialDecomposer(nn.Module):
             nn.init.zeros_(self.encoder[0].bias)
             nn.init.eye_(self.encoder[2].weight)
             nn.init.zeros_(self.encoder[2].bias)
-            nn.init.eye_(self.center_decoder.weight)
-            nn.init.zeros_(self.center_decoder.bias)
-            nn.init.eye_(self.context_decoder.weight)
-            nn.init.zeros_(self.context_decoder.bias)
+            nn.init.eye_(self.deno_decoder.weight)
+            nn.init.zeros_(self.deno_decoder.bias)
+            # nn.init.eye_(self.context_decoder.weight)
+            # nn.init.zeros_(self.context_decoder.bias)
 
         self.to(self.device)
 
@@ -152,9 +152,12 @@ class AdversarialDecomposer(nn.Module):
             encoded_negative_context: R3Tensor
             ) -> Scalar:
         """Faster but less readable."""
-        center = self.center_decoder(encoded_center)
-        true_context = self.context_decoder(encoded_true_context)
-        negative_context = self.context_decoder(encoded_negative_context)
+        center = self.deno_decoder(encoded_center)
+        # true_context = self.context_decoder(encoded_true_context)
+        # negative_context = self.context_decoder(encoded_negative_context)
+        true_context = self.deno_decoder(encoded_true_context)
+        negative_context = self.deno_decoder(encoded_negative_context)
+
 
         # batch_size * embed_size
         objective = torch.sum(
@@ -450,10 +453,14 @@ class AdversarialExperiment(Experiment):
         self.cono_optimizer = config.optimizer(
             self.model.party_classifier.parameters(),
             lr=config.learning_rate)
+        # self.deno_optimizer = config.optimizer(
+        #     list(self.model.deno_decoder.parameters()) +
+        #     list(self.model.context_decoder.parameters()),
+        #     lr=config.learning_rate)
         self.deno_optimizer = config.optimizer(
-            list(self.model.center_decoder.parameters()) +
-            list(self.model.context_decoder.parameters()),
+            self.model.deno_decoder.parameters(),
             lr=config.learning_rate)
+
 
         self.to_be_saved = {
             'config': self.config,
@@ -663,9 +670,9 @@ def main() -> None:
     # long_spaced = ([None] * 7 + [.6]) * 2
 
     config = AdversarialConfig(
-        output_dir=f'../results/adversarial/PReLU/1d0c w2vTi',
-        denotation_weight=1,
-        connotation_weight=0,
+        output_dir=f'../results/adversarial/PReLU/0d1c w2vTi SE',
+        denotation_weight=0,
+        connotation_weight=1,
         pretrained_embedding='../results/baseline/word2vec_Obama.txt',
         freeze_embedding=True,
         init_trick=True,
