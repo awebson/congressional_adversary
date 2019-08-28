@@ -469,12 +469,13 @@ def export_skip_gram_corpus(
     """
     raw_frequency: CounterType[str] = Counter()
     tokenized_speeches: List[List[str]] = []
-    for session in tqdm(sessions, desc='Loading underscored corpora'):
+    for session in tqdm(sessions, desc='Building vocabulary'):
         for party in ('D', 'R'):
             underscored_path = os.path.join(
                 input_dir, f'underscored_{party}{session}.txt')
             with open(underscored_path, 'r') as underscored_corpus:
                 for line in underscored_corpus:
+                    line = line.translate(remove_punctutation)
                     tokenized_speech = line.split()
                     raw_frequency.update(tokenized_speech)
                     tokenized_speeches.append(tokenized_speech)
@@ -486,14 +487,6 @@ def export_skip_gram_corpus(
 
     num_words_exported = 0
     subsampled_frequency: CounterType[str] = Counter()
-
-    # Chunked Implementation
-    # for chunk_index, speeches_chunk in tqdm(enumerate(
-    #         partition(tokenized_speeches, output_num_chunks)),
-    #         desc='Exporting Chunks', total=output_num_chunks):
-
-    #     export_speeches: List[List[int]] = []
-    #     for tokenized_speech in speeches_chunk:
 
     export_speeches: List[List[int]] = []
     for tokenized_speech in tqdm(tokenized_speeches, desc='Exporting speeches'):
@@ -543,6 +536,97 @@ def export_skip_gram_corpus(
     print('All set.')
 
 
+def export_parsed_skip_grams(
+        sessions: Iterable[int],
+        output_dir: str,
+        input_dir: str,
+        # output_num_chunks: int,
+        window_radius: int,
+        subsampling_implementation: Optional[str],
+        subsampling_threshold: float,
+        min_word_freq: int,
+        min_document_len: int
+        ) -> None:
+
+    def parse_skip_grams(doc: List[int]) -> Tuple[List[int], List[int]]:
+        """
+        parse one document of word_ids into a flatten list of (center, context)
+        """
+        center_word_ids: List[int] = []
+        context_word_ids: List[int] = []
+        for center_index, center_word_id in enumerate(doc):
+            left_index = max(center_index - window_radius, 0)
+            right_index = min(center_index + window_radius, len(doc) - 1)
+            context_word_id: List[int] = (
+                doc[left_index:center_index] +
+                doc[center_index + 1:right_index + 1])
+            center_word_ids += [center_word_id] * len(context_word_id)
+            context_word_ids += context_word_id
+        return center_word_ids, context_word_ids
+
+    raw_frequency: CounterType[str] = Counter()
+    speeches: List[List[str]] = []
+    for session in tqdm(sessions, desc='Building vocabulary'):
+        for party in ('D', 'R'):
+            underscored_path = os.path.join(
+                input_dir, f'underscored_{party}{session}.txt')
+            with open(underscored_path, 'r') as underscored_corpus:
+                for line in underscored_corpus:
+                    line = line.translate(remove_punctutation)
+                    tokenized_speech = line.split()
+                    raw_frequency.update(tokenized_speech)
+                    speeches.append(tokenized_speech)
+
+    word_to_id, id_to_word = build_vocabulary(raw_frequency, min_word_freq)
+    keep_prob = subsampling(
+        raw_frequency, subsampling_implementation, subsampling_threshold)
+
+    num_words_exported = 0
+    subsampled_frequency: CounterType[str] = Counter()
+
+    export_center_ids: List[int] = []
+    export_context_ids: List[int] = []
+    for words in tqdm(speeches, desc='Parsing skip-grams'):
+        speech = [
+            word for word in words
+            if (raw_frequency[word] > min_word_freq
+                and random.random() < keep_prob[word])
+        ]
+        if len(speech) < min_document_len:
+            continue
+        num_words_exported += len(speech)
+        subsampled_frequency.update(speech)
+        speech_in_word_ids = [word_to_id[word] for word in speech]
+        center_ids, context_ids = parse_skip_grams(speech_in_word_ids)
+        export_center_ids += center_ids
+        export_context_ids += context_ids
+
+    export_sorted_frequency(
+        raw_frequency, subsampled_frequency, min_word_freq,
+        os.path.join(output_dir, 'vocabulary_frequency.txt'))
+    train_data_path = os.path.join(output_dir, f'train_data.pickle')
+
+    with open(train_data_path, 'wb') as export_file:
+        pickle.dump(
+            (word_to_id, id_to_word, subsampled_frequency,
+                export_center_ids, export_context_ids),
+            export_file, protocol=-1)
+
+    print(f'Total number of words = {num_words_exported:,}')
+    preview_path = os.path.join(output_dir, 'preview.txt')
+    with open(preview_path, 'w') as preview_file:
+        preview_file.write(f'vocabulary size = {len(word_to_id):,}\n')
+        preview_file.write(f'total number of words = {num_words_exported:,}\n')
+        preview_file.write(f'subsampling method = {subsampling_implementation}\n')
+        preview_file.write(f'subsampling threshold = {subsampling_threshold}\n')
+        preview_file.write(f'minimum word frequency = {min_word_freq}\n')
+        # preview_file.write(f'\nPreview:\n')
+        # for speech_in_word_ids in export[:100]:
+        #     speech = map(id_to_word.get, speech_in_word_ids)
+        #     preview_file.write(' '.join(speech) + '\n')  # type: ignore
+    print('All set.')
+
+
 def export_adversarial(
         sessions: Iterable[int],
         output_dir: str,
@@ -559,7 +643,7 @@ def export_adversarial(
                 input_dir, f'underscored_{party}{session}.txt')
             with open(underscored_path, 'r') as underscored_corpus:
                 for line in underscored_corpus:
-                    line = line.translate(remove_punctutation)
+                    # line = line.translate(remove_punctutation)  # Done in S3
                     words = line.split()
                     raw_frequency.update(words)
     word_to_id, id_to_word = build_vocabulary(raw_frequency, min_word_freq)
@@ -753,19 +837,46 @@ def main() -> None:
     # os.makedirs(output_dir, exist_ok=True)
     # export_plain_text(sessions, output_dir, underscored_dir)
 
-    # # tokenized corpus for skip-gram
-    # output_dir = '../../data/processed/skip_gram/44_Obama_1e-5'
+    # # Skip-Gram Negative Sampling
+    # sessions = during['Obama']
+    # output_dir = '../../data/processed/skip_gram/Obama_1e-5'
     # subsampling_implementation: Optional[str] = 'paper'
     # subsampling_threshold = 1e-5
     # underscored_dir = '../../data/interim/underscored_corpora'
     # min_word_freq = 15
-    # min_speech_length = 5
+    # min_speech_length = 20
     # os.makedirs(output_dir, exist_ok=True)
     # print(f'Reading {sessions}. Writing to {output_dir}')
     # export_skip_gram_corpus(
     #     sessions, output_dir, underscored_dir,  # output_num_chunks,
     #     subsampling_implementation, subsampling_threshold,
     #     min_word_freq, min_speech_length)
+
+    # preparsed SGNS
+    sessions = during['Obama']
+    output_dir = '../../data/processed/skip_gram_preparsed/tuple_Obama_1e-5'
+    window_radius = 5
+    subsampling_implementation: Optional[str] = 'paper'
+    subsampling_threshold = 1e-5
+    underscored_dir = '../../data/interim/underscored_corpora'
+    min_word_freq = 15
+    min_speech_length = 20
+    os.makedirs(output_dir, exist_ok=True)
+    print(f'Reading {sessions}. Writing to {output_dir}')
+    export_parsed_skip_grams(
+        sessions, output_dir, underscored_dir, window_radius,
+        subsampling_implementation, subsampling_threshold,
+        min_word_freq, min_speech_length)
+
+    # SGNS from raw text, no underscore phrases
+    # corpus_path = '~/Research/common_corpora/wikipedia_min20pageviews.txt'
+    # output_dir = '../corpora/skip_gram/no_underscore'
+    # corpus_path = os.path.expanduser(corpus_path)
+    # output_num_chunks = 1
+    # subsampling_implementation: Optional[str] = 'code'
+    # subsampling_threshold = 1e-5
+    # min_word_freq = 15
+    # end_to_end(corpus_path, output_dir, output_num_chunks, subsampling_implementation, subsampling_threshold, min_word_freq)
 
     # # Naive word-level party classifier
     # underscored_dir = '../../data/interim/underscored_corpora'
@@ -781,15 +892,6 @@ def main() -> None:
     #     subsampling_implementation, subsampling_threshold,
     #     min_word_freq, min_sentence_len)
 
-    # skip-gram negative sampling from raw text, no underscore phrases
-    # corpus_path = '~/Research/common_corpora/wikipedia_min20pageviews.txt'
-    # output_dir = '../corpora/skip_gram/no_underscore'
-    # corpus_path = os.path.expanduser(corpus_path)
-    # output_num_chunks = 1
-    # subsampling_implementation: Optional[str] = 'code'
-    # subsampling_threshold = 1e-5
-    # min_word_freq = 15
-    # end_to_end(corpus_path, output_dir, output_num_chunks, subsampling_implementation, subsampling_threshold, min_word_freq)
 
     # Party Prediction
     # output_dir = '../../data/processed/party_classifier/2000s_len30sent_1e-3'
@@ -807,30 +909,19 @@ def main() -> None:
     #     min_word_freq, min_sentence_len)
 
     # # Adversarial
-    # sessions = during['Obama']
-    # output_dir = '../../data/processed/adversarial/2000s'
-    subsampling_implementation: Optional[str] = 'paper'
-    subsampling_threshold = 1e-5
-    underscored_dir = '../../data/interim/underscored_corpora'
-    min_word_freq = 15
-    min_speech_length = 20
-
-    # os.makedirs(output_dir, exist_ok=True)
-    # print(f'Reading {sessions}. Writing to {output_dir}')
-    # export_adversarial(
-    #     sessions, output_dir, underscored_dir,
-    #     subsampling_implementation, subsampling_threshold,
-    #     min_word_freq, min_speech_length)
-
-    for presidency, session in during.items():
-        output_dir = f'../../data/processed/adversarial/1e-5/{presidency}'
-        os.makedirs(output_dir, exist_ok=True)
-        tqdm.write(f'Reading {presidency}. Writing to {output_dir}')
-        export_adversarial(
-            session, output_dir, underscored_dir,
-            subsampling_implementation, subsampling_threshold,
-            min_word_freq, min_speech_length)
-
+    # subsampling_implementation: Optional[str] = 'paper'
+    # subsampling_threshold = 1e-5
+    # underscored_dir = '../../data/interim/underscored_corpora'
+    # min_word_freq = 15
+    # min_speech_length = 20
+    # for presidency, session in during.items():
+    #     output_dir = f'../../data/processed/adversarial/1e-5/{presidency}'
+    #     os.makedirs(output_dir, exist_ok=True)
+    #     tqdm.write(f'Reading {presidency}. Writing to {output_dir}')
+    #     export_adversarial(
+    #         session, output_dir, underscored_dir,
+    #         subsampling_implementation, subsampling_threshold,
+    #         min_word_freq, min_speech_length)
 
 
 if __name__ == '__main__':
