@@ -1,7 +1,7 @@
 import pickle
 import json
 import re
-from os import path
+import os
 from collections import Counter
 from typing import Set, Tuple, List, Dict, Iterable, Optional
 
@@ -27,13 +27,13 @@ def load_parsing_result(
     if the original file has been updated. In that case, you should manually
     delete the outdated cache files.
     """
-    cache_path = path.join(parsing_result_dir, f'cache_{session}_{party}.pickle')
-    if not path.exists(cache_path):  # haven't cached yet
+    cache_path = os.path.join(parsing_result_dir, f'cache_{session}_{party}.pickle')
+    if not os.path.exists(cache_path):  # haven't cached yet
         filtered_sentences: List[Dict] = []
         append_to_filtered_sentences = filtered_sentences.append
         for chunk in tqdm(range(num_chunks),
                           desc=f'Decoding parsing result of {session}_{party}'):
-            in_path = path.join(
+            in_path = os.path.join(
                 parsing_result_dir, f'{session}_{party}{chunk}.json')
             with open(in_path) as parsing_result_file:
                 parsing_result = json.load(parsing_result_file)
@@ -159,7 +159,7 @@ def compute_collocation(
     """
     tokenized_corpus: List[str] = []
     for chunk_index in range(num_chunks):
-        corpus_path = path.join(corpora_dir, f'{session}_{party}{chunk_index}.txt')
+        corpus_path = os.path.join(corpora_dir, f'{session}_{party}{chunk_index}.txt')
         with open(corpus_path) as corpus_file:
             raw_text = corpus_file.read()
         tokens: List[str] = nltk.tokenize.word_tokenize(raw_text)
@@ -196,49 +196,61 @@ def compute_collocation(
 
 
 def aggregate_phrases(
-        phrase_sources: List[str],
+        Dem_phrase_sources: List[str],
+        GOP_phrase_sources: List[str],
         out_path: str,
-        top_k_phrases_per_source: int
+        top_k_phrases_per_source: int,
+        min_frequency: int
         ) -> None:
     """load named_entities, NP_VP, collocations, write statistics"""
-    phrase_counter: Counter = Counter()
-    for source_path in phrase_sources:
-        with open(source_path) as in_file:
-            temp_counter: Counter = Counter()
-            for line_num, line in enumerate(in_file):
-                if line_num > top_k_phrases_per_source:
-                    break
-                frequency, phrase = line.split('\t')
-                phrase = phrase.strip()
-                temp_counter[phrase] = int(frequency)
-        phrase_counter.update(temp_counter)
+
+    def load_counters(counter_paths: List[str]) -> Counter:
+        union_counter: Counter = Counter()
+        for source_path in counter_paths:
+            with open(source_path) as in_file:
+                temp_counter: Counter = Counter()
+                for line_num, line in enumerate(in_file):
+                    if line_num > top_k_phrases_per_source:
+                        break
+                    frequency, phrase = line.split('\t')
+                    frequency = int(frequency)
+                    if frequency < min_frequency:
+                        break
+                    phrase = phrase.strip()
+                    temp_counter[phrase] = frequency
+            union_counter = union_counter | temp_counter
+        return union_counter
+
+    Dem_counter = load_counters(Dem_phrase_sources)
+    GOP_counter = load_counters(GOP_phrase_sources)
+    phrase_counter = Dem_counter + GOP_counter
 
     output_iterable = [
-        (len(phrase_text.split()), phrase_counter[phrase_text], phrase_text)
-        for phrase_text in phrase_counter]
+        (len(phrase.split()), Dem_counter[phrase], GOP_counter[phrase], phrase)
+        for phrase in phrase_counter]
+
     # When replacing words with underscored phrases,
     # replace long phrases first, and then frequent phrases.
     output_iterable.sort(key=lambda t: (t[0], t[1]), reverse=True)
     with open(out_path, 'w') as out_file:
-        for _, freq, phrase in output_iterable:
-            out_file.write(f'{freq}\t{phrase}\n')
+        for _, D_freq, R_freq, phrase in output_iterable:
+            out_file.write(f'{D_freq}\t{R_freq}\t{phrase}\n')
 
 
 def main() -> None:
     sessions = range(79, 112)
-    output_base_dir = '../../data/interim/'
     parsing_result_dir = '../../data/interim/CoreNLP_parsed'
-    num_chunks = 10
+    num_parsing_chunks = 10
+    out_dir = '../../data/interim/'
 
-    # pickle these from the parsing results
+    # Pickle these from the parsing results
     auto_caching: Optional[Set[str]] = {'parse', 'entitymentions'}
 
-    corpora_dir = 'partitioned_corpora'  # for compute_collocation
-    # note partitioned corpora removed speeches without known speaker metadata
-    min_frequency_per_source = 15
-    top_k_phrases_per_source = 1000  # for aggregate_phrases
+    # For compute_collocation
+    # Note partitioned corpora removed speeches without known speaker metadata
+    corpora_dir = 'partitioned_corpora'
 
-    # noun phrases/ verb phrases including these words will be excluded
+    # Noun phrases/ verb phrases including these words will be excluded
     procedural_words = {
         'yield', 'motion', 'order', 'ordered', 'quorum', 'roll', 'unanimous',
         'mr.', 'madam', 'speaker', 'chairman', 'president', 'senator',
@@ -248,32 +260,37 @@ def main() -> None:
     stop_words = discard_tokens.union(
         set(nltk.corpus.stopwords.words('english')))
 
-    # sanity check that parsing result files exist
-    sane = True
-    for session in sessions:
-        for party in ('D', 'R'):
-            for chunk in range(num_chunks):
-                in_path = f'{parsing_result_dir}/{session}_{party}{chunk}.json'
-                if not path.isfile(in_path):
-                    print(f'{in_path} does not exist!')
-                    sane = False
-    if not sane:
-        raise FileNotFoundError()
+    # For aggregate_phrases
+    min_frequency_per_source = 15
+    top_k_phrases_per_source = 1000
+    final_min_frequency = 30
+
+    # Sanity check that parsing result files exist
+    # sane = True
+    # for session in sessions:
+    #     for party in ('D', 'R'):
+    #         for chunk in range(num_parsing_chunks):
+    #             in_path = f'{parsing_result_dir}/{session}_{party}{chunk}.json'
+    #             if not os.path.isfile(in_path):
+    #                 print(f'{in_path} does not exist!')
+    #                 sane = False
+    # if not sane:
+    #     raise FileNotFoundError()
 
     print(f'Processing sessions from {sessions}')
     for session in tqdm(sessions, desc='Sessions'):
         for party in ('D', 'R'):
-            name_entities_path = path.join(
-                output_base_dir, 'named_entities', f'{session}_{party}.txt')
-            noun_and_verb_phrases_path = path.join(
-                output_base_dir, 'noun_and_verb_phrases', f'{session}_{party}.txt')
-            collocation_bigram_path = path.join(
-                output_base_dir, 'collocation_bigram', f'{session}_{party}.txt')
-            collocation_trigram_path = path.join(
-                output_base_dir, 'collocation_trigram', f'{session}_{party}.txt')
+            name_entities_path = os.path.join(
+                out_dir, 'named_entities', f'{session}_{party}.txt')
+            noun_and_verb_phrases_path = os.path.join(
+                out_dir, 'noun_and_verb_phrases', f'{session}_{party}.txt')
+            collocation_bigram_path = os.path.join(
+                out_dir, 'collocation_bigram', f'{session}_{party}.txt')
+            collocation_trigram_path = os.path.join(
+                out_dir, 'collocation_trigram', f'{session}_{party}.txt')
 
             # sentences = load_parsing_result(
-            #     parsing_result_dir, session, party, num_chunks, auto_caching)
+            #     parsing_result_dir, session, party, num_parsing_chunks, auto_caching)
             # extract_named_entities(
             #     sentences, name_entities_path, min_frequency_per_source)
             # extract_noun_and_verb_phrases(
@@ -282,19 +299,27 @@ def main() -> None:
             # del sentences
 
             # compute_collocation(
-            #     corpora_dir, session, party, num_chunks,
+            #     corpora_dir, session, party, num_parsing_chunks,
             #     collocation_bigram_path, collocation_trigram_path,
             #     discard_tokens, stop_words, min_frequency_per_source)
 
-            phrase_sources = [
-                name_entities_path,
-                noun_and_verb_phrases_path,
-                collocation_bigram_path,
-                collocation_trigram_path]
-            final_output_path = path.join(
-                output_base_dir, 'aggregated_phrases', f'{session}_{party}.txt')
-            aggregate_phrases(
-                phrase_sources, final_output_path, top_k_phrases_per_source)
+        # Combine phrases from both parties
+        Dem_phrase_sources = [
+            os.path.join(out_dir, 'named_entities', f'{session}_D.txt'),
+            os.path.join(out_dir, 'noun_and_verb_phrases', f'{session}_D.txt'),
+            os.path.join(out_dir, 'collocation_bigram', f'{session}_D.txt'),
+            os.path.join(out_dir, 'collocation_trigram', f'{session}_D.txt'),
+            ]
+        GOP_phrase_sources = [
+            os.path.join(out_dir, 'named_entities', f'{session}_R.txt'),
+            os.path.join(out_dir, 'noun_and_verb_phrases', f'{session}_R.txt'),
+            os.path.join(out_dir, 'collocation_bigram', f'{session}_R.txt'),
+            os.path.join(out_dir, 'collocation_trigram', f'{session}_R.txt')
+        ]
+        final_output_path = os.path.join(out_dir, 'aggregated_phrases', f'{session}.txt')
+        aggregate_phrases(
+            Dem_phrase_sources, GOP_phrase_sources, final_output_path,
+            top_k_phrases_per_source, final_min_frequency)
 
 
 if __name__ == '__main__':
