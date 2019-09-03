@@ -3,7 +3,7 @@ import pprint
 from abc import ABC, abstractmethod
 from datetime import datetime
 from dataclasses import dataclass, asdict
-from typing import Tuple, Dict, Optional, Any, no_type_check
+from typing import Tuple, List, Dict, Optional, Any, no_type_check
 
 import torch
 from torch.utils.tensorboard import SummaryWriter
@@ -21,8 +21,8 @@ class ExperimentConfig():
     reload_path: Optional[str]
     clear_tensorboard_log_in_output_dir: bool
     delete_all_exisiting_files_in_output_dir: bool
-    auto_save: bool
     auto_save_per_epoch: Optional[int]
+    auto_save_if_interrupted: bool
 
 
 class Experiment(ABC):
@@ -75,7 +75,7 @@ class Experiment(ABC):
     def __exit__(self, exception_type, exception_value, traceback) -> None:
         if exception_type is not None:
             print(f'Experiment interrupted.')
-            if self.config.auto_save:
+            if self.config.auto_save_if_interrupted:
                 self.save_everything(
                     os.path.join(self.config.output_dir, f'interrupted.pt'))
         else:
@@ -83,8 +83,6 @@ class Experiment(ABC):
         self.tensorboard.close()
 
     def auto_save(self, epoch_index: int) -> None:
-        if not self.config.auto_save:
-            return
         if self.config.auto_save_per_epoch:
             interim_save = epoch_index % self.config.auto_save_per_epoch == 0
         final_save = epoch_index == self.config.num_epochs
@@ -172,3 +170,56 @@ class Experiment(ABC):
     @abstractmethod
     def train(self) -> Any:
         pass
+
+    @staticmethod
+    def load_embedding(in_path: str) -> Tuple[
+            torch.Tensor,
+            Dict[str, int],
+            Dict[int, str]]:
+        id_generator = 0
+        word_to_id: Dict[str, int] = {}
+        id_to_word: Dict[int, str] = {}
+        embedding: List[List[float]] = []  # cast to float when instantiating tensor
+        print(f'Loading pretrained embedding from {in_path}', flush=True)
+        with open(in_path) as file:
+            vocab_size, embed_size = map(int, file.readline().split())
+            print(f'vocab_size = {vocab_size:,}, embed_size = {embed_size}')
+            for raw_line in file:
+                line: List[str] = raw_line.split()
+                word = line[0]
+                embedding.append(list(map(float, line[-embed_size:])))
+                word_to_id[word] = id_generator
+                id_to_word[id_generator] = word
+                id_generator += 1
+        embedding = torch.tensor(embedding)
+        return embedding, word_to_id, id_to_word
+
+    @staticmethod
+    def convert_word_ids(
+            corpus: List[int],
+            corpus_id_to_word: Dict[int, str],
+            pretrained_word_to_id: Dict[str, int],
+            OOV_token: Optional[str] = None
+            ) -> List[int]:
+        """
+        Convert word_ids constructed from preprocessed corpus
+        to the word_ids used by pretrained_embedding.
+        """
+        converted = []
+        out_of_vocabulary = set()
+        for corpus_word_id in corpus:
+            word = corpus_id_to_word[corpus_word_id]
+            try:
+                converted.append(pretrained_word_to_id[word])
+            except KeyError:
+                out_of_vocabulary.add(word)
+                if OOV_token:
+                    converted.append(pretrained_word_to_id[OOV_token])
+
+        if out_of_vocabulary:
+            print('The following words in the corpus are out of'
+                  'the vocabulary of the given pretrained embedding.')
+            print(out_of_vocabulary)
+            if not OOV_token:
+                raise KeyError
+        return converted
