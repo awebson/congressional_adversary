@@ -178,23 +178,22 @@ class AdversarialDecomposer(nn.Module):
                            f'({Dem_freq}, {GOP_freq})\t\t'
                            f'{word}\n')
 
-    def export_decomposed_embedding(
+    def export_encoded_embedding(
             self,
             export_path: Optional[str] = None,
             tensorboard: bool = False,
             device: Optional[torch.device] = None
-            ) -> None:
+            ) -> Optional[Matrix]:
         """for querying nearest neighbors & visualization"""
-        all_vocab_ids = torch.arange(
-            len(self.word_to_id), dtype=torch.long)
+        all_vocab_ids = torch.arange(len(self.word_to_id), dtype=torch.long)
         if device:
-            all_vocab_ids.to(device)
+            all_vocab_ids = all_vocab_ids.to(device)
         else:
-            all_vocab_ids.to(self.device)
+            all_vocab_ids = all_vocab_ids.to(self.device)
 
         self.eval()
         with torch.no_grad():
-            decomposed = self.encoder(self.embedding(all_vocab_ids))
+            encoded_embed = self.encoder(self.embedding(all_vocab_ids))
         self.train()
 
         if export_path:
@@ -204,8 +203,16 @@ class AdversarialDecomposer(nn.Module):
                 self.id_to_word[word_id]
                 for word_id in all_vocab_ids]  # type: ignore
             self.tensorboard.add_embedding(
-                decomposed, embedding_labels, global_step=0)  # TODO .weight.data?
-        return decomposed
+                encoded_embed, embedding_labels, global_step=0)  # TODO .weight.data?
+        return encoded_embed
+
+    def eval_word_similarity(self) -> float:
+        from evaluations.external.word_similarity import all_wordsim
+        all_vocab_ids = torch.arange(
+            len(self.word_to_id), dtype=torch.long, device=self.device)
+        frozen_pretrained = self.embedding(all_vocab_ids)
+        encoded_embed = self.export_encoded_embedding()
+        return all_wordsim.mean_delta(encoded_embed, frozen_pretrained, self.id_to_word)
 
 
 class AdversarialDataset(Dataset):
@@ -233,6 +240,11 @@ class AdversarialDataset(Dataset):
                 self.center_word_ids, corpus_id_to_word, self.word_to_id)
             self.context_word_ids = Experiment.convert_word_ids(
                 self.context_word_ids, corpus_id_to_word, self.word_to_id)
+
+        if config.debug_subset_corpus:
+            self.center_word_ids = self.center_word_ids[:config.debug_subset_corpus]
+            self.context_word_ids = self.context_word_ids[:config.debug_subset_corpus]
+            self.labels = self.labels[:config.debug_subset_corpus]
 
     def __len__(self) -> int:
         return len(self.labels)
@@ -374,8 +386,11 @@ class AdversarialExperiment(Experiment):
                         or epoch_index == 1):
                     export_path = os.path.join(
                         config.output_dir,
-                        f'error_analysis_epoch{epoch_index}.txt')
+                        f'vocab_cono_epoch{epoch_index}.txt')
                     self.model.all_vocab_connotation(export_path)
+                    mean_delta = self.model.eval_word_similarity()
+                    self.tensorboard.add_scalar(
+                        'word_sim_mean_delta', mean_delta, epoch_index)
 
             # Discard partisan neutral words
             # if config.subsampling_threshold_schedule:
@@ -394,8 +409,8 @@ class AdversarialConfig():
     # Essential
     input_dir: str = '../data/processed/adversarial/1e-5/Obama'
     output_dir: str = '../results/adversarial/debug'
-    device: torch.device = torch.device('cuda:0')
-    # debug_subset_corpus: Optional[int] = None
+    device: torch.device = torch.device('cuda')
+    debug_subset_corpus: Optional[int] = None
     num_dataloader_threads: int = 0
 
     # Hyperparameters
@@ -431,13 +446,13 @@ class AdversarialConfig():
         'undocumented', 'immigrants', 'illegal_immigrants', 'illegal_aliens',
         'protection_and_affordable', 'the_affordable_care_act',
         'obamacare', 'health_care_bill', 'socialized_medicine', 'public_option',
-        'the_wall_street_reform_legislation',
         'financial_stability',
         'capital_gains_tax',
         'second_amendment_rights',
         'government_spending',
-        'deficit_spending',
-        'bush_tax_cuts'
+        'offensive_missiles', 'star_wars_program', 'icbms',
+        'corporate_profits', 'earnings',
+        'retroactive_immunity', 'the_fisa_bill'
     )
 
     # Housekeeping
@@ -455,61 +470,98 @@ class AdversarialConfig():
 def main() -> None:
     today = datetime.now().strftime("%m-%d %a")
 
-    # Vanilla denotation
+    # debug
     config = AdversarialConfig(
-        output_dir=f'../results/adversarial/anew/1dc0',
+        input_dir='../data/processed/adversarial/1e-5/Obama',
+        output_dir='../results/debug1_Ti',
+        debug_subset_corpus=1000_000,
         denotation_weight=1,
         connotation_weight=0,
-        pretrained_embedding='../results/baseline/word2vec_Obama.txt',
+        pretrained_embedding='../data/processed/pretrained_word2vec/Obama_SGNS.txt',
         init_trick=True,
         encoded_size=300,
         # hidden_size=300,
-        num_epochs=30,
-        batch_size=1024,
-        auto_save_per_epoch=3,
-        device=torch.device('cuda:0')
-    )
-
-    # Deno minus cono 1d - 10c
-    config = AdversarialConfig(
-        output_dir=f'../results/adversarial/anew/1d-10c',
-        denotation_weight=1,
-        connotation_weight=-10,
-        pretrained_embedding='../results/baseline/word2vec_Obama.txt',
-        init_trick=True,
-        encoded_size=300,
-        num_epochs=30,
-        batch_size=1024,
-        auto_save_per_epoch=3,
+        num_epochs=10,
+        batch_size=1000,
+        auto_save_per_epoch=1,
         device=torch.device('cuda:1')
     )
 
-    # # Vanilla connotation
+
+    # # Vanilla denotation
     # config = AdversarialConfig(
-    #     output_dir=f'../results/adversarial/anew/0d1c',
-    #     denotation_weight=0,
-    #     connotation_weight=1,
-    #     pretrained_embedding='../results/baseline/word2vec_Obama.txt',
-    #     init_trick=True,
+    #     input_dir='../data/processed/adversarial/1e-5/for_real',
+    #     output_dir='../results/adversarial/for_real/1d 0c',
+    #     denotation_weight=1,
+    #     connotation_weight=0,
+    #     pretrained_embedding='../data/processed/pretrained_word2vec/for_real.txt',
+    #     # init_trick=True,
     #     encoded_size=300,
+    #     # hidden_size=300,
     #     num_epochs=30,
     #     batch_size=1024,
     #     auto_save_per_epoch=3,
+    #     device=torch.device('cuda')
+    # )
+
+
+    # Deno minus cono 1d - 10c
+    config = AdversarialConfig(
+        input_dir='../data/processed/adversarial/1e-5/W_Bush',
+        output_dir='../results/for_real/1d -12c',
+        denotation_weight=1,
+        connotation_weight=-12,
+        pretrained_embedding='../data/processed/pretrained_word2vec/for_real.txt',
+        encoded_size=300,
+        num_epochs=30,
+        batch_size=4096,
+        auto_save_per_epoch=3,
+        num_dataloader_threads=12,
+        device=torch.device('cuda:0')
+    )
+
+    # config = AdversarialConfig(
+    #     input_dir='../data/processed/adversarial/1e-5/W_Bush',
+    #     output_dir='../results/W_Bush/1d -12c',
+    #     denotation_weight=1,
+    #     connotation_weight=-12,
+    #     pretrained_embedding='../data/processed/pretrained_word2vec/W_Bush.txt',
+    #     encoded_size=300,
+    #     num_epochs=30,
+    #     batch_size=4096,
+    #     auto_save_per_epoch=3,
+    #     num_dataloader_threads=0,
+    #     device=torch.device('cuda:1')
+    # )
+
+
+    # # Vanilla connotation
+    # config = AdversarialConfig(
+    #     input_dir='../data/processed/adversarial/1e-5/W_Bush',
+    #     output_dir=f'../results/W_Bush/0d 1c',
+    #     denotation_weight=0,
+    #     connotation_weight=1,
+    #     pretrained_embedding='../data/processed/pretrained_word2vec/W_Bush.txt',
+    #     encoded_size=300,
+    #     num_epochs=30,
+    #     batch_size=4096,
+    #     auto_save_per_epoch=3,
+    #     num_dataloader_threads=4,
     #     device=torch.device('cuda:1')
     # )
 
     # # Cono minus deno -0.05d + 1c
     # config = AdversarialConfig(
-    #     output_dir=f'../results/adversarial/anew/-0.05d1c',
-    #     denotation_weight=-0.05,
+    #     output_dir=f'../results/adversarial/Obama/-0.001d1c NTi',
+    #     denotation_weight=-0.001,
     #     connotation_weight=1,
     #     pretrained_embedding='../results/baseline/word2vec_Obama.txt',
-    #     init_trick=True,
+    #     init_trick=False,
     #     encoded_size=300,
     #     num_epochs=30,
     #     batch_size=1024,
     #     auto_save_per_epoch=3,
-    #     device=torch.device('cuda:0')
+    #     device=torch.device('cuda:1')
     # )
 
     black_box = AdversarialExperiment(config)

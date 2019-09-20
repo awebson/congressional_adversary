@@ -207,7 +207,7 @@ class Experiment(ABC):
         """
         converted = []
         out_of_vocabulary = set()
-        for corpus_word_id in corpus:
+        for corpus_word_id in tqdm(corpus, desc='Converting word_ids'):
             word = corpus_id_to_word[corpus_word_id]
             try:
                 converted.append(pretrained_word_to_id[word])
