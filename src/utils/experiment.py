@@ -171,28 +171,64 @@ class Experiment(ABC):
     def train(self) -> Any:
         pass
 
+    @no_type_check
     @staticmethod
-    def load_embedding(in_path: str) -> Tuple[
+    def load_embedding(
+            in_path: str,
+            word_to_id: Optional[Dict[str, int]] = None
+            ) -> Tuple[
             torch.Tensor,
             Dict[str, int],
             Dict[int, str]]:
-        id_generator = 0
-        word_to_id: Dict[str, int] = {}
-        id_to_word: Dict[int, str] = {}
-        embedding: List[List[float]] = []  # cast to float when instantiating tensor
+        """
+        Load pretrained emebdding from a plain text file, where the first line
+        specifies the vocabulary size and embedding dimensions.
+
+        If word_to_id is passed, embedding will be constructed with
+        the given word_ids.
+        """
         print(f'Loading pretrained embedding from {in_path}', flush=True)
         with open(in_path) as file:
             vocab_size, embed_size = map(int, file.readline().split())
             print(f'vocab_size = {vocab_size:,}, embed_size = {embed_size}')
-            for raw_line in file:
-                line: List[str] = raw_line.split()
-                word = line[0]
-                embedding.append(list(map(float, line[-embed_size:])))
-                word_to_id[word] = id_generator
-                id_to_word[id_generator] = word
-                id_generator += 1
-        embedding = torch.tensor(embedding)
-        return embedding, word_to_id, id_to_word
+
+            if word_to_id is None:
+                embedding: List[List[float]] = []
+                id_generator = 0
+                word_to_id: Dict[str, int] = {}  # type: ignore
+                id_to_word: Dict[int, str] = {}
+                for line in file:
+                    line = line.split()
+                    word = line[0]
+                    embedding.append(list(map(float, line[-embed_size:])))
+                    word_to_id[word] = id_generator
+                    id_to_word[id_generator] = word
+                    id_generator += 1
+                return torch.tensor(embedding), word_to_id, id_to_word
+            else:
+                embedding: Dict[int, List[float]] = {}
+                # out_of_vocabulary = set()
+                for line in file:
+                    line = line.split()
+                    word = line[0]
+                    try:
+                        word_id = word_to_id[word]
+                        embedding[word_id] = list(map(float, line[-embed_size:]))
+                    except KeyError:  # pretrained has more vocab than corpus
+                        continue
+                        # out_of_vocabulary.add(word)
+
+                assert len(word_to_id) == len(embedding)
+
+                # if out_of_vocabulary:
+                #     print('The following words in the corpus are out of '
+                #           'the vocabulary of the given pretrained embedding.')
+                #     print(out_of_vocabulary)
+                #     raise KeyError
+                embedding = [embedding[word_id]
+                             for word_id in range(len(word_to_id))]
+                return torch.tensor(embedding)
+
 
     @staticmethod
     def convert_word_ids(

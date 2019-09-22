@@ -11,6 +11,7 @@ from torch import nn
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 
+from skip_gram import SkipGramNegativeSampling
 from utils.experiment import Experiment
 from utils.improvised_typing import Scalar, Vector, Matrix, R3Tensor
 
@@ -49,22 +50,19 @@ class AdversarialDecomposer(nn.Module):
             nn.SELU(),
             # nn.AlphaDropout(p=config.dropout_p),
             # nn.Linear(config.hidden_size, config.encoded_size),
-            # nn.ReLU()
+            # nn.SELU()
         )
+
         self.deno_loss_weight = config.denotation_weight
         self.cono_loss_weight = config.connotation_weight
 
         # Denotation: Skip-Gram Softmax softmax
-        self.deno_decoder = nn.Linear(config.encoded_size, vocab_size)
-        if config.init_trick:
-            nn.init.eye_(self.encoder[0].weight)
-            nn.init.zeros_(self.encoder[0].bias)
-            # nn.init.eye_(self.encoder[2].weight)
-            # nn.init.zeros_(self.encoder[2].bias)
-            # nn.init.eye_(self.deno_decoder.weight)
-            # nn.init.zeros_(self.deno_decoder.bias)
-            # nn.init.eye_(self.context_decoder.weight)
-            # nn.init.zeros_(self.context_decoder.bias)
+        # self.deno_decoder = nn.Linear(config.encoded_size, vocab_size)
+
+        # Dennotation: Skip-Gram Negative Sampling
+        self.num_negative_samples = config.num_negative_samples
+        SkipGramNegativeSampling.init_negative_sampling(
+            self, data.word_frequency, data.word_to_id)
 
         # Connotation: Party Classifier
         self.cono_decoder = nn.Linear(
@@ -84,18 +82,54 @@ class AdversarialDecomposer(nn.Module):
             context_word_ids: Vector,
             party_labels: Vector
             ) -> Tuple[Scalar, Scalar, Scalar]:
-        embed = self.embedding(center_word_ids)
-        encoded = self.encoder(embed)
+        batch_size = len(context_word_ids)
+        negative_context_ids = self.negative_sampling_dist.sample(
+            (batch_size, self.num_negative_samples))
+        encoded_center = self.encoder(self.embedding(center_word_ids))
+        encoded_true_context = self.encoder(self.embedding(context_word_ids))
+        encoded_negative_context = self.encoder(self.embedding(negative_context_ids))
+        deno_loss = self.deno_forward(
+            encoded_center, encoded_true_context, encoded_negative_context)
 
-        deno_logits = self.deno_decoder(encoded)
-        deno_loss = self.cross_entropy(deno_logits, context_word_ids)
+        # encoded_center = self.encoder(self.embedding(center_word_ids))
+        # deno_logits = self.deno_decoder(encoded_center)
+        # deno_loss = self.cross_entropy(deno_logits, context_word_ids)
 
-        cono_logits = self.cono_decoder(encoded)
+        cono_logits = self.cono_decoder(encoded_center)
         cono_loss = self.cross_entropy(cono_logits, party_labels)
 
         encoder_loss = (self.deno_loss_weight * deno_loss +
                         self.cono_loss_weight * cono_loss)
         return encoder_loss, deno_loss, cono_loss
+
+    def deno_forward(
+            self,
+            center: Matrix,
+            true_context: Matrix,
+            negative_context: R3Tensor
+            ) -> Scalar:
+        """Faster but less readable."""
+        # center = self.deno_decoder(encoded_center)
+        # # true_context = self.context_decoder(encoded_true_context)
+        # # negative_context = self.context_decoder(encoded_negative_context)
+        # true_context = self.deno_decoder(encoded_true_context)
+        # negative_context = self.deno_decoder(encoded_negative_context)
+
+        # batch_size * embed_size
+        objective = torch.sum(
+            torch.mul(center, true_context),  # Hadamard product
+            dim=1)  # be -> b
+        objective = nn.functional.logsigmoid(objective)
+
+        # batch_size * num_negative_examples * embed_size
+        # negative_context: bne
+        # center: be -> be1
+        negative_objective = torch.bmm(  # bne, be1 -> bn1
+            negative_context, center.unsqueeze(2)
+            ).squeeze()  # bn1 -> bn
+        negative_objective = nn.functional.logsigmoid(-negative_objective)
+        negative_objective = torch.sum(negative_objective, dim=1)  # bn -> b
+        return -torch.mean(objective + negative_objective)
 
     def predict_connotation(self, word_ids: Vector) -> Vector:
         self.eval()
@@ -215,7 +249,7 @@ class AdversarialDecomposer(nn.Module):
         return all_wordsim.mean_delta(encoded_embed, frozen_pretrained, self.id_to_word)
 
 
-class AdversarialDataset(Dataset):
+class PreparsedAdversarialDataset(Dataset):
 
     def __init__(self, config: 'AdversarialConfig'):
         corpus_path = os.path.join(config.input_dir, 'train_data.pickle')
@@ -256,6 +290,70 @@ class AdversarialDataset(Dataset):
             self.labels[index])
 
 
+class AdversarialDataset(Dataset):
+
+    def __init__(self, config: 'AdversarialConfig'):
+        self.window_radius = config.window_radius
+        corpus_path = os.path.join(config.input_dir, 'train_data.pickle')
+        with open(corpus_path, 'rb') as corpus_file:
+            preprocessed = pickle.load(corpus_file)
+
+        self.word_to_id = preprocessed['word_to_id']
+        self.id_to_word = preprocessed['id_to_word']
+        self.Dem_frequency: CounterType[str] = preprocessed['D_raw_freq']
+        self.GOP_frequency: CounterType[str] = preprocessed['R_raw_freq']
+        self.word_frequency: CounterType[str] = preprocessed['combined_frequency']
+        self.documents: List[List[int]] = preprocessed['documents']
+        self.labels: List[int] = preprocessed['labels']
+        del preprocessed
+
+        self.pretrained_embedding: Matrix
+        if config.pretrained_embedding is not None:
+            self.pretrained_embedding = Experiment.load_embedding(
+                config.pretrained_embedding, self.word_to_id)
+
+        if config.debug_subset_corpus:
+            self.documents = self.documents[:config.debug_subset_corpus]
+            self.labels = self.labels[:config.debug_subset_corpus]
+
+
+    def __len__(self) -> int:
+        return len(self.labels)
+
+    def __getitem__(self, index: int) -> Tuple[Vector, Vector, Vector]:
+        """
+        parse one document into a List[skip-grams], where each skip-gram
+        is a Tuple[center_id, List[context_ids]]
+        """
+        doc: List[int] = self.documents[index]
+        center_word_ids: List[int] = []
+        context_word_ids: List[int] = []
+        for center_index, center_word_id in enumerate(doc):
+            left_index = max(center_index - self.window_radius, 0)
+            right_index = min(center_index + self.window_radius, len(doc) - 1)
+            context_word_id: List[int] = (
+                doc[left_index:center_index] +
+                doc[center_index + 1:right_index + 1])
+            center_word_ids += [center_word_id] * len(context_word_id)
+            context_word_ids += context_word_id
+        return (
+            torch.tensor(center_word_ids),
+            torch.tensor(context_word_ids),
+            torch.full(
+                (len(context_word_ids),), self.labels[index], dtype=torch.int64))
+
+    @staticmethod
+    def collate(
+            faux_batch: List[Tuple[Vector, Vector, Vector]]
+            ) -> Tuple[Vector, Vector, Vector]:
+        center_word_ids = torch.cat([center for center, _, _ in faux_batch])
+        context_word_ids = torch.cat([context for _, context, _ in faux_batch])
+        labels = torch.cat([label for _, _, label in faux_batch])
+        # shuffle = torch.randperm(len(labels))
+        # return center_word_ids[shuffle], context_word_ids[shuffle], labels[shuffle]
+        return center_word_ids, context_word_ids, labels
+
+
 class AdversarialExperiment(Experiment):
 
     def __init__(self, config: 'AdversarialConfig'):
@@ -265,6 +363,7 @@ class AdversarialExperiment(Experiment):
             self.data,
             batch_size=config.batch_size,
             shuffle=True,
+            collate_fn=self.data.collate,
             num_workers=config.num_dataloader_threads)
         self.model = AdversarialDecomposer(config, self.data)
 
@@ -285,15 +384,15 @@ class AdversarialExperiment(Experiment):
         self.cono_optimizer = config.optimizer(
             self.model.cono_decoder.parameters(),
             lr=config.learning_rate)
-        self.deno_optimizer = config.optimizer(
-            self.model.deno_decoder.parameters(),
-            lr=config.learning_rate)
+        # self.deno_optimizer = config.optimizer(
+        #     self.model.deno_decoder.parameters(),
+        #     lr=config.learning_rate)
 
         self.to_be_saved = {
             'config': self.config,
             'model': self.model,
             'encoder_optimizer': self.encoder_optimizer,
-            'deno_optimizer': self.deno_optimizer,
+            # 'deno_optimizer': self.deno_optimizer,
             'cono_optimizer': self.cono_optimizer}
 
         self.custom_stats_format = (
@@ -302,7 +401,7 @@ class AdversarialExperiment(Experiment):
             '𝓁deno = {Loss/denotation:.3f}\t'
             f'({config.connotation_weight}) '
             '𝓁cono = {Loss/connotation:.3f}\t'
-            'train accuracy = {Accuracy/train:.2%}')
+            'cono accuracy = {Evaluation/connotation_accuracy:.2%}')
 
     def _train(
             self,
@@ -317,10 +416,10 @@ class AdversarialExperiment(Experiment):
         nn.utils.clip_grad_norm_(self.model.parameters(), 5)
         self.encoder_optimizer.step()
 
-        self.model.zero_grad()
-        l_deno.backward(retain_graph=True)
-        nn.utils.clip_grad_norm_(self.model.parameters(), 5)
-        self.deno_optimizer.step()
+        # self.model.zero_grad()
+        # l_deno.backward(retain_graph=True)
+        # nn.utils.clip_grad_norm_(self.model.parameters(), 5)
+        # self.deno_optimizer.step()
 
         self.model.zero_grad()
         l_cono.backward()
@@ -358,25 +457,25 @@ class AdversarialExperiment(Experiment):
                 context_word_ids = batch[1].to(self.device)
                 party_labels = batch[2].to(self.device)
 
-                try:
-                    l_encoder, l_deno, l_cono = self._train(
-                        center_word_ids, context_word_ids, party_labels)
-                except RuntimeError:
-                    import IPython
-                    IPython.embed()
-
-                # l_encoder, l_deno, l_cono = self._train(
-                #     center_word_ids, context_word_ids, party_labels)
+                l_encoder, l_deno, l_cono = self._train(
+                    center_word_ids, context_word_ids, party_labels)
 
                 if batch_index % config.update_tensorboard == 0:
+                    cono_accuracy = self.model.connotation_accuracy(batch)
                     stats = {
                         'Loss/encoder': l_encoder,
                         'Loss/denotation': l_deno,
                         'Loss/connotation': l_cono,
-                        'Accuracy/train': self.model.connotation_accuracy(batch)}
+                        'Evaluation/connotation_accuracy': cono_accuracy
+                    }
                     self.update_tensorboard(stats)
                 if batch_index % config.print_stats == 0:
                     self.print_stats(epoch_index, batch_index, stats)
+                if batch_index % 10_000 == 0:
+                    mean_delta = self.model.eval_word_similarity()
+                    self.tensorboard.add_scalar(
+                        'Evaluation/word_sim_mean_delta', mean_delta, self.tb_global_step)
+
             # End Batches
             # self.lr_scheduler.step()
             self.print_timestamp()
@@ -388,9 +487,9 @@ class AdversarialExperiment(Experiment):
                         config.output_dir,
                         f'vocab_cono_epoch{epoch_index}.txt')
                     self.model.all_vocab_connotation(export_path)
-                    mean_delta = self.model.eval_word_similarity()
-                    self.tensorboard.add_scalar(
-                        'word_sim_mean_delta', mean_delta, epoch_index)
+                    # mean_delta = self.model.eval_word_similarity()
+                    # self.tensorboard.add_scalar(
+                    #     'word_sim_mean_delta', mean_delta, epoch_index)
 
             # Discard partisan neutral words
             # if config.subsampling_threshold_schedule:
@@ -420,7 +519,7 @@ class AdversarialConfig():
     embed_size: int = 300
     hidden_size: int = 300  # MLP encoder
     encoded_size: int = 300  # encoder output
-    # window_radius: int = 5  # context_size = 2 * window_radius
+    window_radius: int = 5  # context_size = 2 * window_radius
     num_negative_samples: int = 10
     dropout_p: float = 0
     num_epochs: int = 10
@@ -470,78 +569,79 @@ class AdversarialConfig():
 def main() -> None:
     today = datetime.now().strftime("%m-%d %a")
 
-    # debug
-    config = AdversarialConfig(
-        input_dir='../data/processed/adversarial/1e-5/Obama',
-        output_dir='../results/debug1_Ti',
-        debug_subset_corpus=1000_000,
-        denotation_weight=1,
-        connotation_weight=0,
-        pretrained_embedding='../data/processed/pretrained_word2vec/Obama_SGNS.txt',
-        init_trick=True,
-        encoded_size=300,
-        # hidden_size=300,
-        num_epochs=10,
-        batch_size=1000,
-        auto_save_per_epoch=1,
-        device=torch.device('cuda:1')
-    )
+    # # Debug
+    # config = AdversarialConfig(
+    #     input_dir='../data/processed/labeled_speeches/1e-5/for_real',
+    #     output_dir='../results/debug',
+    #     # debug_subset_corpus=1000,
+    #     denotation_weight=1,
+    #     connotation_weight=0,
+    #     pretrained_embedding='../data/pretrained_word2vec/for_real.txt',
+    #     # init_trick=True,
+    #     encoded_size=300,
+    #     # hidden_size=300,
+    #     num_epochs=10,
+    #     batch_size=4,
+    #     auto_save_per_epoch=1,
+    #     device=torch.device('cuda:0')
+    # )
 
 
     # # Vanilla denotation
     # config = AdversarialConfig(
-    #     input_dir='../data/processed/adversarial/1e-5/for_real',
-    #     output_dir='../results/adversarial/for_real/1d 0c',
+    #     input_dir='../data/processed/labeled_speeches/1e-5/for_real',
+    #     output_dir='../results/adversarial/for_real_NS/1d 0c',
     #     denotation_weight=1,
     #     connotation_weight=0,
-    #     pretrained_embedding='../data/processed/pretrained_word2vec/for_real.txt',
+    #     pretrained_embedding='../data/pretrained_word2vec/for_real.txt',
     #     # init_trick=True,
     #     encoded_size=300,
     #     # hidden_size=300,
     #     num_epochs=30,
-    #     batch_size=1024,
+    #     batch_size=2,
     #     auto_save_per_epoch=3,
-    #     device=torch.device('cuda')
+    #     num_dataloader_threads=6,
+    #     device=torch.device('cuda:1')
     # )
 
-
-    # Deno minus cono 1d - 10c
+    # # Deno minus cono 1d - 10c
     config = AdversarialConfig(
-        input_dir='../data/processed/adversarial/1e-5/W_Bush',
-        output_dir='../results/for_real/1d -12c',
+        input_dir='../data/processed/labeled_speeches/1e-5/for_real',
+        output_dir='../results/adversarial/for_real_NS/1d -10c L2',
         denotation_weight=1,
-        connotation_weight=-12,
-        pretrained_embedding='../data/processed/pretrained_word2vec/for_real.txt',
+        connotation_weight=-10,
+        pretrained_embedding='../data/pretrained_word2vec/for_real.txt',
         encoded_size=300,
+        hidden_size=300,
+        # dropout_p=0.1,
         num_epochs=30,
-        batch_size=4096,
+        batch_size=6,
         auto_save_per_epoch=3,
-        num_dataloader_threads=12,
         device=torch.device('cuda:0')
     )
 
     # config = AdversarialConfig(
-    #     input_dir='../data/processed/adversarial/1e-5/W_Bush',
-    #     output_dir='../results/W_Bush/1d -12c',
+    #     input_dir='../data/processed/labeled_speeches/1e-5/for_real',
+    #     output_dir='../results/adversarial/for_real_NS/1d -12c L2',
     #     denotation_weight=1,
     #     connotation_weight=-12,
-    #     pretrained_embedding='../data/processed/pretrained_word2vec/W_Bush.txt',
+    #     pretrained_embedding='../data/pretrained_word2vec/for_real.txt',
     #     encoded_size=300,
+    #     hidden_size=300,
+    #     # dropout_p=0.1,
     #     num_epochs=30,
-    #     batch_size=4096,
+    #     batch_size=3,
     #     auto_save_per_epoch=3,
-    #     num_dataloader_threads=0,
     #     device=torch.device('cuda:1')
     # )
 
-
     # # Vanilla connotation
     # config = AdversarialConfig(
-    #     input_dir='../data/processed/adversarial/1e-5/W_Bush',
+    #     input_dir='../data/processed/labeled_speeches/1e-5/W_Bush',
     #     output_dir=f'../results/W_Bush/0d 1c',
     #     denotation_weight=0,
     #     connotation_weight=1,
-    #     pretrained_embedding='../data/processed/pretrained_word2vec/W_Bush.txt',
+    #     pretrained_embedding='../data/pretrained_word2vec/W_Bush.txt',
     #     encoded_size=300,
     #     num_epochs=30,
     #     batch_size=4096,
@@ -555,7 +655,7 @@ def main() -> None:
     #     output_dir=f'../results/adversarial/Obama/-0.001d1c NTi',
     #     denotation_weight=-0.001,
     #     connotation_weight=1,
-    #     pretrained_embedding='../results/baseline/word2vec_Obama.txt',
+    #     pretrained_embedding='../data/pretrained_word2vec/word2vec_Obama.txt',
     #     init_trick=False,
     #     encoded_size=300,
     #     num_epochs=30,
