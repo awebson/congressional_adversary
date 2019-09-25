@@ -60,51 +60,49 @@ class Embedding():
         print(f'with min_frequency = {min_freq}, '
               f'frequency file vocab size = {len(self.id_to_phrase)}')
 
-    def export_nearest_partisan_neighbors(
-            self,
-            export_path: str,
-            query_ids: List[int],
-            target_ids: List[int],
-            top_k: int = 10
-            ) -> None:
-        query_embed = self.embedding[query_ids]
-        target_embed = self.embedding[target_ids]
-        cosine_sim = pairwise.cosine_similarity(query_embed, target_embed)
-        top_neighbor_ids = np.argsort(-cosine_sim)  # negate to reverse sort order
-        top_neighbor_ids = top_neighbor_ids[:, 1:top_k + 1]  # excludes matrix diagonal (distance to self)
+    # def export_nearest_partisan_neighbors(
+    #         self,
+    #         export_path: str,
+    #         query_ids: List[int],
+    #         target_ids: List[int],
+    #         top_k: int = 10
+    #         ) -> None:
+    #     query_embed = self.embedding[query_ids]
+    #     target_embed = self.embedding[target_ids]
+    #     cosine_sim = pairwise.cosine_similarity(query_embed, target_embed)
+    #     top_neighbor_ids = np.argsort(-cosine_sim)  # negate to reverse sort order
+    #     top_neighbor_ids = top_neighbor_ids[:, 1:top_k + 1]  # excludes matrix diagonal (distance to self)
 
-        output: Dict[int, List[Tuple[float, int]]] = {}
-        for query_index, sorted_target_indices in enumerate(top_neighbor_ids):
-            query_id = query_ids[query_index]
-            output[query_id] = []
-            for sort_rank, target_index in enumerate(sorted_target_indices):
-                target_id = target_ids[target_index]
-                output[query_id].append(
-                    (target_id, cosine_sim[query_index][target_index]))
+    #     output: Dict[int, List[Tuple[float, int]]] = {}
+    #     for query_index, sorted_target_indices in enumerate(top_neighbor_ids):
+    #         query_id = query_ids[query_index]
+    #         output[query_id] = []
+    #         for sort_rank, target_index in enumerate(sorted_target_indices):
+    #             target_id = target_ids[target_index]
+    #             output[query_id].append(
+    #                 (target_id, cosine_sim[query_index][target_index]))
 
-        file = open(export_path, 'w')
-        file.write(
-            'same_connotation\tsame_denotation\t'  # blank columns for labeling
-            'query\tcosine_similarity\tneighbor\t'
-            'query_D_freq\tquery_R_freq\tquery_R_ratio\t'
-            'neighbor_D_freq\tneighbor_R_freq\tneighbor_R_ratio\n')
-        for query_id, neighbor_ids in output.items():
-            query = self.id_to_phrase[query_id]
-            for neighbor_id, cosine_sim in neighbor_ids:
-                neighbor = self.id_to_phrase[neighbor_id]
-                file.write(
-                    f'\t\t{query.words}\t{cosine_sim:.4}\t{neighbor.words}\t'
-                    f'{query.D_freq}\t{query.R_freq}\t{query.R_ratio}\t'
-                    f'{neighbor.D_freq}\t{neighbor.R_freq}\t{neighbor.R_ratio}\n')
-        file.close()
+    #     file = open(export_path, 'w')
+    #     file.write(
+    #         'same_connotation\tsame_denotation\t'  # blank columns for labeling
+    #         'query\tcosine_similarity\tneighbor\t'
+    #         'query_D_freq\tquery_R_freq\tquery_R_ratio\t'
+    #         'neighbor_D_freq\tneighbor_R_freq\tneighbor_R_ratio\n')
+    #     for query_id, neighbor_ids in output.items():
+    #         query = self.id_to_phrase[query_id]
+    #         for neighbor_id, cosine_sim in neighbor_ids:
+    #             neighbor = self.id_to_phrase[neighbor_id]
+    #             file.write(
+    #                 f'\t\t{query.words}\t{cosine_sim:.4}\t{neighbor.words}\t'
+    #                 f'{query.D_freq}\t{query.R_freq}\t{query.R_ratio}\t'
+    #                 f'{neighbor.D_freq}\t{neighbor.R_freq}\t{neighbor.R_ratio}\n')
+    #     file.close()
 
     def export_combined_nearest_partisan_neighbors(
             self,
             export_path: str,
             query_ids: List[int],
-            Dem_ids: List[int],
-            GOP_ids: List[int],
-            neutral_ids: List[int],
+            list_neighbor_ids: List[List[int]],
             top_k: int = 10
             ) -> None:
 
@@ -113,8 +111,7 @@ class Embedding():
             target_embed = self.embedding[target_ids]
             cosine_sim = pairwise.cosine_similarity(query_embed, target_embed)
             top_neighbor_ids = np.argsort(-cosine_sim)  # negate to reverse sort
-            # excludes matrix diagonal (distance to self)
-            top_neighbor_ids = top_neighbor_ids[:, 1:top_k + 1]
+            top_neighbor_ids = top_neighbor_ids[:, 0:top_k]
 
             output: Dict[int, List[Tuple[int, float]]] = {}
             for query_index, sorted_target_indices in enumerate(top_neighbor_ids):
@@ -127,7 +124,7 @@ class Embedding():
             return output
 
         combined_output: Dict[int, List[Tuple[int, float]]] = {}
-        for target_ids in (Dem_ids, GOP_ids, neutral_ids):
+        for target_ids in list_neighbor_ids:
             for neighbor_id, neighborhood in helper(target_ids).items():
                 if neighbor_id not in combined_output:
                     combined_output[neighbor_id] = neighborhood
@@ -136,16 +133,26 @@ class Embedding():
 
         file = open(export_path, 'w')
         file.write(
-            'same_connotation\tsame_denotation\t'  # blank columns for labeling
+            'comment\tdeno_similarity\tcono_similarity\t'  # blank columns for labeling
             'query_D_freq\tquery_R_freq\tquery_R_ratio\t'
             'query\tcosine_similarity\tneighbor\t'
             'neighbor_D_freq\tneighbor_R_freq\tneighbor_R_ratio\n')
-        for query_id, neighborhood in combined_output.items():
+
+        def sum_freq(item):
+            query_id = item[0]
             query = self.id_to_phrase[query_id]
+            return query.D_freq + query.R_freq
+
+        for query_id, neighborhood in sorted(
+                combined_output.items(), key=sum_freq, reverse=True):
+            query = self.id_to_phrase[query_id]
+            neighborhood.sort(key=lambda tup: tup[1], reverse=True)
             for neighbor_id, cosine_sim in neighborhood:
                 neighbor = self.id_to_phrase[neighbor_id]
+                if neighbor == query:
+                    continue
                 file.write(
-                    f'\t\t{query.D_freq}\t{query.R_freq}\t{query.R_ratio:.2%}\t'
+                    f'\t\t\t{query.D_freq}\t{query.R_freq}\t{query.R_ratio:.2%}\t'
                     f'{query.words}\t{cosine_sim:.4}\t{neighbor.words}\t'
                     f'{neighbor.D_freq}\t{neighbor.R_freq}\t{neighbor.R_ratio:.2%}\n')
         file.close()
@@ -153,38 +160,61 @@ class Embedding():
 
 def main() -> None:
     model = Embedding(
-        embed_path='../../data/processed/pretrained_word2vec/for_real.txt',
+        embed_path='../../data/pretrained_word2vec/for_real.txt',
         party_freq_path='../../data/processed/plain_text/for_real/vocab_partisan_frequency.tsv',
         min_freq=100)
 
     Dem_ids = []
     GOP_ids = []
-    neutral_ids = []
+    very_neutral_ids = []
+    kinda_neutral_ids = []
+    partisan_lower_bound = 0.8
+    neutral_bound = 0.1
+    neutral_upper_bound = 0.5 + neutral_bound
+    neutral_lower_bound = 0.5 - neutral_bound
     for phrase_id, phrase in model.id_to_phrase.items():
-        if phrase.D_ratio > 0.8:
+        if phrase.D_ratio > partisan_lower_bound:
             Dem_ids.append(phrase_id)
-        elif phrase.R_ratio > 0.8:
+        elif phrase.R_ratio > partisan_lower_bound:
             GOP_ids.append(phrase_id)
-        elif 0.4 < phrase.R_ratio < 0.6:
-            neutral_ids.append(phrase_id)
+        elif neutral_lower_bound < phrase.R_ratio < neutral_upper_bound:
+            very_neutral_ids.append(phrase_id)
+        else:
+            kinda_neutral_ids.append(phrase_id)
 
-    Dem_ids, GOP_ids, neutral_ids = map(np.array, (Dem_ids, GOP_ids, neutral_ids))
     print(f'{len(GOP_ids)} capitalists\n'
           f'{len(Dem_ids)} socialists\n'
-          f'{len(neutral_ids)} neoliberal shills')
-
-    samples_per_party = 200
-    sampled_Dem_ids = Dem_ids[np.random.randint(0, len(Dem_ids), samples_per_party)]
-    sampled_GOP_ids = GOP_ids[np.random.randint(0, len(GOP_ids), samples_per_party)]
-    sampled_neutral_ids = neutral_ids[np.random.randint(0, len(neutral_ids), samples_per_party)]
+          f'{len(very_neutral_ids)} swing voters\n'
+          f'{len(kinda_neutral_ids)} neoliberal shills')
+    Dem_ids, GOP_ids, very_neutral_ids, kinda_neutral_ids = map(
+        np.array, (Dem_ids, GOP_ids, very_neutral_ids, kinda_neutral_ids))
 
     base_dir = '../../data/evaluation/'
     model.export_combined_nearest_partisan_neighbors(
-        base_dir + 'Dem_sample.tsv', sampled_Dem_ids, Dem_ids, GOP_ids, neutral_ids)
+        base_dir + 'Dem_sample.tsv',
+        Dem_ids,
+        [Dem_ids, GOP_ids, very_neutral_ids, kinda_neutral_ids])
     model.export_combined_nearest_partisan_neighbors(
-        base_dir + 'GOP_sample.tsv', sampled_GOP_ids, Dem_ids, GOP_ids, neutral_ids)
-    model.export_combined_nearest_partisan_neighbors(
-        base_dir + 'neutral_sample.tsv', sampled_neutral_ids, Dem_ids, GOP_ids, neutral_ids)
+        base_dir + 'GOP_sample.tsv',
+        GOP_ids,
+        [Dem_ids, GOP_ids, very_neutral_ids, kinda_neutral_ids])
+
+
+    # def sample_helper(stuff, samples_per_party=1000):
+    #     if len(stuff) > samples_per_party:
+    #         return np.random.choice(stuff, samples_per_party, replace=False)
+    #     else:
+    #         return stuff
+
+    # sampled_Dem_ids, sampled_GOP_ids, sampled_neutral_ids = map(
+    #     sample_helper, (Dem_ids, GOP_ids, neutral_ids))
+
+    # model.export_combined_nearest_partisan_neighbors(
+    #     base_dir + 'Dem_sample.tsv', sampled_Dem_ids, Dem_ids, GOP_ids, neutral_ids)
+    # model.export_combined_nearest_partisan_neighbors(
+    #     base_dir + 'GOP_sample.tsv', sampled_GOP_ids, Dem_ids, GOP_ids, neutral_ids)
+    # model.export_combined_nearest_partisan_neighbors(
+    #     base_dir + 'neutral_sample.tsv', sampled_neutral_ids, Dem_ids, GOP_ids, neutral_ids)
 
 
 if __name__ == '__main__':
