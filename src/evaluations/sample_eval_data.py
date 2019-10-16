@@ -1,7 +1,11 @@
-from typing import Tuple, List, Dict
+import re
+import csv
+import random
+from typing import Set, Tuple, NamedTuple, List, Dict, Optional, Any
 
 import numpy as np
 from sklearn.metrics import pairwise
+from tqdm import tqdm
 
 np.random.seed(42)
 
@@ -18,10 +22,27 @@ class Phrase:
         if total < min_freq:
             raise StopIteration
         self.words = data[4]
-        try:
-            self.skew = self.R_freq / self.D_freq
-        except ZeroDivisionError:
-            self.skew = self.R_freq / 1e-5
+        # try:
+        #     self.skew = self.R_freq / self.D_freq
+        # except ZeroDivisionError:
+        #     self.skew = self.R_freq / 1e-5
+
+
+class PhrasePair(NamedTuple):
+
+    query: Phrase
+    neighbor: Phrase
+    cosine_sim: float
+
+    def export_dict(self) -> Dict:
+        data = {
+            'query_' + key: val
+            for key, val in vars(self.query).items()}
+        data.update(
+            {'neighbor_' + key: val
+             for key, val in vars(self.neighbor).items()})
+        data['cosine_sim'] = self.cosine_sim
+        return data
 
 
 class Embedding():
@@ -100,11 +121,12 @@ class Embedding():
 
     def export_combined_nearest_partisan_neighbors(
             self,
-            export_path: str,
             query_ids: List[int],
             list_neighbor_ids: List[List[int]],
-            top_k: int = 10
-            ) -> None:
+            top_k: int,
+            export_path: Optional[str]
+            ) -> Optional[List[PhrasePair]]:
+        """Writes CSV to export_path. If export_path is None, returns Dict."""
 
         def helper(target_ids: List[int]) -> Dict[int, List[Tuple[int, float]]]:
             query_embed = self.embedding[query_ids]
@@ -131,31 +153,88 @@ class Embedding():
                 else:
                     combined_output[neighbor_id] += neighborhood
 
-        file = open(export_path, 'w')
-        file.write(
-            'comment\tdeno_similarity\tcono_similarity\t'  # blank columns for labeling
-            'query_D_freq\tquery_R_freq\tquery_R_ratio\t'
-            'query\tcosine_similarity\tneighbor\t'
-            'neighbor_D_freq\tneighbor_R_freq\tneighbor_R_ratio\n')
-
-        def sum_freq(item):
+        def sum_freq(item: Tuple[int, Any]) -> int:
             query_id = item[0]
             query = self.id_to_phrase[query_id]
             return query.D_freq + query.R_freq
 
-        for query_id, neighborhood in sorted(
-                combined_output.items(), key=sum_freq, reverse=True):
-            query = self.id_to_phrase[query_id]
-            neighborhood.sort(key=lambda tup: tup[1], reverse=True)
-            for neighbor_id, cosine_sim in neighborhood:
-                neighbor = self.id_to_phrase[neighbor_id]
-                if neighbor == query:
+        if not export_path:
+            phrase_pairs: List[PhrasePair] = []
+            for query_id, neighborhood in sorted(
+                    combined_output.items(), key=sum_freq, reverse=True):
+                query = self.id_to_phrase[query_id]
+                neighborhood.sort(key=lambda tup: tup[1], reverse=True)
+                for neighbor_id, cosine_sim in neighborhood:
+                    neighbor = self.id_to_phrase[neighbor_id]
+                    if neighbor == query:
+                        continue
+                    phrase_pairs.append(PhrasePair(query, neighbor, cosine_sim))
+            return phrase_pairs
+
+        else:
+            file = open(export_path, 'w')
+            file.write(
+                'comment\tdeno_similarity\tcono_similarity\t'  # blank columns for labeling
+                'query_D_freq\tquery_R_freq\tquery_R_ratio\t'
+                'query\tcosine_similarity\tneighbor\t'
+                'neighbor_D_freq\tneighbor_R_freq\tneighbor_R_ratio\n')
+
+            for query_id, neighborhood in sorted(
+                    combined_output.items(), key=sum_freq, reverse=True):
+                query = self.id_to_phrase[query_id]
+                neighborhood.sort(key=lambda tup: tup[1], reverse=True)
+                for neighbor_id, cosine_sim in neighborhood:
+                    neighbor = self.id_to_phrase[neighbor_id]
+                    if neighbor == query:
+                        continue
+                    file.write(
+                        f'\t\t\t{query.D_freq}\t{query.R_freq}\t{query.R_ratio:.2%}\t'
+                        f'{query.words}\t{cosine_sim:.4}\t{neighbor.words}\t'
+                        f'{neighbor.D_freq}\t{neighbor.R_freq}\t{neighbor.R_ratio:.2%}\n')
+            file.close()
+
+    def export_MTurk(
+            self,
+            corpus_path: str,
+            out_path: str,
+            phrase_pairs: List[PhrasePair],
+            contexts_per_phrase: int
+            ) -> None:
+        with open(corpus_path) as file:
+            corpus = [line for line in file]
+        random.shuffle(corpus)
+
+        column_names = [
+            'query_D_freq', 'query_R_freq', 'query_D_ratio', 'query_R_ratio',
+            'query_words', 'cosine_sim', 'neighbor_words',
+            'neighbor_D_freq', 'neighbor_R_freq', 'neighbor_D_ratio', 'neighbor_R_ratio'
+            ] + [f'query_context{i}' for i in range(contexts_per_phrase)]
+
+        out_file = open(out_path, 'w')
+        csv_writer = csv.DictWriter(out_file, column_names)
+        csv_writer.writeheader()
+
+        def code_injection(regex_match) -> str:
+            return '<b>' + regex_match.group() + '</b>'
+
+        for pair in tqdm(phrase_pairs, desc='RegExing contexts in corpus'):
+            context_i = 0
+            phrase_pattern = re.compile(pair.query.words)
+            context_pattern = re.compile(
+                r'(\w*\s){1,30}' + pair.query.words + r'(\s\w*){1,30}')
+            for speech in corpus:
+                if pair.query.words not in speech:
                     continue
-                file.write(
-                    f'\t\t\t{query.D_freq}\t{query.R_freq}\t{query.R_ratio:.2%}\t'
-                    f'{query.words}\t{cosine_sim:.4}\t{neighbor.words}\t'
-                    f'{neighbor.D_freq}\t{neighbor.R_freq}\t{neighbor.R_ratio:.2%}\n')
-        file.close()
+                context = context_pattern.search(speech)
+                if context:
+                    context = context.group().strip()
+                    context = phrase_pattern.sub(code_injection, context)
+                    setattr(pair.query, f'context{context_i}', context)
+                    context_i += 1
+                if context_i >= contexts_per_phrase:
+                    break
+            csv_writer.writerow(pair.export_dict())
+        out_file.close()
 
 
 def main() -> None:
@@ -190,14 +269,28 @@ def main() -> None:
         np.array, (Dem_ids, GOP_ids, very_neutral_ids, kinda_neutral_ids))
 
     base_dir = '../../data/evaluation/'
-    model.export_combined_nearest_partisan_neighbors(
-        base_dir + 'Dem_sample.tsv',
-        Dem_ids,
-        [Dem_ids, GOP_ids, very_neutral_ids, kinda_neutral_ids])
-    model.export_combined_nearest_partisan_neighbors(
-        base_dir + 'GOP_sample.tsv',
-        GOP_ids,
-        [Dem_ids, GOP_ids, very_neutral_ids, kinda_neutral_ids])
+
+    # model.export_combined_nearest_partisan_neighbors(
+    #     base_dir + 'Dem_sample.tsv',
+    #     Dem_ids,
+    #     [Dem_ids, GOP_ids, very_neutral_ids, kinda_neutral_ids])
+    # model.export_combined_nearest_partisan_neighbors(
+    #     base_dir + 'GOP_sample.tsv',
+    #     GOP_ids,
+    #     [Dem_ids, GOP_ids, very_neutral_ids, kinda_neutral_ids])
+
+
+    Dem_phrase_pairs = model.export_combined_nearest_partisan_neighbors(
+        Dem_ids, [Dem_ids, GOP_ids, very_neutral_ids, kinda_neutral_ids],
+        top_k=1, export_path=None)
+    GOP_phrase_pairs = model.export_combined_nearest_partisan_neighbors(
+        GOP_ids, [Dem_ids, GOP_ids, very_neutral_ids, kinda_neutral_ids],
+        top_k=1, export_path=None)
+    model.export_MTurk(
+        corpus_path='../../data/processed/plain_text/for_real/corpus.txt',
+        out_path=base_dir + 'MTurk.csv',
+        phrase_pairs=Dem_phrase_pairs + GOP_phrase_pairs,  # type: ignore
+        contexts_per_phrase=5)
 
 
     # def sample_helper(stuff, samples_per_party=1000):
