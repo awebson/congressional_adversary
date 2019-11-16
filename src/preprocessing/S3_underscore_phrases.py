@@ -123,7 +123,7 @@ def underscore_phrases_mp(
 
 
 def main() -> None:
-    sessions = range(107, 111)
+    sessions = range(97, 107)
     num_chunks = 10
     num_threads = 40
     phrases_dir = '../../data/interim/aggregated_phrases'

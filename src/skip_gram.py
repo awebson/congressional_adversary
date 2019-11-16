@@ -111,16 +111,16 @@ class SkipGramNegativeSampling(nn.Module):
         A simplified case of Noise Contrastive Estimate.
         where the seemingly arbitrary number of 0.75 is from Mikolov 2014.
         """
-        message = (
-            'As of PyTorch 1.1, torch.distributions.categorical.Categorical '
-            'is very slow, so a third-party alternative is necessary for now: '
-            'https://pypi.org/project/pytorch-categorical/'
-        )
-        try:
-            import pytorch_categorical
-        except ImportError as error:
-            print(message)
-            raise error
+        # message = (
+        #     'As of PyTorch 1.1, torch.distributions.categorical.Categorical '
+        #     'is very slow, so a third-party alternative is necessary for now: '
+        #     'https://pypi.org/project/pytorch-categorical/'
+        # )
+        # try:
+        #     import pytorch_categorical
+        # except ModuleNotFoundError as error:
+        #     print(message)
+        #     raise error
         cumulative_freq = sum(freq ** 0.75 for freq in word_frequency.values())
         # debug missing vocab
         # for word, freq in word_frequency.items():
@@ -137,8 +137,16 @@ class SkipGramNegativeSampling(nn.Module):
             categorical_dist_probs.get(word_id, 0)  # prob = 0 if missing vocab
             for word_id in range(vocab_size)
         ])
-        self.negative_sampling_dist = pytorch_categorical.Categorical(
-            categorical_dist_probs, self.device)
+        self.categorical_dist_probs = categorical_dist_probs
+        # self.negative_sampling_dist = torch.distributions.categorical.Categorical(
+        #     categorical_dist_probs)
+
+        # self.negative_sampling_dist = torch.distributions.multinomial.Multinomial(
+        #      categorical_dist_probs)
+        # self.negative_sampling_dist = pytorch_categorical.Categorical(
+        #     categorical_dist_probs, self.device)
+
+
 
     # def forward(
     #         self,

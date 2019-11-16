@@ -151,14 +151,19 @@ class Experiment(ABC):
                 tqdm.write(f'{key} = {val:.3f}', end='\t')
             tqdm.write('')
 
-    def update_tensorboard(self, stats: Dict[str, Any]) -> None:
+    def update_tensorboard(
+            self,
+            stats: Dict[str, Any],
+            increment_global_step: bool = False,
+            ) -> None:
         """
         Cannot simply use **kwargs because TensorBoard uses slashes to
         organize scope, and slashes are not allowed as Python variable names.
         """
         for key, val in stats.items():
             self.tensorboard.add_scalar(key, val, self.tb_global_step)
-        self.tb_global_step += 1
+        if increment_global_step:
+            self.tb_global_step += 1
 
     def print_timestamp(self) -> None:
         # timestamp = datetime.now().strftime('%-I:%M %p')

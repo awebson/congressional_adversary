@@ -2,5 +2,5 @@ data
 results
 publications
 congressional_env
-src/evaluations/external
 src/congressional_adversary.egg-info
+/src/utils/word_similarity
