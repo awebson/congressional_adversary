@@ -1,14 +1,16 @@
 import re
 import csv
 import random
-from typing import Set, Tuple, NamedTuple, List, Dict, Optional, Any
+from typing import Tuple, NamedTuple, List, Dict, Optional, Any
 
 import numpy as np
+import editdistance
 from sklearn.metrics import pairwise
 from tqdm import tqdm
 
+random.seed(42)
 np.random.seed(42)
-
+remove_underscores = str.maketrans('_', ' ')
 
 class Phrase:
 
@@ -81,43 +83,36 @@ class Embedding():
         print(f'with min_frequency = {min_freq}, '
               f'frequency file vocab size = {len(self.id_to_phrase)}')
 
-    # def export_nearest_partisan_neighbors(
-    #         self,
-    #         export_path: str,
-    #         query_ids: List[int],
-    #         target_ids: List[int],
-    #         top_k: int = 10
-    #         ) -> None:
-    #     query_embed = self.embedding[query_ids]
-    #     target_embed = self.embedding[target_ids]
-    #     cosine_sim = pairwise.cosine_similarity(query_embed, target_embed)
-    #     top_neighbor_ids = np.argsort(-cosine_sim)  # negate to reverse sort order
-    #     top_neighbor_ids = top_neighbor_ids[:, 1:top_k + 1]  # excludes matrix diagonal (distance to self)
+    def nearest_partisan_neighbors(
+            self,
+            query_ids: List[int],
+            target_ids: List[int],
+            top_k: int
+            ) -> Dict[int, List[Tuple[int, float]]]:
+        query_embed = self.embedding[query_ids]
+        target_embed = self.embedding[target_ids]
+        cosine_sim = pairwise.cosine_similarity(query_embed, target_embed)
+        top_neighbor_ids = np.argsort(-cosine_sim)  # negate to reverse sort
+        # top_neighbor_ids = top_neighbor_ids[:, 0:top_k]
 
-    #     output: Dict[int, List[Tuple[float, int]]] = {}
-    #     for query_index, sorted_target_indices in enumerate(top_neighbor_ids):
-    #         query_id = query_ids[query_index]
-    #         output[query_id] = []
-    #         for sort_rank, target_index in enumerate(sorted_target_indices):
-    #             target_id = target_ids[target_index]
-    #             output[query_id].append(
-    #                 (target_id, cosine_sim[query_index][target_index]))
-
-    #     file = open(export_path, 'w')
-    #     file.write(
-    #         'same_connotation\tsame_denotation\t'  # blank columns for labeling
-    #         'query\tcosine_similarity\tneighbor\t'
-    #         'query_D_freq\tquery_R_freq\tquery_R_ratio\t'
-    #         'neighbor_D_freq\tneighbor_R_freq\tneighbor_R_ratio\n')
-    #     for query_id, neighbor_ids in output.items():
-    #         query = self.id_to_phrase[query_id]
-    #         for neighbor_id, cosine_sim in neighbor_ids:
-    #             neighbor = self.id_to_phrase[neighbor_id]
-    #             file.write(
-    #                 f'\t\t{query.words}\t{cosine_sim:.4}\t{neighbor.words}\t'
-    #                 f'{query.D_freq}\t{query.R_freq}\t{query.R_ratio}\t'
-    #                 f'{neighbor.D_freq}\t{neighbor.R_freq}\t{neighbor.R_ratio}\n')
-    #     file.close()
+        output: Dict[int, List[Tuple[int, float]]] = {}
+        for query_index, sorted_target_indices in enumerate(top_neighbor_ids):
+            query_id = query_ids[query_index]
+            query_words = self.id_to_word[query_id]
+            output[query_id] = []
+            num_neighbors = 0
+            for sort_rank, target_index in enumerate(sorted_target_indices):
+                if num_neighbors == top_k:
+                    break
+                target_id = target_ids[target_index]
+                target_words = self.id_to_word[target_id]
+                if editdistance.eval(query_words, target_words) < 3:
+                    # print(query_words, target_words)
+                    continue
+                num_neighbors += 1
+                output[query_id].append(
+                    (target_id, cosine_sim[query_index][target_index]))
+        return output
 
     def export_combined_nearest_partisan_neighbors(
             self,
@@ -128,26 +123,10 @@ class Embedding():
             ) -> Optional[List[PhrasePair]]:
         """Writes CSV to export_path. If export_path is None, returns Dict."""
 
-        def helper(target_ids: List[int]) -> Dict[int, List[Tuple[int, float]]]:
-            query_embed = self.embedding[query_ids]
-            target_embed = self.embedding[target_ids]
-            cosine_sim = pairwise.cosine_similarity(query_embed, target_embed)
-            top_neighbor_ids = np.argsort(-cosine_sim)  # negate to reverse sort
-            top_neighbor_ids = top_neighbor_ids[:, 0:top_k]
-
-            output: Dict[int, List[Tuple[int, float]]] = {}
-            for query_index, sorted_target_indices in enumerate(top_neighbor_ids):
-                query_id = query_ids[query_index]
-                output[query_id] = []
-                for sort_rank, target_index in enumerate(sorted_target_indices):
-                    target_id = target_ids[target_index]
-                    output[query_id].append(
-                        (target_id, cosine_sim[query_index][target_index]))
-            return output
-
         combined_output: Dict[int, List[Tuple[int, float]]] = {}
         for target_ids in list_neighbor_ids:
-            for neighbor_id, neighborhood in helper(target_ids).items():
+            dist_dict = self.nearest_partisan_neighbors(query_ids, target_ids, top_k)
+            for neighbor_id, neighborhood in dist_dict.items():
                 if neighbor_id not in combined_output:
                     combined_output[neighbor_id] = neighborhood
                 else:
@@ -192,8 +171,30 @@ class Embedding():
                         f'{query.words}\t{cosine_sim:.4}\t{neighbor.words}\t'
                         f'{neighbor.D_freq}\t{neighbor.R_freq}\t{neighbor.R_ratio:.2%}\n')
             file.close()
+            return None
 
     def export_MTurk(
+            self,
+            out_path: str,
+            phrase_pairs: List[PhrasePair],
+            shuffle: bool
+            ) -> None:
+        column_names = [
+            'query_D_freq', 'query_R_freq', 'query_D_ratio', 'query_R_ratio',
+            'query_words', 'cosine_sim', 'neighbor_words',
+            'neighbor_D_freq', 'neighbor_R_freq', 'neighbor_D_ratio', 'neighbor_R_ratio'
+        ]
+        out_file = open(out_path, 'w')
+        csv_writer = csv.DictWriter(out_file, column_names)
+        csv_writer.writeheader()
+        if shuffle:
+            random.shuffle(phrase_pairs)
+        for pair in tqdm(phrase_pairs):
+            csv_writer.writerow(pair.export_dict())
+        out_file.close()
+
+
+    def export_MTurk_with_context_sentences(
             self,
             corpus_path: str,
             out_path: str,
@@ -204,12 +205,13 @@ class Embedding():
             corpus = [line for line in file]
         random.shuffle(corpus)
 
-        column_names = [
-            'query_D_freq', 'query_R_freq', 'query_D_ratio', 'query_R_ratio',
-            'query_words', 'cosine_sim', 'neighbor_words',
-            'neighbor_D_freq', 'neighbor_R_freq', 'neighbor_D_ratio', 'neighbor_R_ratio'
-            ] + [f'query_context{i}' for i in range(contexts_per_phrase)]
-
+        column_names = (
+            ['query_D_freq', 'query_R_freq', 'query_D_ratio', 'query_R_ratio',
+             'query_words', 'cosine_sim', 'neighbor_words',
+             'neighbor_D_freq', 'neighbor_R_freq', 'neighbor_D_ratio', 'neighbor_R_ratio']
+            + [f'query_context{i}' for i in range(contexts_per_phrase)]
+            + [f'neighbor_context{i}' for i in range(contexts_per_phrase)]
+        )
         out_file = open(out_path, 'w')
         csv_writer = csv.DictWriter(out_file, column_names)
         csv_writer.writeheader()
@@ -218,10 +220,9 @@ class Embedding():
             return '<b>' + regex_match.group() + '</b>'
 
         for pair in tqdm(phrase_pairs, desc='RegExing contexts in corpus'):
-            context_i = 0
+            num_contexts = 0
             phrase_pattern = re.compile(pair.query.words)
-            context_pattern = re.compile(
-                r'(\w*\s){1,30}' + pair.query.words + r'(\s\w*){1,30}')
+            context_pattern = re.compile(r'(\w*\s){1,30}' + pair.query.words + r'(\s\w*){1,30}')
             for speech in corpus:
                 if pair.query.words not in speech:
                     continue
@@ -229,10 +230,30 @@ class Embedding():
                 if context:
                     context = context.group().strip()
                     context = phrase_pattern.sub(code_injection, context)
-                    setattr(pair.query, f'context{context_i}', context)
-                    context_i += 1
-                if context_i >= contexts_per_phrase:
+                    # context = context.translate(remove_underscores)
+                    setattr(pair.query, f'context{num_contexts}', context)
+                    num_contexts += 1
+                if num_contexts == contexts_per_phrase:
                     break
+
+            num_contexts = 0
+            phrase_pattern = re.compile(pair.neighbor.words)
+            context_pattern = re.compile(r'(\w*\s){1,30}' + pair.neighbor.words + r'(\s\w*){1,30}')
+            for speech in corpus:
+                if pair.neighbor.words not in speech:
+                    continue
+                context = context_pattern.search(speech)
+                if context:
+                    context = context.group().strip()
+                    context = phrase_pattern.sub(code_injection, context)
+                    # context = context.translate(remove_underscores)
+                    setattr(pair.neighbor, f'context{num_contexts}', context)
+                    num_contexts += 1
+                if num_contexts == contexts_per_phrase:
+                    # pair.neighbor.words = pair.neighbor.words.translate(remove_underscores)
+                    break
+
+            # pair.query.words = pair.query.words.translate(remove_underscores)
             csv_writer.writerow(pair.export_dict())
         out_file.close()
 
@@ -279,35 +300,22 @@ def main() -> None:
     #     GOP_ids,
     #     [Dem_ids, GOP_ids, very_neutral_ids, kinda_neutral_ids])
 
-
     Dem_phrase_pairs = model.export_combined_nearest_partisan_neighbors(
         Dem_ids, [Dem_ids, GOP_ids, very_neutral_ids, kinda_neutral_ids],
-        top_k=1, export_path=None)
+        top_k=2, export_path=None)
     GOP_phrase_pairs = model.export_combined_nearest_partisan_neighbors(
         GOP_ids, [Dem_ids, GOP_ids, very_neutral_ids, kinda_neutral_ids],
-        top_k=1, export_path=None)
+        top_k=2, export_path=None)
     model.export_MTurk(
-        corpus_path='../../data/processed/plain_text/for_real/corpus.txt',
-        out_path=base_dir + 'MTurk.csv',
+        out_path=base_dir + 'top2_partisan_neighbors.csv',
         phrase_pairs=Dem_phrase_pairs + GOP_phrase_pairs,  # type: ignore
-        contexts_per_phrase=5)
+        shuffle=True)
 
-
-    # def sample_helper(stuff, samples_per_party=1000):
-    #     if len(stuff) > samples_per_party:
-    #         return np.random.choice(stuff, samples_per_party, replace=False)
-    #     else:
-    #         return stuff
-
-    # sampled_Dem_ids, sampled_GOP_ids, sampled_neutral_ids = map(
-    #     sample_helper, (Dem_ids, GOP_ids, neutral_ids))
-
-    # model.export_combined_nearest_partisan_neighbors(
-    #     base_dir + 'Dem_sample.tsv', sampled_Dem_ids, Dem_ids, GOP_ids, neutral_ids)
-    # model.export_combined_nearest_partisan_neighbors(
-    #     base_dir + 'GOP_sample.tsv', sampled_GOP_ids, Dem_ids, GOP_ids, neutral_ids)
-    # model.export_combined_nearest_partisan_neighbors(
-    #     base_dir + 'neutral_sample.tsv', sampled_neutral_ids, Dem_ids, GOP_ids, neutral_ids)
+    # model.export_MTurk_with_context_sentences(
+    #     corpus_path='../../data/processed/plain_text/for_real/corpus.txt',
+    #     out_path=base_dir + 'MTurk.csv',
+    #     phrase_pairs=Dem_phrase_pairs + GOP_phrase_pairs,  # type: ignore
+    #     contexts_per_phrase=2)
 
 
 if __name__ == '__main__':

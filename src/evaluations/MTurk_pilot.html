@@ -1,0 +1,607 @@
+<!doctype html>
+<meta charset=utf-8>
+
+<!-- You must include this JavaScript file -->
+<script src="https://assets.crowd.aws/crowd-html-elements.js"></script>
+
+<head>
+<style>
+    div {
+        width: 750px;
+        margin-left: auto;
+        margin-right: auto;
+        font-size: 18;
+    }
+    div.phrase_pair{
+        background-color: lavender;
+        font-family: Palatino;
+        font-size: 20;
+        line-height: 20px;
+        padding: 10px;
+    }
+
+    h1 {
+        text-align: center;
+        font-weight: normal
+    }
+
+    h2 {
+        font-weight: normal
+    }
+
+    .tg  {border-collapse:collapse;border-spacing:0;border-color:#ccc;margin:0px auto;}
+    .tg td{font-family:Arial, sans-serif;font-size:14px;padding:10px 5px;border-style:solid;border-width:0px;overflow:hidden;word-break:normal;border-top-width:1px;border-bottom-width:1px;border-color:#ccc;color:#333;background-color:#fff;}
+    .tg th{font-family:Arial, sans-serif;font-size:14px;font-weight:normal;padding:10px 5px;border-style:solid;border-width:0px;overflow:hidden;word-break:normal;border-top-width:1px;border-bottom-width:1px;border-color:#ccc;color:#333;background-color:#f0f0f0;}
+    .tg .tg-baqh{text-align:center;vertical-align:top}
+    .tg .tg-0lax{text-align:left;vertical-align:top}
+
+</style>
+</head>
+
+
+<div class='instructions'>
+    <h1>pretty please read the instructions </h1>
+
+    <p>
+        We are researchers from Brown University trying to help computers understand political euphemism!
+        <!-- By completing these tasks, you are consenting to participation in our research. -->
+        <!-- You may read the details
+        <a target="_blank" href="http://cs.brown.edu/people/epavlick/informed-consent.html" >here</a>. -->
+        Please first complete the corresponding qualification task.
+        If you pass, we will approve your qualification
+        usually within 4 hours and no later than 12 hours.
+    </p>
+    <p>
+        In order to convey an opinion or push an agenda,
+        politicians from different parties often use very different words
+        to refer to the same underlying policies or ideas, even though
+        the sentiment, opinion, or connotation of those phrases
+        might vary dramatically.
+    </p>
+    <p>
+        You will be shown a series of phrase pairs. Please indicate on a 5-point scale
+        <b>how much the phrases overlap in the underlying event or policy
+        they refer to</b>.
+        You should <b>ignore differences that stem from opinion or stance</b>,
+        i.e. the way the speaker feels about the topic.
+        Examples of each point on the scale are below.
+    </p>
+
+    <p>
+        The examples are drawn from transcripts of congressional floor speeches
+        from 1981 to 2011. They were automatically converted to digital form
+        from paper transcripts. Consequently, phrases often are transcribed
+        without spaces or punctuation, e.g. “cap-and-trade” may appear as
+        “capandtrade”. We apologize for these errors.
+    </p>
+
+    <table class="tg" style="undefined; table-layout: fixed; width: 800px">
+    <colgroup>
+    <col style="width: 200px">
+    <col style="width: 100px">
+    <col style="width: 100px">
+    <col style="width: 400px">
+    </colgroup>
+    <tr>
+        <th class="tg-baqh">Rating</th>
+        <th class="tg-baqh" colspan="2">Example Pairs</th>
+        <th class="tg-baqh">Explanation</th>
+    </tr>
+    <tr>
+        <td class="tg-0lax" rowspan="3">5: <b>Completely or nearly equivalent</b></td>
+        <td class="tg-0lax">undocumented immigrants<br></td>
+        <td class="tg-0lax">illegal aliens</td>
+        <td class="tg-0lax">They refer to the same group of people.</td>
+    </tr>
+    <tr>
+        <td class="tg-0lax">estate tax</td>
+        <td class="tg-0lax">death tax<br></td>
+        <td class="tg-0lax">They refer to the same tax policy.</td>
+    </tr>
+    <tr>
+        <td class="tg-0lax">drastic cuts</td>
+        <td class="tg-0lax">draconian cuts</td>
+        <td class="tg-0lax">They both refer to reductions in spending.</td>
+    </tr>
+    <tr>
+        <td class="tg-0lax" rowspan="3">4: <b>Similar in most frequent or easily-imaginable contexts</b>, but not necessarily in all contexts</td>
+        <td class="tg-0lax">billion dollar tax cut</td>
+        <td class="tg-0lax">tax relief package</td>
+        <td class="tg-0lax">It is reasonable to assume that, in most political contexts in which the phrase “billion dollar tax cut” is used, it is in relation to a specific bill or policy that could also be referred to as a “tax relief package”.</td>
+    </tr>
+    <tr>
+        <td class="tg-0lax">armageddon</td>
+        <td class="tg-0lax">nuclear war</td>
+        <td class="tg-0lax">It is reasonable to assume that, in most political contexts in which the phrase “armageddon” is used, it is to refer to existential military threats, though it is not guaranteed to be the case (i.e. it is possible, though less likely, that “armageddon” would be used to refer to other types of threats).</td>
+    </tr>
+    <tr>
+        <td class="tg-0lax">big oil companies</td>
+        <td class="tg-0lax">American oil</td>
+        <td class="tg-0lax">It is reasonable to assume that, in the context of US politics, when the phrase “big oil companies” is used, it is referring to the American oil industry, though it is not guaranteed to be the case (i.e. it is possible, though less likely, that “big oil” would be used to refer to foriegn oil as well).</td>
+    </tr>
+    <tr>
+        <td class="tg-0lax" rowspan="3">3: <b>Similar in a few contexts</b>; could be used to refer to the same things in some contexts, but there are many ways in which they differ, <b>e.g. one is much more general than the other</b></td>
+        <td class="tg-0lax">community policing cops</td>
+        <td class="tg-0lax">cops</td>
+        <td class="tg-0lax">“Cops” is a general term whereas “community policing” refers to a specific policy idea. The terms overlap in meaning in some important contexts, but “cops” is relevant in many contexts where “community policing” is not relevant.</td>
+    </tr>
+    <tr>
+        <td class="tg-0lax">sweatshops</td>
+        <td class="tg-0lax">laborers</td>
+        <td class="tg-0lax">“Laborers” is a general term whereas “sweatshops” refers to a specific issue concerning laborers. The terms overlap in meaning in some important contexts, but “laborers” is relevant in many contexts where “sweatshops” is not relevant.</td>
+    </tr>
+    <tr>
+        <td class="tg-0lax">Republican majority</td>
+        <td class="tg-0lax">Republicans</td>
+        <td class="tg-0lax">Whether the terms are substitutable various a lot over time and context. When Republicans hold the majority the two phrases are perfectly equivalent, but this isn’t always the case.</td>
+    </tr>
+    <tr>
+        <td class="tg-0lax" rowspan="3">2: <b>Not equivalent, but likely to occur in the same policy topic</b>, including phrases with nearly opposite meaning</td>
+        <td class="tg-0lax">private insurance</td>
+        <td class="tg-0lax">government-run plan</td>
+        <td class="tg-0lax">Phrases with near-opposite meaning, e.g. competing policies, should be rated as 2.</td>
+    </tr>
+    <tr>
+        <td class="tg-0lax">financial literacy</td>
+        <td class="tg-0lax">tutorial</td>
+        <td class="tg-0lax">Concepts that are closely related, e.g. if one uses/requires/causes the other, should be rated as 2.</td>
+    </tr>
+    <tr>
+        <td class="tg-0lax">CIA agent</td>
+        <td class="tg-0lax">classified information</td>
+        <td class="tg-0lax">Concepts that are closely related, e.g. if one uses/requires/causes the other, should be rated as 2.</td>
+    </tr>
+    <tr>
+        <td class="tg-0lax" rowspan="2">1: <b>Completely irrelevant</b></td>
+        <td class="tg-0lax">Bayonne</td>
+        <td class="tg-0lax">Utica</td>
+        <td class="tg-0lax">Names referring to clearly different places should be marked as 1.</td>
+    </tr>
+    <tr>
+        <td class="tg-0lax">Mickey Leland</td>
+        <td class="tg-0lax">John East</td>
+        <td class="tg-0lax">Names referring to clearly different people should be marked as 1.</td>
+    </tr>
+    <tr>
+        <td class="tg-0lax">0: Unable to judge</td>
+        <td class="tg-0lax"></td>
+        <td class="tg-0lax"></td>
+        <td class="tg-0lax">If you are unable to make a decision after 30 seconds or so of Google searching, please indicate “unable to judge” and move on. You won’t be punished for choosing “unable to judge.”</td>
+    </tr>
+    </table>
+
+    <p>
+        We are interested in the meanings of these phrases from the perspective
+        of a politically-informed citizen, not necessarily a professional.
+        That is, if you are reasonably familiar with US politics,
+        you should be able to make many judgments using your existing knowledge alone.
+        However, <b>if you are unsure what a word or phrase means,
+        please use the provided Google search links.</b>
+        We don’t expect you to know every phrase.
+    </p>
+
+    <p>
+        If you are unable to make a decision after 30 seconds or so of Google searching,
+        please indicate “unable to judge” and move on. You won’t be punished for
+        choosing “unable to judge.” However, if you are choosing “unable to judge”
+        for more than nearly half of the questions, please stop submitting tasks.
+        If you submit a large number of HITs (e.g. >10) in which you are using
+        the “cannot judge” option for more than ~40% of your responses,
+        we may have to reject your subsequent HITs.
+    </p>
+</div>
+
+
+<crowd-form answer-format="flatten-objects">
+
+    <div class='unit_example'>
+
+        <div class="phrase_pair" align="center">
+            <p>“${P0_query_words}” vs. “${P0_neighbor_words}”</p>
+        </div>
+
+        <p>
+            Google links for your convenience: <br>
+            <a target="_blank" href=https://google.com/search?q=${P0_google_query}> ${P0_query_words}</a><br>
+            <a target="_blank" href=https://google.com/search?q=${P0_google_neighbor}> ${P0_neighbor_words}</a><br>
+            <a target="_blank" href=https://google.com/search?q=${P0_google_both}> search both together</a><br>
+        </p>
+
+        <div class='multiple_choice'>
+            <p>
+                How much do the two phrases overlap in the underlying event or policy
+                they refer to, ignoring the differences that stem from opinon or stance?
+            </p>
+            <crowd-radio-group name="P0_label" required="true">
+                <crowd-radio-button name="P0_label_5": false>
+                    5: Completely or nearly equivalent.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P0_label_4": false>
+                    4: Similar in many contexts.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P0_label_3": false>
+                    3: Similar in a few contexts, including phrases where one is much more general than the other.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P0_label_2": false>
+                    2: Not equivalent, but likely to occur in similar policy areas, including phrases with nearly opposite meaning.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P0_label_1": false>
+                    1: Completely different.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P0_label_0": false>
+                    0: Unable to judge.
+                </crowd-radio-button><br>
+            </crowd-radio-group>
+        </div>
+    </div>
+
+    <div class='unit_example'>
+
+        <div class="phrase_pair" align="center">
+            <p>“${P1_query_words}” vs. “${P1_neighbor_words}”</p>
+        </div>
+
+        <p>
+            Google links for your convenience: <br>
+            <a target="_blank" href=https://google.com/search?q=${P1_google_query}> ${P1_query_words}</a><br>
+            <a target="_blank" href=https://google.com/search?q=${P1_google_neighbor}> ${P1_neighbor_words}</a><br>
+            <a target="_blank" href=https://google.com/search?q=${P1_google_both}> search both together</a><br>
+        </p>
+
+        <div class='multiple_choice'>
+            <p>
+                How much do the two phrases overlap in the underlying event or policy
+                they refer to, ignoring the differences that stem from opinon or stance?
+            </p>
+            <crowd-radio-group name="P1_label" required="true">
+                <crowd-radio-button name="P1_label_5": false>
+                    5: Completely or nearly equivalent.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P1_label_4": false>
+                    4: Similar in many contexts.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P1_label_3": false>
+                    3: Similar in a few contexts, including phrases where one is much more general than the other.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P1_label_2": false>
+                    2: Not equivalent, but likely to occur in similar policy areas, including phrases with nearly opposite meaning.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P1_label_1": false>
+                    1: Completely different.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P1_label_0": false>
+                    0: Unable to judge.
+                </crowd-radio-button><br>
+            </crowd-radio-group>
+        </div>
+    </div>
+
+    <div class='unit_example'>
+
+        <div class="phrase_pair" align="center">
+            <p>“${P2_query_words}” vs. “${P2_neighbor_words}”</p>
+        </div>
+
+        <p>
+            Google links for your convenience: <br>
+            <a target="_blank" href=https://google.com/search?q=${P2_google_query}> ${P2_query_words}</a><br>
+            <a target="_blank" href=https://google.com/search?q=${P2_google_neighbor}> ${P2_neighbor_words}</a><br>
+            <a target="_blank" href=https://google.com/search?q=${P2_google_both}> search both together</a><br>
+        </p>
+
+        <div class='multiple_choice'>
+            <p>
+                How much do the two phrases overlap in the underlying event or policy
+                they refer to, ignoring the differences that stem from opinon or stance?
+            </p>
+            <crowd-radio-group name="P2_label" required="true">
+                <crowd-radio-button name="P2_label_5": false>
+                    5: Completely or nearly equivalent.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P2_label_4": false>
+                    4: Similar in many contexts.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P2_label_3": false>
+                    3: Similar in a few contexts, including phrases where one is much more general than the other.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P2_label_2": false>
+                    2: Not equivalent, but likely to occur in similar policy areas, including phrases with nearly opposite meaning.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P2_label_1": false>
+                    1: Completely different.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P2_label_0": false>
+                    0: Unable to judge.
+                </crowd-radio-button><br>
+            </crowd-radio-group>
+        </div>
+    </div>
+
+    <div class='unit_example'>
+
+        <div class="phrase_pair" align="center">
+            <p>“${P3_query_words}” vs. “${P3_neighbor_words}”</p>
+        </div>
+
+        <p>
+            Google links for your convenience: <br>
+            <a target="_blank" href=https://google.com/search?q=${P3_google_query}> ${P3_query_words}</a><br>
+            <a target="_blank" href=https://google.com/search?q=${P3_google_neighbor}> ${P3_neighbor_words}</a><br>
+            <a target="_blank" href=https://google.com/search?q=${P3_google_both}> search both together</a><br>
+        </p>
+
+        <div class='multiple_choice'>
+            <p>
+                How much do the two phrases overlap in the underlying event or policy
+                they refer to, ignoring the differences that stem from opinon or stance?
+            </p>
+            <crowd-radio-group name="P3_label" required="true">
+                <crowd-radio-button name="P3_label_5": false>
+                    5: Completely or nearly equivalent.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P3_label_4": false>
+                    4: Similar in many contexts.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P3_label_3": false>
+                    3: Similar in a few contexts, including phrases where one is much more general than the other.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P3_label_2": false>
+                    2: Not equivalent, but likely to occur in similar policy areas, including phrases with nearly opposite meaning.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P3_label_1": false>
+                    1: Completely different.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P3_label_0": false>
+                    0: Unable to judge.
+                </crowd-radio-button><br>
+            </crowd-radio-group>
+        </div>
+    </div>
+
+    <div class='unit_example'>
+
+        <div class="phrase_pair" align="center">
+            <p>“${P4_query_words}” vs. “${P4_neighbor_words}”</p>
+        </div>
+
+        <p>
+            Google links for your convenience: <br>
+            <a target="_blank" href=https://google.com/search?q=${P4_google_query}> ${P4_query_words}</a><br>
+            <a target="_blank" href=https://google.com/search?q=${P4_google_neighbor}> ${P4_neighbor_words}</a><br>
+            <a target="_blank" href=https://google.com/search?q=${P4_google_both}> search both together</a><br>
+        </p>
+
+        <div class='multiple_choice'>
+            <p>
+                How much do the two phrases overlap in the underlying event or policy
+                they refer to, ignoring the differences that stem from opinon or stance?
+            </p>
+            <crowd-radio-group name="P4_label" required="true">
+                <crowd-radio-button name="P4_label_5": false>
+                    5: Completely or nearly equivalent.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P4_label_4": false>
+                    4: Similar in many contexts.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P4_label_3": false>
+                    3: Similar in a few contexts, including phrases where one is much more general than the other.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P4_label_2": false>
+                    2: Not equivalent, but likely to occur in similar policy areas, including phrases with nearly opposite meaning.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P4_label_1": false>
+                    1: Completely different.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P4_label_0": false>
+                    0: Unable to judge.
+                </crowd-radio-button><br>
+            </crowd-radio-group>
+        </div>
+    </div>
+
+    <div class='unit_example'>
+
+        <div class="phrase_pair" align="center">
+            <p>“${P5_query_words}” vs. “${P5_neighbor_words}”</p>
+        </div>
+
+        <p>
+            Google links for your convenience: <br>
+            <a target="_blank" href=https://google.com/search?q=${P5_google_query}> ${P5_query_words}</a><br>
+            <a target="_blank" href=https://google.com/search?q=${P5_google_neighbor}> ${P5_neighbor_words}</a><br>
+            <a target="_blank" href=https://google.com/search?q=${P5_google_both}> search both together</a><br>
+        </p>
+
+        <div class='multiple_choice'>
+            <p>
+                How much do the two phrases overlap in the underlying event or policy
+                they refer to, ignoring the differences that stem from opinon or stance?
+            </p>
+            <crowd-radio-group name="P5_label" required="true">
+                <crowd-radio-button name="P5_label_5": false>
+                    5: Completely or nearly equivalent.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P5_label_4": false>
+                    4: Similar in many contexts.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P5_label_3": false>
+                    3: Similar in a few contexts, including phrases where one is much more general than the other.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P5_label_2": false>
+                    2: Not equivalent, but likely to occur in similar policy areas, including phrases with nearly opposite meaning.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P5_label_1": false>
+                    1: Completely different.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P5_label_0": false>
+                    0: Unable to judge.
+                </crowd-radio-button><br>
+            </crowd-radio-group>
+        </div>
+    </div>
+
+    <div class='unit_example'>
+
+        <div class="phrase_pair" align="center">
+            <p>“${P6_query_words}” vs. “${P6_neighbor_words}”</p>
+        </div>
+
+        <p>
+            Google links for your convenience: <br>
+            <a target="_blank" href=https://google.com/search?q=${P6_google_query}> ${P6_query_words}</a><br>
+            <a target="_blank" href=https://google.com/search?q=${P6_google_neighbor}> ${P6_neighbor_words}</a><br>
+            <a target="_blank" href=https://google.com/search?q=${P6_google_both}> search both together</a><br>
+        </p>
+
+        <div class='multiple_choice'>
+            <p>
+                How much do the two phrases overlap in the underlying event or policy
+                they refer to, ignoring the differences that stem from opinon or stance?
+            </p>
+            <crowd-radio-group name="P6_label" required="true">
+                <crowd-radio-button name="P6_label_5": false>
+                    5: Completely or nearly equivalent.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P6_label_4": false>
+                    4: Similar in many contexts.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P6_label_3": false>
+                    3: Similar in a few contexts, including phrases where one is much more general than the other.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P6_label_2": false>
+                    2: Not equivalent, but likely to occur in similar policy areas, including phrases with nearly opposite meaning.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P6_label_1": false>
+                    1: Completely different.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P6_label_0": false>
+                    0: Unable to judge.
+                </crowd-radio-button><br>
+            </crowd-radio-group>
+        </div>
+    </div>
+
+    <div class='unit_example'>
+
+        <div class="phrase_pair" align="center">
+            <p>“${P7_query_words}” vs. “${P7_neighbor_words}”</p>
+        </div>
+
+        <p>
+            Google links for your convenience: <br>
+            <a target="_blank" href=https://google.com/search?q=${P7_google_query}> ${P7_query_words}</a><br>
+            <a target="_blank" href=https://google.com/search?q=${P7_google_neighbor}> ${P7_neighbor_words}</a><br>
+            <a target="_blank" href=https://google.com/search?q=${P7_google_both}> search both together</a><br>
+        </p>
+
+        <div class='multiple_choice'>
+            <p>
+                How much do the two phrases overlap in the underlying event or policy
+                they refer to, ignoring the differences that stem from opinon or stance?
+            </p>
+            <crowd-radio-group name="P7_label" required="true">
+                <crowd-radio-button name="P7_label_5": false>
+                    5: Completely or nearly equivalent.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P7_label_4": false>
+                    4: Similar in many contexts.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P7_label_3": false>
+                    3: Similar in a few contexts, including phrases where one is much more general than the other.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P7_label_2": false>
+                    2: Not equivalent, but likely to occur in similar policy areas, including phrases with nearly opposite meaning.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P7_label_1": false>
+                    1: Completely different.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P7_label_0": false>
+                    0: Unable to judge.
+                </crowd-radio-button><br>
+            </crowd-radio-group>
+        </div>
+    </div>
+
+    <div class='unit_example'>
+
+        <div class="phrase_pair" align="center">
+            <p>“${P8_query_words}” vs. “${P8_neighbor_words}”</p>
+        </div>
+
+        <p>
+            Google links for your convenience: <br>
+            <a target="_blank" href=https://google.com/search?q=${P8_google_query}> ${P8_query_words}</a><br>
+            <a target="_blank" href=https://google.com/search?q=${P8_google_neighbor}> ${P8_neighbor_words}</a><br>
+            <a target="_blank" href=https://google.com/search?q=${P8_google_both}> search both together</a><br>
+        </p>
+
+        <div class='multiple_choice'>
+            <p>
+                How much do the two phrases overlap in the underlying event or policy
+                they refer to, ignoring the differences that stem from opinon or stance?
+            </p>
+            <crowd-radio-group name="P8_label" required="true">
+                <crowd-radio-button name="P8_label_5": false>
+                    5: Completely or nearly equivalent.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P8_label_4": false>
+                    4: Similar in many contexts.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P8_label_3": false>
+                    3: Similar in a few contexts, including phrases where one is much more general than the other.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P8_label_2": false>
+                    2: Not equivalent, but likely to occur in similar policy areas, including phrases with nearly opposite meaning.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P8_label_1": false>
+                    1: Completely different.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P8_label_0": false>
+                    0: Unable to judge.
+                </crowd-radio-button><br>
+            </crowd-radio-group>
+        </div>
+    </div>
+
+    <div class='unit_example'>
+
+        <div class="phrase_pair" align="center">
+            <p>“${P9_query_words}” vs. “${P9_neighbor_words}”</p>
+        </div>
+
+        <p>
+            Google links for your convenience: <br>
+            <a target="_blank" href=https://google.com/search?q=${P9_google_query}> ${P9_query_words}</a><br>
+            <a target="_blank" href=https://google.com/search?q=${P9_google_neighbor}> ${P9_neighbor_words}</a><br>
+            <a target="_blank" href=https://google.com/search?q=${P9_google_both}> search both together</a><br>
+        </p>
+
+        <div class='multiple_choice'>
+            <p>
+                How much do the two phrases overlap in the underlying event or policy
+                they refer to, ignoring the differences that stem from opinon or stance?
+            </p>
+            <crowd-radio-group name="P9_label" required="true">
+                <crowd-radio-button name="P9_label_5": false>
+                    5: Completely or nearly equivalent.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P9_label_4": false>
+                    4: Similar in many contexts.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P9_label_3": false>
+                    3: Similar in a few contexts, including phrases where one is much more general than the other.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P9_label_2": false>
+                    2: Not equivalent, but likely to occur in similar policy areas, including phrases with nearly opposite meaning.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P9_label_1": false>
+                    1: Completely different.
+                </crowd-radio-button><br>
+                <crowd-radio-button name="P9_label_0": false>
+                    0: Unable to judge.
+                </crowd-radio-button><br>
+            </crowd-radio-group>
+        </div>
+    </div>
+
+</crowd-form>
