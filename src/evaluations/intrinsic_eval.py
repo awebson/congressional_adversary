@@ -8,8 +8,6 @@ import numpy as np
 from scipy.spatial import distance
 from scipy.stats import spearmanr
 
-from decomposer import AdversarialDecomposer, AdversarialConfig
-
 np.random.seed(42)
 torch.manual_seed(42)
 

@@ -19,6 +19,9 @@ from utils.word_similarity import all_wordsim
 from evaluations import intrinsic_eval
 from evaluations.intrinsic_eval import PhrasePair
 
+# from pytorch_memlab import profile, set_target_gpu
+# set_target_gpu(1)
+
 random.seed(42)
 torch.manual_seed(42)
 
@@ -27,8 +30,8 @@ class Decomposer(nn.Module):
 
     def __init__(
             self,
+            architecture: nn.Module,
             decomposed_size: int,
-            hidden_size: int,
             delta: float,
             gamma: float,
             embed_size: int,
@@ -37,49 +40,9 @@ class Decomposer(nn.Module):
         super().__init__()
 
         # Decomposer
-        self.encoder = nn.Sequential(
-            # nn.Linear(embed_size, decomposed_size),
-            # nn.SELU(),
-
-            # nn.Linear(embed_size, hidden_size),
-            # nn.SELU(),
-            # # nn.AlphaDropout(p=config.dropout_p),
-            # nn.Linear(hidden_size, decomposed_size),
-            # nn.SELU()
-
-            # # nn.AlphaDropout(p=0.1),
-            # nn.Linear(embed_size, 200),
-            # nn.SELU(),
-            # nn.Linear(200, hidden_size),
-            # nn.SELU(),
-            # nn.Linear(hidden_size, decomposed_size),
-            # nn.SELU()
-
-            # nn.Linear(embed_size, hidden_size),
-            # nn.SELU(),
-            # # nn.AlphaDropout(p=0.1),
-            # nn.Linear(hidden_size, hidden_size),
-            # nn.SELU(),
-            # nn.Linear(hidden_size, hidden_size),
-            # nn.SELU(),
-            # # nn.AlphaDropout(p=0.1),
-            # nn.Linear(hidden_size, decomposed_size),
-            # nn.SELU()
-
-            nn.Linear(embed_size, 200),
-            nn.SELU(),
-            nn.AlphaDropout(p=0.1),
-            nn.Linear(200, 150),
-            nn.SELU(),
-            nn.Linear(150, hidden_size),
-            nn.SELU(),
-            nn.AlphaDropout(p=0.1),
-            nn.Linear(hidden_size, decomposed_size),
-            nn.SELU()
-        )
+        self.encoder = architecture
         self.delta = delta
         self.gamma = gamma
-        # self.pretrained_embed = pretrained_embed  # for evaluation functions
         self.device = device
 
         # Dennotation Loss: Skip-Gram Negative Sampling
@@ -96,7 +59,6 @@ class Decomposer(nn.Module):
             negative_context: Vector,
             party_labels: Vector
             ) -> Tuple[Vector, Scalar, Scalar, Scalar]:
-
         encoded_center = self.encoder(center)
         encoded_true_context = self.encoder(true_context)
         encoded_negative_context = self.encoder(negative_context)
@@ -138,87 +100,6 @@ class Decomposer(nn.Module):
         negative_objective = torch.sum(negative_objective, dim=1)  # bn -> b
         return -torch.mean(objective + negative_objective)
 
-    def predict_connotation(self, word_ids: Vector) -> Vector:
-        self.eval()
-        with torch.no_grad():
-            embed = self.pretrained_embed(word_ids)
-            encoded = self.encoder(embed)
-            logits = self.cono_decoder(encoded)
-            confidence = nn.functional.softmax(logits, dim=1)
-        self.train()
-        return confidence
-
-    def connotation_accuracy(
-            self,
-            batch: Tuple,
-            export_error_analysis: Optional[str] = None
-            ) -> float:
-        word_ids = batch[0].to(self.device)
-        labels = batch[2].to(self.device)
-
-        confidence = self.predict_connotation(word_ids)
-        predictions = confidence.argmax(dim=1)
-        correct_indicies = predictions.eq(labels)
-        accuracy = correct_indicies.float().mean().item()
-
-        # Debug High Confidence Predictions
-        # conf = [c[1].item() for c in confidence]
-        # high_conf = [
-        #     f'{self.id_to_word[word_ids[i].item()]}={c:.4f}'
-        #     for i, c in enumerate(conf) if c > .9]
-        # if len(high_conf) > 0:
-        #     tqdm.write(', '.join(high_conf))
-        return accuracy
-
-    def all_vocab_connotation(
-            self,
-            export_path: Optional[str] = None
-            ) -> Vector:
-        """Inspect the decomposed vectors"""
-        all_vocab_ids = torch.arange(
-            len(self.word_to_id), dtype=torch.long, device=self.device)
-        confidence = self.predict_connotation(all_vocab_ids)
-        if not export_path:
-            return confidence
-
-        tqdm.write(f'Exporting all vocabulary connnotation to {export_path}')
-        output = []
-        for conf, word_id in zip(confidence, all_vocab_ids):  # type: ignore
-            word = self.id_to_word[word_id.item()]
-            Dem_freq = self.Dem_frequency[word]
-            GOP_freq = self.GOP_frequency[word]
-            output.append((conf.tolist(), Dem_freq, GOP_freq, word))
-        output.sort(key=lambda tup: tup[0][0])  # ascending GOP confidence
-
-        if self.cherry_pick:
-            cherry_output = []
-            for cherry_word in self.cherry_pick:
-                try:
-                    cherry_conf = confidence[self.word_to_id[cherry_word]]
-                except KeyError:
-                    continue
-                Dem_freq = self.Dem_frequency[cherry_word]
-                GOP_freq = self.GOP_frequency[cherry_word]
-                cherry_output.append(
-                    (cherry_conf.tolist(), Dem_freq, GOP_freq, cherry_word))
-            cherry_output.sort(key=lambda tup: tup[0][0])
-
-        # self.accuracy_at_confidence_plot(output)  # TODO
-
-        with open(export_path, 'w') as file:
-            file.write('[Dem confidence, GOP confidence]\t'
-                       '(Dem frequency, GOP frequency)\n')
-            if self.cherry_pick:
-                for conf, Dem_freq, GOP_freq, word in cherry_output:
-                    file.write(f'[{conf[0]:.2%}, {conf[1]:.2%}]\t\t'
-                               f'({Dem_freq}, {GOP_freq})\t\t'
-                               f'{word}\n')
-                file.write('\n')
-            for conf, Dem_freq, GOP_freq, word in output:
-                file.write(f'[{conf[0]:.2%}, {conf[1]:.2%}]\t\t'
-                           f'({Dem_freq}, {GOP_freq})\t\t'
-                           f'{word}\n')
-
 
 class Recomposer(nn.Module):
 
@@ -251,16 +132,16 @@ class Recomposer(nn.Module):
 
         # Decomposers
         self.decomposer_f = Decomposer(
-            config.deno_size,
-            config.deno_hidden,
+            config.deno_architecture,
+            config.decomposed_deno_size,
             config.deno_delta,
             config.deno_gamma,
             config.embed_size,
             config.num_prediction_classes,
             config.device)
         self.decomposer_g = Decomposer(
-            config.cono_size,
-            config.cono_hidden,
+            config.cono_architecture,
+            config.decomposed_cono_size,
             config.cono_delta,
             config.cono_gamma,
             config.embed_size,
@@ -269,7 +150,9 @@ class Recomposer(nn.Module):
 
         # Recomposer (Autoencoder)
         self.recomposer_h = torch.nn.Sequential(
-            nn.Linear(config.deno_size + config.cono_size, config.embed_size),
+            nn.Linear(
+                config.decomposed_deno_size + config.decomposed_cono_size,
+                config.embed_size),
             nn.SELU()
         )
         self.rho = config.recomposer_rho
@@ -280,10 +163,8 @@ class Recomposer(nn.Module):
             center_word_ids: Vector,
             context_word_ids: Vector,
             party_labels: Vector
-            ) -> Tuple[Scalar, Scalar, Scalar, Scalar, Scalar, float]:
-        batch_size = len(context_word_ids)
-        # negative_context_ids = self.negative_sampling_dist.sample(
-        #     (batch_size, self.num_negative_samples))
+            ) -> Tuple[Scalar, Scalar, Scalar, Scalar, Scalar, Scalar]:
+        batch_size = context_word_ids.shape[0]
         negative_context_ids = torch.multinomial(
             self.categorical_dist_probs,
             batch_size * self.num_negative_samples,
@@ -304,7 +185,7 @@ class Recomposer(nn.Module):
         l_h: Scalar = 1 - torch.mean(  # type: ignore
             nn.functional.cosine_similarity(center, recomposed))
         L_master = L_f + L_g + self.rho * l_h
-        return L_master, l_f_deno, l_f_cono, l_g_deno, l_g_cono, l_h.item()
+        return L_master, l_f_deno, l_f_cono, l_g_deno, l_g_cono, l_h
 
     def export_embeddings(
             self,
@@ -329,6 +210,79 @@ class Recomposer(nn.Module):
                 torch.cat((deno_embed, cono_embed), dim=1))
         self.train()
         return pretrained, deno_embed, cono_embed, recomp_embed
+
+    def predict_connotation(self, word_ids: Vector) -> Vector:
+        self.eval()
+        with torch.no_grad():
+            embed = self.pretrained_embed(word_ids)
+            encoded = self.encoder(embed)
+            logits = self.cono_decoder(encoded)
+            confidence = nn.functional.softmax(logits, dim=1)
+        self.train()
+        return confidence
+
+    def connotation_accuracy(
+            self,
+            batch: Tuple,
+            export_error_analysis: Optional[str] = None
+            ) -> float:
+        word_ids = batch[0].to(self.device)
+        labels = batch[2].to(self.device)
+
+        confidence = self.predict_connotation(word_ids)
+        predictions = confidence.argmax(dim=1)
+        correct_indicies = predictions.eq(labels)
+        accuracy = correct_indicies.float().mean().item()
+        return accuracy
+
+    # def all_vocab_connotation(
+    #         self,
+    #         export_path: Optional[str] = None
+    #         ) -> Vector:
+    #     """Inspect the decomposed vectors"""
+    #     all_vocab_ids = torch.arange(
+    #         len(self.word_to_id), dtype=torch.long, device=self.device)
+    #     confidence = self.predict_connotation(all_vocab_ids)
+    #     if not export_path:
+    #         return confidence
+
+    #     tqdm.write(f'Exporting all vocabulary connnotation to {export_path}')
+    #     output = []
+    #     for conf, word_id in zip(confidence, all_vocab_ids):  # type: ignore
+    #         word = self.id_to_word[word_id.item()]
+    #         Dem_freq = self.Dem_frequency[word]
+    #         GOP_freq = self.GOP_frequency[word]
+    #         output.append((conf.tolist(), Dem_freq, GOP_freq, word))
+    #     output.sort(key=lambda tup: tup[0][0])  # ascending GOP confidence
+
+    #     if self.cherry_pick:
+    #         cherry_output = []
+    #         for cherry_word in self.cherry_pick:
+    #             try:
+    #                 cherry_conf = confidence[self.word_to_id[cherry_word]]
+    #             except KeyError:
+    #                 continue
+    #             Dem_freq = self.Dem_frequency[cherry_word]
+    #             GOP_freq = self.GOP_frequency[cherry_word]
+    #             cherry_output.append(
+    #                 (cherry_conf.tolist(), Dem_freq, GOP_freq, cherry_word))
+    #         cherry_output.sort(key=lambda tup: tup[0][0])
+
+    #     # self.accuracy_at_confidence_plot(output)  # TODO
+
+    #     with open(export_path, 'w') as file:
+    #         file.write('[Dem confidence, GOP confidence]\t'
+    #                    '(Dem frequency, GOP frequency)\n')
+    #         if self.cherry_pick:
+    #             for conf, Dem_freq, GOP_freq, word in cherry_output:
+    #                 file.write(f'[{conf[0]:.2%}, {conf[1]:.2%}]\t\t'
+    #                            f'({Dem_freq}, {GOP_freq})\t\t'
+    #                            f'{word}\n')
+    #             file.write('\n')
+    #         for conf, Dem_freq, GOP_freq, word in output:
+    #             file.write(f'[{conf[0]:.2%}, {conf[1]:.2%}]\t\t'
+    #                        f'({Dem_freq}, {GOP_freq})\t\t'
+    #                        f'{word}\n')
 
 
 class PreparsedAdversarialDataset(Dataset):
@@ -458,16 +412,6 @@ class RecomposerExperiment(Experiment):
         #     if param.requires_grad:
         #         print(name)  # param.data)
 
-        # if config.freeze_embedding:
-        #     self.encoder_optimizer = config.optimizer(
-        #         self.model.encoder.parameters(),
-        #         lr=config.learning_rate)
-        # else:
-        #     self.encoder_optimizer = config.optimizer(
-        #         list(self.model.embedding.parameters()) +
-        #         list(self.model.encoder.parameters()),
-        #         lr=config.learning_rate)
-
         self.f_deno_optimizer = config.optimizer(
             self.model.decomposer_f.deno_decoder.parameters(),
             lr=config.learning_rate)
@@ -482,34 +426,13 @@ class RecomposerExperiment(Experiment):
             self.model.decomposer_g.cono_decoder.parameters(),
             lr=config.learning_rate)
 
-        self.master_optimizer = config.optimizer(
-            list(self.model.decomposer_f.encoder.parameters()) +
-            list(self.model.decomposer_g.encoder.parameters()) +
-            list(self.model.recomposer_h.parameters()),
+        self.recomposer_optimizer = config.optimizer(
+            self.model.decomposer_g.cono_decoder.parameters(),
             lr=config.learning_rate)
-
-        # self.f_deno_optimizer = config.optimizer(
-        #     self.model.decomposer_f.deno_decoder.parameters(),
-        #     lr=config.learning_rate,
-        #     momentum=config.momentum)
-        # self.f_cono_optimizer = config.optimizer(
-        #     self.model.decomposer_f.cono_decoder.parameters(),
-        #     lr=config.learning_rate,
-        #     momentum=config.momentum)
-        # self.g_deno_optimizer = config.optimizer(
-        #     self.model.decomposer_g.deno_decoder.parameters(),
-        #     lr=config.learning_rate,
-        #     momentum=config.momentum)
-        # self.g_cono_optimizer = config.optimizer(
-        #     self.model.decomposer_g.cono_decoder.parameters(),
-        #     lr=config.learning_rate,
-        #     momentum=config.momentum)
-        # self.master_optimizer = config.optimizer(
-        #     list(self.model.decomposer_f.encoder.parameters()) +
-        #     list(self.model.decomposer_g.encoder.parameters()) +
-        #     list(self.model.recomposer_h.parameters()),
-        #     lr=config.learning_rate,
-        #     momentum=config.momentum)
+        self.decomposer_optimizer = config.optimizer((
+            list(self.model.decomposer_f.encoder.parameters()) +
+            list(self.model.decomposer_g.encoder.parameters())),
+            lr=config.learning_rate)
 
         self.to_be_saved = {
             'config': self.config,
@@ -529,34 +452,41 @@ class RecomposerExperiment(Experiment):
             self,
             center_word_ids: Vector,
             context_word_ids: Vector,
-            party_labels: Vector
+            party_labels: Vector,
+            grad_clip: float = 5
             ) -> Tuple[float, float, float, float, float, float]:
         self.model.zero_grad()
         L_master, l_f_deno, l_f_cono, l_g_deno, l_g_cono, l_h = self.model(
             center_word_ids, context_word_ids, party_labels)
         L_master.backward(retain_graph=True)
-        nn.utils.clip_grad_norm_(self.model.parameters(), 5)
-        self.master_optimizer.step()
+        nn.utils.clip_grad_norm_(self.model.decomposer_f.encoder.parameters(), grad_clip)
+        nn.utils.clip_grad_norm_(self.model.decomposer_g.encoder.parameters(), grad_clip)
+        self.decomposer_optimizer.step()
 
         self.model.zero_grad()
         l_f_deno.backward(retain_graph=True)
-        nn.utils.clip_grad_norm_(self.model.parameters(), 5)
+        nn.utils.clip_grad_norm_(self.model.decomposer_f.deno_decoder.parameters(), grad_clip)
         self.f_deno_optimizer.step()
 
         self.model.zero_grad()
         l_f_cono.backward(retain_graph=True)
-        nn.utils.clip_grad_norm_(self.model.parameters(), 5)
+        nn.utils.clip_grad_norm_(self.model.decomposer_f.cono_decoder.parameters(), grad_clip)
         self.f_cono_optimizer.step()
 
         self.model.zero_grad()
         l_g_deno.backward(retain_graph=True)
-        nn.utils.clip_grad_norm_(self.model.parameters(), 5)
+        nn.utils.clip_grad_norm_(self.model.decomposer_g.deno_decoder.parameters(), grad_clip)
         self.g_deno_optimizer.step()
 
         self.model.zero_grad()
         l_g_cono.backward(retain_graph=True)
-        nn.utils.clip_grad_norm_(self.model.parameters(), 5)
+        nn.utils.clip_grad_norm_(self.model.decomposer_g.cono_decoder.parameters(), grad_clip)
         self.g_cono_optimizer.step()
+
+        self.model.zero_grad()
+        l_h.backward()
+        nn.utils.clip_grad_norm_(self.model.decomposer_g.cono_decoder.parameters(), grad_clip)
+        self.recomposer_optimizer.step()
 
         return (
             L_master.item(),
@@ -564,7 +494,7 @@ class RecomposerExperiment(Experiment):
             l_f_cono.item(),
             l_g_deno.item(),
             l_g_cono.item(),
-            l_h)
+            l_h.item())
 
     def train(self) -> None:
         config = self.config
@@ -572,7 +502,7 @@ class RecomposerExperiment(Experiment):
         for epoch_index in epoch_pbar:
             batch_pbar = tqdm(
                 enumerate(self.dataloader), total=len(self.dataloader),
-                mininterval=60, desc='Batches')
+                mininterval=config.progress_bar_refresh_rate, desc='Batches')
             for batch_index, batch in batch_pbar:
                 center_word_ids = batch[0].to(self.device)
                 context_word_ids = batch[1].to(self.device)
@@ -595,17 +525,16 @@ class RecomposerExperiment(Experiment):
                     self.update_tensorboard(stats)
                 if batch_index % config.print_stats == 0:
                     self.print_stats(epoch_index, batch_index, stats)
-                if batch_index % 10_000 == 0:  # TODO move to eval per epoch
+                if batch_index % config.eval_cherry == 0:
                     self.cherry_pick()
                     V_pretrained, V_deno, V_cono, V_recomp = self.model.export_embeddings()
                     deno_check = all_wordsim.mean_delta(V_deno, V_pretrained, self.data.id_to_word)
                     cono_check = all_wordsim.mean_delta(V_cono, V_pretrained, self.data.id_to_word)
                     recomp_check = all_wordsim.mean_delta(V_recomp, V_pretrained, self.data.id_to_word)
                     self.update_tensorboard({
-                        'Denotation Decomposer/word_sim_mean_delta': deno_check,
-                        'Connotation Decomposer/word_sim_mean_delta': cono_check,
-                        'Recomposer/word_sim_mean_delta': recomp_check
-                        })
+                        'Denotation Decomposer/nonpolitical_word_sim_cf_pretrained': deno_check,
+                        'Connotation Decomposer/nonpolitical_word_sim_cf_pretrained': cono_check,
+                        'Recomposer/nonpolitical_word_sim_cf_pretrained': recomp_check})
                 self.tb_global_step += 1
             # End Batches
             # self.lr_scheduler.step()
@@ -679,13 +608,13 @@ class RecomposerExperiment(Experiment):
         diff_pp_cono = torch.mean(sim_pp_cono - sim_pp_pretrained)
 
         self.update_tensorboard({
-            'Denotation Decomposer/euphemism_median_delta': diff_eu_deno,
-            'Denotation Decomposer/party_platform_median_delta': diff_pp_deno,
-            'Denotation Decomposer/euphemism-party': diff_eu_deno - diff_pp_deno,
+            'Denotation Decomposer/euphemism_cf_pretrained': diff_eu_deno,
+            'Denotation Decomposer/party_platform_cf_pretrained': diff_pp_deno,
+            'Denotation Decomposer/euphemism_delta_minus_party_delta': diff_eu_deno - diff_pp_deno,
 
-            'Connotation Decomposer/euphemism_median_delta': diff_eu_cono,
-            'Connotation Decomposer/party_platform_median_delta': diff_pp_cono,
-            'Connotation Decomposer/euphemism-party': diff_eu_cono - diff_pp_cono
+            'Connotation Decomposer/euphemism_cf_pretrained': diff_eu_cono,
+            'Connotation Decomposer/party_platform_cf_pretrained': diff_pp_cono,
+            'Connotation Decomposer/euphemism_delta_minus_party_delta': diff_eu_cono - diff_pp_cono
         })
 
     # def correlate_sim_deltas(self) -> float:
@@ -723,16 +652,94 @@ class RecomposerConfig():
     num_dataloader_threads: int = 0
 
     # Denotation Decomposer
-    deno_size: int = 200
-    deno_hidden: int = 100
+    deno_architecture: nn.Module = nn.Sequential(
+        # L1
+        nn.Linear(300, 200),
+        nn.SELU()
+
+        # # L2
+        # nn.Linear(300, 250),
+        # nn.SELU(),
+        # nn.Linear(250, 200),
+        # nn.SELU()
+
+        # # L3
+        # nn.Linear(300, 275),
+        # nn.SELU(),
+        # nn.Linear(275, 225),
+        # nn.SELU(),
+        # nn.Linear(225, 200),
+        # nn.SELU()
+
+        # # L4
+        # nn.Linear(300, 200),
+        # nn.SELU(),
+        # nn.Linear(200, 150),
+        # nn.SELU(),
+        # # nn.AlphaDropout(p=0.1),
+        # nn.Linear(150, 150),
+        # nn.SELU(),
+        # nn.Linear(150, 200),
+        # nn.SELU()
+
+        # # Antithesis
+        # nn.Linear(300, 100),
+        # nn.SELU(),
+        # nn.Linear(100, 100),
+        # nn.SELU(),
+        # nn.Linear(100, 100),
+        # nn.SELU(),
+        # nn.Linear(100, 200),
+        # nn.SELU()
+    )
+    decomposed_deno_size: int = 200
     deno_delta: float = 1  # denotation weight 𝛿
     deno_gamma: float = -8  # connotation weight 𝛾
 
     # Conotation Decomposer
-    cono_size: int = 100
-    cono_hidden: int = 50
-    cono_delta: float = 1  # denotation weight 𝛿
-    cono_gamma: float = -0.01  # connotation weight 𝛾
+    cono_architecture: nn.Module = nn.Sequential(
+        # L1
+        nn.Linear(300, 100),
+        nn.SELU()
+
+        # # L2
+        # nn.Linear(300, 150),
+        # nn.SELU(),
+        # nn.Linear(150, 100),
+        # nn.SELU(),
+
+        # # L3
+        # nn.Linear(300, 250),
+        # nn.SELU(),
+        # nn.Linear(250, 150),
+        # nn.SELU(),
+        # nn.Linear(150, 100),
+        # nn.SELU()
+
+        # # L4
+        # nn.Linear(300, 200),
+        # nn.SELU(),
+        # nn.Linear(200, 150),
+        # nn.SELU(),
+        # # nn.AlphaDropout(p=0.1),
+        # nn.Linear(150, 100),
+        # nn.SELU(),
+        # nn.Linear(100, 100),
+        # nn.SELU()
+
+        # # Antithesis
+        # nn.Linear(300, 50),
+        # nn.SELU(),
+        # nn.Linear(50, 50),
+        # nn.SELU(),
+        # nn.Linear(50, 50),
+        # nn.SELU(),
+        # nn.Linear(50, 100),
+        # nn.SELU()
+    )
+    decomposed_cono_size: int = 100
+    cono_delta: float = -0.01  # denotation weight 𝛿
+    cono_gamma: float = 1  # connotation weight 𝛾
 
     # Recomposer
     recomposer_rho: float = 1
@@ -749,7 +756,7 @@ class RecomposerConfig():
     freeze_embedding: bool = True
     optimizer: torch.optim.Optimizer = torch.optim.Adam
     # optimizer: torch.optim.Optimizer = torch.optim.SGD
-    learning_rate: float = 1e-4
+    learning_rate: float = 5e-5
     # momentum: float = 0.5
     # lr_scheduler: torch.optim.lr_scheduler._LRScheduler
     num_prediction_classes: int = 2
@@ -768,7 +775,9 @@ class RecomposerConfig():
     # Housekeeping
     export_error_analysis: Optional[int] = 1  # per epoch
     update_tensorboard: int = 1000  # per batch
-    print_stats: int = 1000  # per batch
+    print_stats: int = 10_000  # per batch
+    eval_cherry: int = 10_000  # per batch
+    progress_bar_refresh_rate: int = 60  # per second
     reload_path: Optional[str] = None
     clear_tensorboard_log_in_output_dir: bool = True
     delete_all_exisiting_files_in_output_dir: bool = False
