@@ -255,37 +255,37 @@ def speech_length_histogram(
 
 
 def main() -> None:
-    # # Congressional Record
-    # post_WWII_sessions = range(79, 112)
-    # output_dir = 'debug_partitioned_corpora'
-    # min_speech_length = 20
-    # num_chunks = 10
-    # input_encoding: str = 'mac_roman'  # NOTE
+    # Congressional Record
+    post_WWII_sessions = range(79, 112)
+    output_dir = '../../data/debug_partitioned_corpora'
+    min_speech_length = 20
+    num_chunks = 10
+    input_encoding: str = 'mac_roman'  # NOTE
 
-    # os.makedirs(output_dir)
-    # print('Session\t\tSpeech Count\tWord Count\tShort Speech\tMissing Metadata')
-    # for session in post_WWII_sessions:
-    #     original_corpus_path = f'../corpora/raw/bound/speeches_{session:0>3d}.txt'
-    #     metadata_path = f'../corpora/raw/bound/{session:0>3d}_SpeakerMap.txt'
-    #     stats = partition_corpus(
-    #         session, original_corpus_path, metadata_path, output_dir,
-    #         min_speech_length, num_chunks, input_encoding)
-    #     speech_count, word_count, short_speech_count, missing_metadata_count = stats
-    #     short_speech_ratio = short_speech_count / speech_count
-    #     missing_metadata_ratio = missing_metadata_count / speech_count
-    #     remaining_speech_count = speech_count - short_speech_count - missing_metadata_count
-    #     print(f'{session}\t\t'
-    #           f'{remaining_speech_count:,}\t\t'
-    #           f'{word_count:,}\t'
-    #           f'{short_speech_ratio:.2%}\t\t'
-    #           f'{missing_metadata_ratio:.2%}')
+    os.makedirs(output_dir)
+    print('Session\t\tSpeech Count\tWord Count\tShort Speech\tMissing Metadata')
+    for session in post_WWII_sessions:
+        original_corpus_path = f'../../data/raw/bound/speeches_{session:0>3d}.txt'
+        metadata_path = f'../../data/raw/bound/{session:0>3d}_SpeakerMap.txt'
+        stats = partition_corpus(
+            session, original_corpus_path, metadata_path, output_dir,
+            min_speech_length, num_chunks, input_encoding)
+        speech_count, word_count, short_speech_count, missing_metadata_count = stats
+        short_speech_ratio = short_speech_count / speech_count
+        missing_metadata_ratio = missing_metadata_count / speech_count
+        remaining_speech_count = speech_count - short_speech_count - missing_metadata_count
+        print(f'{session}\t\t'
+              f'{remaining_speech_count:,}\t\t'
+              f'{word_count:,}\t'
+              f'{short_speech_ratio:.2%}\t\t'
+              f'{missing_metadata_ratio:.2%}')
 
-    # UCSB Presidency Project
-    partition_jsonl_corpus(
-        corpus_path='../../data/raw/UCSB_presidency_project.jsonl',
-        output_dir='../../data/interim/partitioned_presidency',
-        num_chunks=10,
-        input_encoding='utf_8')
+    # # UCSB Presidency Project
+    # partition_jsonl_corpus(
+    #     corpus_path='../../data/raw/UCSB_presidency_project.jsonl',
+    #     output_dir='../../data/interim/partitioned_presidency',
+    #     num_chunks=10,
+    #     input_encoding='utf_8')
 
 
 if __name__ == '__main__':

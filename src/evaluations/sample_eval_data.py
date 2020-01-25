@@ -193,7 +193,6 @@ class Embedding():
             csv_writer.writerow(pair.export_dict())
         out_file.close()
 
-
     def export_MTurk_with_context_sentences(
             self,
             corpus_path: str,
@@ -257,6 +256,48 @@ class Embedding():
             csv_writer.writerow(pair.export_dict())
         out_file.close()
 
+    def motivation_analysis(
+            self,
+            Dem_ids: List[int],
+            GOP_ids: List[int],
+            threshold: float,
+            top_k: int
+            ) -> None:
+        all_vocab_ids = np.array(list(self.id_to_phrase.keys()))
+
+        Dem_neighborhood = self.nearest_partisan_neighbors(
+            Dem_ids, all_vocab_ids, top_k=top_k)
+        GOP_neighborood = self.nearest_partisan_neighbors(
+            GOP_ids, all_vocab_ids, top_k=top_k)
+
+        D_neighbor_ratios = []
+        for query_id, neighborhood in Dem_neighborhood.items():
+            query = self.id_to_phrase[query_id]
+            cosponsor = 0
+            for neighbor_id, cosine_sim in neighborhood:
+                neighbor = self.id_to_phrase[neighbor_id]
+                if neighbor == query:
+                    continue
+                if neighbor.D_ratio > threshold and query.D_ratio > threshold:
+                    cosponsor += 1
+            D_neighbor_ratios.append(cosponsor / top_k)
+        Dem_ratio = np.mean(D_neighbor_ratios)
+        print(Dem_ratio)
+
+        R_neighbor_ratios = []
+        for query_id, neighborhood in GOP_neighborood.items():
+            query = self.id_to_phrase[query_id]
+            cosponsor = 0
+            for neighbor_id, cosine_sim in neighborhood:
+                neighbor = self.id_to_phrase[neighbor_id]
+                if neighbor == query:
+                    continue
+                if neighbor.R_ratio > threshold and query.R_ratio > threshold:
+                    cosponsor += 1
+            R_neighbor_ratios.append(cosponsor / top_k)
+        GOP_ratio = np.mean(R_neighbor_ratios)
+        print(GOP_ratio)
+
 
 def main() -> None:
     model = Embedding(
@@ -300,22 +341,26 @@ def main() -> None:
     #     GOP_ids,
     #     [Dem_ids, GOP_ids, very_neutral_ids, kinda_neutral_ids])
 
-    Dem_phrase_pairs = model.export_combined_nearest_partisan_neighbors(
-        Dem_ids, [Dem_ids, GOP_ids, very_neutral_ids, kinda_neutral_ids],
-        top_k=2, export_path=None)
-    GOP_phrase_pairs = model.export_combined_nearest_partisan_neighbors(
-        GOP_ids, [Dem_ids, GOP_ids, very_neutral_ids, kinda_neutral_ids],
-        top_k=2, export_path=None)
-    model.export_MTurk(
-        out_path=base_dir + 'top2_partisan_neighbors.csv',
-        phrase_pairs=Dem_phrase_pairs + GOP_phrase_pairs,  # type: ignore
-        shuffle=True)
+    # Dem_phrase_pairs = model.export_combined_nearest_partisan_neighbors(
+    #     Dem_ids, [Dem_ids, GOP_ids, very_neutral_ids, kinda_neutral_ids],
+    #     top_k=2, export_path=None)
+    # GOP_phrase_pairs = model.export_combined_nearest_partisan_neighbors(
+    #     GOP_ids, [Dem_ids, GOP_ids, very_neutral_ids, kinda_neutral_ids],
+    #     top_k=2, export_path=None)
+    # model.export_MTurk(
+    #     out_path=base_dir + 'top2_partisan_neighbors.csv',
+    #     phrase_pairs=Dem_phrase_pairs + GOP_phrase_pairs,  # type: ignore
+    #     shuffle=True)
 
     # model.export_MTurk_with_context_sentences(
     #     corpus_path='../../data/processed/plain_text/for_real/corpus.txt',
     #     out_path=base_dir + 'MTurk.csv',
     #     phrase_pairs=Dem_phrase_pairs + GOP_phrase_pairs,  # type: ignore
     #     contexts_per_phrase=2)
+
+    model.motivation_analysis(Dem_ids, GOP_ids, threshold=.5, top_k=30)
+
+
 
 
 if __name__ == '__main__':

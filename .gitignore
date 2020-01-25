@@ -1,6 +1,8 @@
 data
+analysis
+attic
 results
-publications
+results_attic
 congressional_env
 src/congressional_adversary.egg-info
-/src/utils/word_similarity
+src/utils/word_similarity

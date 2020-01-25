@@ -3,9 +3,8 @@ import random
 import pickle
 import os
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Tuple, List, Dict, Iterable, Optional
-from typing import Counter as CounterType
+from typing import Counter
 
 import torch
 from torch import nn
@@ -17,10 +16,6 @@ from utils.experiment import Experiment
 from utils.improvised_typing import Scalar, Vector, Matrix, R3Tensor
 from utils.word_similarity import all_wordsim
 from evaluations import intrinsic_eval
-from evaluations.intrinsic_eval import PhrasePair
-
-# from pytorch_memlab import profile, set_target_gpu
-# set_target_gpu(1)
 
 random.seed(42)
 torch.manual_seed(42)
@@ -103,32 +98,24 @@ class Decomposer(nn.Module):
 
 class Recomposer(nn.Module):
 
-    def __init__(self, config: 'RecomposerConfig', data: 'AdversarialDataset'):
+    def __init__(self, config: 'RecomposerConfig', data: 'SpeechesWithPartyDict'):
         super().__init__()
         self.word_to_id = data.word_to_id
         self.id_to_word = data.id_to_word
         self.Dem_frequency = data.Dem_frequency
         self.GOP_frequency = data.GOP_frequency
-        # self.cherry_pick = config.cherry_pick
+        self.cherries = config.cherries
         self.device = config.device
         vocab_size = len(data.word_to_id)
-        embed_size = config.embed_size
+        # embed_size = config.embed_size
 
-        # Initialize Embedding
-        if config.pretrained_embedding is not None:
-            config.embed_size = data.pretrained_embedding.shape[1]
-            self.pretrained_embed = nn.Embedding.from_pretrained(
-                data.pretrained_embedding, sparse=config.sparse_embedding_grad)
-        else:
-            self.pretrained_embed = nn.Embedding(
-                vocab_size, embed_size, sparse=config.sparse_embedding_grad)
-            init_range = 1.0 / embed_size
-            nn.init.uniform_(self.pretrained_embed.weight.data,
-                             -init_range, init_range)
+        config.embed_size = data.pretrained_embedding.shape[1]
+        self.pretrained_embed = nn.Embedding.from_pretrained(data.pretrained_embedding)
         self.pretrained_embed.weight.requires_grad = not config.freeze_embedding
+
         self.num_negative_samples = config.num_negative_samples
         SkipGramNegativeSampling.init_negative_sampling(
-            self, data.word_frequency, data.word_to_id)
+            self, data.subsampled_frequency, data.word_to_id)
 
         # Decomposers
         self.decomposer_f = Decomposer(
@@ -149,12 +136,9 @@ class Recomposer(nn.Module):
             config.device)
 
         # Recomposer (Autoencoder)
-        self.recomposer_h = torch.nn.Sequential(
-            nn.Linear(
-                config.decomposed_deno_size + config.decomposed_cono_size,
-                config.embed_size),
-            nn.SELU()
-        )
+        self.recomposer_h = nn.Linear(
+            config.decomposed_deno_size + config.decomposed_cono_size,
+            config.embed_size)
         self.rho = config.recomposer_rho
         self.to(self.device)
 
@@ -188,18 +172,14 @@ class Recomposer(nn.Module):
         return L_master, l_f_deno, l_f_cono, l_g_deno, l_g_cono, l_h
 
     def export_embeddings(
-            self,
-            # export_path: Optional[str] = None,
-            # tensorboard: bool = False,
-            device: Optional[torch.device] = None
+            self, device: Optional[torch.device] = None
             ) -> Tuple[Matrix, Matrix, Matrix, Matrix]:
         """for querying nearest neighbors & visualization"""
         all_vocab_ids = torch.arange(
             self.pretrained_embed.num_embeddings, dtype=torch.long)
-        if device:
-            all_vocab_ids = all_vocab_ids.to(device)
-        else:
-            all_vocab_ids = all_vocab_ids.to(self.device)
+        if not device:
+            device = self.device
+        all_vocab_ids = all_vocab_ids.to(device)
 
         self.eval()
         with torch.no_grad():
@@ -215,150 +195,127 @@ class Recomposer(nn.Module):
         self.eval()
         with torch.no_grad():
             embed = self.pretrained_embed(word_ids)
-            encoded = self.encoder(embed)
-            logits = self.cono_decoder(encoded)
-            confidence = nn.functional.softmax(logits, dim=1)
+
+            deno = self.decomposer_f.encoder(embed)
+            cono = self.decomposer_g.encoder(embed)
+
+            f_logits = self.decomposer_f.cono_decoder(deno)
+            g_logits = self.decomposer_g.cono_decoder(cono)
+
+            f_confidence = nn.functional.softmax(f_logits, dim=1)
+            g_confidence = nn.functional.softmax(g_logits, dim=1)
         self.train()
-        return confidence
+        return f_confidence, g_confidence
 
     def connotation_accuracy(
             self,
-            batch: Tuple,
+            word_ids: Vector,
+            labels: Vector,
             export_error_analysis: Optional[str] = None
-            ) -> float:
-        word_ids = batch[0].to(self.device)
-        labels = batch[2].to(self.device)
+            ) -> Tuple[float, float]:
+        f_conf, g_conf = self.predict_connotation(word_ids)
+        f_predictions = f_conf.argmax(dim=1)
+        g_predictions = g_conf.argmax(dim=1)
+        f_correct_indicies = f_predictions.eq(labels)
+        g_correct_indicies = g_predictions.eq(labels)
+        f_accuracy = f_correct_indicies.float().mean().item()
+        g_accuracy = g_correct_indicies.float().mean().item()
+        return f_accuracy, g_accuracy
 
-        confidence = self.predict_connotation(word_ids)
-        predictions = confidence.argmax(dim=1)
-        correct_indicies = predictions.eq(labels)
-        accuracy = correct_indicies.float().mean().item()
-        return accuracy
+    def all_vocab_connotation(
+            self,
+            export_path: Optional[str] = None
+            ) -> None:
+        """Inspect the decomposed vectors"""
+        all_vocab_ids = torch.arange(
+            len(self.word_to_id), dtype=torch.long, device=self.device)
+        f_confidence, g_confidence = self.predict_connotation(all_vocab_ids)
+        # if not export_path:
+        #     return confidence
 
-    # def all_vocab_connotation(
-    #         self,
-    #         export_path: Optional[str] = None
-    #         ) -> Vector:
-    #     """Inspect the decomposed vectors"""
-    #     all_vocab_ids = torch.arange(
-    #         len(self.word_to_id), dtype=torch.long, device=self.device)
-    #     confidence = self.predict_connotation(all_vocab_ids)
-    #     if not export_path:
-    #         return confidence
+        tqdm.write(f'Exporting all vocabulary connnotation to {export_path}')
+        output = []
+        for f_conf, g_conf, word_id in zip(  # type: ignore
+                f_confidence, g_confidence, all_vocab_ids):
+            word = self.id_to_word[word_id.item()]
+            Dem_freq = self.Dem_frequency[word]
+            GOP_freq = self.GOP_frequency[word]
+            output.append(
+                (f_conf.tolist(), g_conf.tolist(), Dem_freq, GOP_freq, word))
+        output.sort(key=lambda tup: tup[1][0])  # ascending GOP confidence
 
-    #     tqdm.write(f'Exporting all vocabulary connnotation to {export_path}')
-    #     output = []
-    #     for conf, word_id in zip(confidence, all_vocab_ids):  # type: ignore
-    #         word = self.id_to_word[word_id.item()]
-    #         Dem_freq = self.Dem_frequency[word]
-    #         GOP_freq = self.GOP_frequency[word]
-    #         output.append((conf.tolist(), Dem_freq, GOP_freq, word))
-    #     output.sort(key=lambda tup: tup[0][0])  # ascending GOP confidence
+        if self.cherries:
+            cherry_output = []
+            for cherry_word in self.cherries:
+                try:
+                    cherry_f_conf = f_confidence[self.word_to_id[cherry_word]]
+                    cherry_g_conf = g_confidence[self.word_to_id[cherry_word]]
+                except KeyError:
+                    continue
+                Dem_freq = self.Dem_frequency[cherry_word]
+                GOP_freq = self.GOP_frequency[cherry_word]
+                cherry_output.append(
+                    (cherry_f_conf.tolist(), cherry_g_conf, Dem_freq, GOP_freq, cherry_word))
+            cherry_output.sort(key=lambda tup: tup[1][0])
 
-    #     if self.cherry_pick:
-    #         cherry_output = []
-    #         for cherry_word in self.cherry_pick:
-    #             try:
-    #                 cherry_conf = confidence[self.word_to_id[cherry_word]]
-    #             except KeyError:
-    #                 continue
-    #             Dem_freq = self.Dem_frequency[cherry_word]
-    #             GOP_freq = self.GOP_frequency[cherry_word]
-    #             cherry_output.append(
-    #                 (cherry_conf.tolist(), Dem_freq, GOP_freq, cherry_word))
-    #         cherry_output.sort(key=lambda tup: tup[0][0])
+        def pretty_format(conf):
+            out = [f'{c:.2%}' for c in conf]
+            out = ', '.join(out)
+            return '[' + out + ']'
 
-    #     # self.accuracy_at_confidence_plot(output)  # TODO
-
-    #     with open(export_path, 'w') as file:
-    #         file.write('[Dem confidence, GOP confidence]\t'
-    #                    '(Dem frequency, GOP frequency)\n')
-    #         if self.cherry_pick:
-    #             for conf, Dem_freq, GOP_freq, word in cherry_output:
-    #                 file.write(f'[{conf[0]:.2%}, {conf[1]:.2%}]\t\t'
-    #                            f'({Dem_freq}, {GOP_freq})\t\t'
-    #                            f'{word}\n')
-    #             file.write('\n')
-    #         for conf, Dem_freq, GOP_freq, word in output:
-    #             file.write(f'[{conf[0]:.2%}, {conf[1]:.2%}]\t\t'
-    #                        f'({Dem_freq}, {GOP_freq})\t\t'
-    #                        f'{word}\n')
+        # self.accuracy_at_confidence_plot(output)  # TODO
+        with open(export_path, 'w') as file:  # type: ignore
+            file.write('Deno_space_conf\t\tCono_space_conf\t\t'
+                       '(Dem frequency, GOP frequency)\n')
+            if self.cherries:
+                for f_conf, g_conf, Dem_freq, GOP_freq, word in cherry_output:
+                    file.write(f'{pretty_format(f_conf)}\t'
+                               f'{pretty_format(g_conf)}\t'
+                               f'({Dem_freq}, {GOP_freq})\t'
+                               f'{word}\n')
+                file.write('\n')
+            for f_conf, g_conf, Dem_freq, GOP_freq, word in output:
+                file.write(f'{pretty_format(f_conf)}\t'
+                           f'{pretty_format(g_conf)}\t'
+                           f'({Dem_freq}, {GOP_freq})\t'
+                           f'{word}\n')
 
 
-class PreparsedAdversarialDataset(Dataset):
+class SpeechesWithPartyDict(Dataset):
 
     def __init__(self, config: 'RecomposerConfig'):
         corpus_path = os.path.join(config.input_dir, 'train_data.pickle')
-        with open(corpus_path, 'rb') as corpus_file:
-            preprocessed = pickle.load(corpus_file)
-        self.word_to_id = preprocessed['word_to_id']
-        self.id_to_word = preprocessed['id_to_word']
-        self.Dem_frequency: CounterType[str] = preprocessed['Dem_init_freq']
-        self.GOP_frequency: CounterType[str] = preprocessed['GOP_init_freq']
-        self.word_frequency: CounterType[str] = preprocessed['combined_frequency']
-        self.center_word_ids: List[int] = preprocessed['center_word_ids']
-        self.context_word_ids: List[int] = preprocessed['context_word_ids']
-        self.labels: List[int] = preprocessed['party_labels']
-        del preprocessed
-
-        self.pretrained_embedding: Matrix
-        if config.pretrained_embedding is not None:
-            corpus_id_to_word = self.id_to_word
-            self.pretrained_embedding, self.word_to_id, self.id_to_word = (
-                Experiment.load_embedding(config.pretrained_embedding))
-            self.center_word_ids = Experiment.convert_word_ids(
-                self.center_word_ids, corpus_id_to_word, self.word_to_id)
-            self.context_word_ids = Experiment.convert_word_ids(
-                self.context_word_ids, corpus_id_to_word, self.word_to_id)
-
-        if config.debug_subset_corpus:
-            self.center_word_ids = self.center_word_ids[:config.debug_subset_corpus]
-            self.context_word_ids = self.context_word_ids[:config.debug_subset_corpus]
-            self.labels = self.labels[:config.debug_subset_corpus]
-
-    def __len__(self) -> int:
-        return len(self.labels)
-
-    def __getitem__(self, index: int) -> Tuple[int, int, int]:
-        return (
-            self.center_word_ids[index],
-            self.context_word_ids[index],
-            self.labels[index])
-
-
-class AdversarialDataset(Dataset):
-
-    def __init__(self, config: 'RecomposerConfig'):
         self.window_radius = config.window_radius
-        corpus_path = os.path.join(config.input_dir, 'train_data.pickle')
         with open(corpus_path, 'rb') as corpus_file:
             preprocessed = pickle.load(corpus_file)
 
         self.word_to_id = preprocessed['word_to_id']
         self.id_to_word = preprocessed['id_to_word']
-        self.Dem_frequency: CounterType[str] = preprocessed['D_raw_freq']
-        self.GOP_frequency: CounterType[str] = preprocessed['R_raw_freq']
-        self.word_frequency: CounterType[str] = preprocessed['combined_frequency']
-        self.documents: List[List[int]] = preprocessed['documents']
-        self.labels: List[int] = preprocessed['labels']
+        self.Dem_frequency: Counter[str] = preprocessed['D_raw_freq']
+        self.GOP_frequency: Counter[str] = preprocessed['R_raw_freq']
+        self.id_to_label: Dict[int, int] = preprocessed['id_to_label']
+        self.subsampled_frequency: Counter[str] = preprocessed['subsampled_frequency']
+        self.documents: List[List[int]] = preprocessed['speeches']
         del preprocessed
+        if config.export_tensorboard_embedding_projector:
+            self.vocabulary = [
+                self.id_to_word[word_id]
+                for word_id in range(len(self.word_to_id))]
 
-        self.pretrained_embedding: Matrix
+        # self.train_word_ids = word_ids[config.dev_holdout:]
+        # self.train_labels = labels[config.dev_holdout:]
+        # self.dev_word_ids = torch.tensor(word_ids[:config.dev_holdout])
+        # self.dev_labels = torch.tensor(labels[:config.dev_holdout])
+
         if config.pretrained_embedding is not None:
-            self.pretrained_embedding = Experiment.load_embedding(
+            self.pretrained_embedding: Matrix = Experiment.load_embedding(
                 config.pretrained_embedding, self.word_to_id)
-
         if config.debug_subset_corpus:
-            self.documents = self.documents[:config.debug_subset_corpus]
-            self.labels = self.labels[:config.debug_subset_corpus]
-
-        self.vocabulary = [  # for TensorBoard Embedding Projector
-            self.id_to_word[word_id]
-            for word_id in range(len(self.word_to_id))]
-
+            self.train_word_ids = self.train_word_ids[:config.debug_subset_corpus]
+            self.train_labels = self.train_labels[:config.debug_subset_corpus]
 
     def __len__(self) -> int:
-        return len(self.labels)
+        return len(self.documents)
 
     def __getitem__(self, index: int) -> Tuple[Vector, Vector, Vector]:
         """
@@ -368,19 +325,21 @@ class AdversarialDataset(Dataset):
         doc: List[int] = self.documents[index]
         center_word_ids: List[int] = []
         context_word_ids: List[int] = []
+        labels: List[int] = []
         for center_index, center_word_id in enumerate(doc):
+
             left_index = max(center_index - self.window_radius, 0)
             right_index = min(center_index + self.window_radius, len(doc) - 1)
             context_word_id: List[int] = (
                 doc[left_index:center_index] +
                 doc[center_index + 1:right_index + 1])
-            center_word_ids += [center_word_id] * len(context_word_id)
             context_word_ids += context_word_id
+            center_word_ids += [center_word_id] * len(context_word_id)
+            labels += [self.id_to_label[center_word_id]] * len(context_word_id)
         return (
             torch.tensor(center_word_ids),
             torch.tensor(context_word_ids),
-            torch.full(
-                (len(context_word_ids),), self.labels[index], dtype=torch.int64))
+            torch.tensor(labels))
 
     @staticmethod
     def collate(
@@ -398,13 +357,14 @@ class RecomposerExperiment(Experiment):
 
     def __init__(self, config: 'RecomposerConfig'):
         super().__init__(config)
-        self.data = AdversarialDataset(config)
+        self.data = SpeechesWithPartyDict(config)
         self.dataloader = DataLoader(
             self.data,
             batch_size=config.batch_size,
             shuffle=True,
             collate_fn=self.data.collate,
-            num_workers=config.num_dataloader_threads)
+            num_workers=config.num_dataloader_threads,
+            pin_memory=config.pin_memory)
         self.model = Recomposer(config, self.data)
         self.load_cherries()
 
@@ -450,14 +410,14 @@ class RecomposerExperiment(Experiment):
 
     def _train(
             self,
-            center_word_ids: Vector,
-            context_word_ids: Vector,
+            word_ids: Vector,
+            context_ids: Vector,
             party_labels: Vector,
             grad_clip: float = 5
             ) -> Tuple[float, float, float, float, float, float]:
         self.model.zero_grad()
         L_master, l_f_deno, l_f_cono, l_g_deno, l_g_cono, l_h = self.model(
-            center_word_ids, context_word_ids, party_labels)
+            word_ids, context_ids, party_labels)
         L_master.backward(retain_graph=True)
         nn.utils.clip_grad_norm_(self.model.decomposer_f.encoder.parameters(), grad_clip)
         nn.utils.clip_grad_norm_(self.model.decomposer_g.encoder.parameters(), grad_clip)
@@ -504,28 +464,33 @@ class RecomposerExperiment(Experiment):
                 enumerate(self.dataloader), total=len(self.dataloader),
                 mininterval=config.progress_bar_refresh_rate, desc='Batches')
             for batch_index, batch in batch_pbar:
-                center_word_ids = batch[0].to(self.device)
-                context_word_ids = batch[1].to(self.device)
+                word_ids = batch[0].to(self.device)
+                context_ids = batch[1].to(self.device)
                 party_labels = batch[2].to(self.device)
 
                 L_master, l_f_deno, l_f_cono, l_g_deno, l_g_cono, l_h = self._train(
-                    center_word_ids, context_word_ids, party_labels)
+                    word_ids, context_ids, party_labels)
 
                 if batch_index % config.update_tensorboard == 0:
-                    # cono_accuracy = self.model.connotation_accuracy(batch)
+                    f_accuracy, g_accuracy = self.model.connotation_accuracy(
+                        word_ids, party_labels)
                     stats = {
                         'Denotation Decomposer/deno': l_f_deno,
                         'Denotation Decomposer/cono': l_f_cono,
+                        'Denotation Decomposer/accuracy_train': f_accuracy,
                         'Connotation Decomposer/deno': l_g_deno,
                         'Connotation Decomposer/cono': l_g_cono,
+                        'Connotation Decomposer/accuracy_train': g_accuracy,
                         'Recomposer/recomp': l_h,
-                        'Recomposer/combined_loss': L_master,
-                        # 'Evaluation/connotation_accuracy': cono_accuracy
+                        'Recomposer/combined_loss': L_master
                     }
                     self.update_tensorboard(stats)
                 if batch_index % config.print_stats == 0:
                     self.print_stats(epoch_index, batch_index, stats)
-                if batch_index % config.eval_cherry == 0:
+                if batch_index % config.eval_dev_set == 0:
+                    # f_accuracy, g_accuracy = self.model.connotation_accuracy(
+                    #     self.data.dev_word_ids.to(self.device),
+                    #     self.data.dev_labels.to(self.device))
                     self.cherry_pick()
                     V_pretrained, V_deno, V_cono, V_recomp = self.model.export_embeddings()
                     deno_check = all_wordsim.mean_delta(V_deno, V_pretrained, self.data.id_to_word)
@@ -533,7 +498,9 @@ class RecomposerExperiment(Experiment):
                     recomp_check = all_wordsim.mean_delta(V_recomp, V_pretrained, self.data.id_to_word)
                     self.update_tensorboard({
                         'Denotation Decomposer/nonpolitical_word_sim_cf_pretrained': deno_check,
+                        'Denotation Decomposer/accuracy_dev': f_accuracy,
                         'Connotation Decomposer/nonpolitical_word_sim_cf_pretrained': cono_check,
+                        'Connotation Decomposer/accuracy_dev': g_accuracy,
                         'Recomposer/nonpolitical_word_sim_cf_pretrained': recomp_check})
                 self.tb_global_step += 1
             # End Batches
@@ -541,11 +508,18 @@ class RecomposerExperiment(Experiment):
             self.print_timestamp()
             self.auto_save(epoch_index)
 
-            V_pretrained, V_deno, V_cono, V_recomp = self.model.export_embeddings()
-            self.tensorboard.add_embedding(
-                V_deno, self.data.vocabulary, global_step=epoch_index, tag='deno_embed')
-            self.tensorboard.add_embedding(
-                V_cono, self.data.vocabulary, global_step=epoch_index, tag='cono_embed')
+            if config.export_error_analysis:
+                if (epoch_index % config.export_error_analysis == 0
+                        or epoch_index == 1):
+                    self.model.all_vocab_connotation(os.path.join(
+                        config.output_dir, f'vocab_cono_epoch{epoch_index}.txt'))
+
+            if config.export_tensorboard_embedding_projector:
+                V_pretrained, V_deno, V_cono, V_recomp = self.model.export_embeddings()
+                self.tensorboard.add_embedding(
+                    V_deno, self.data.vocabulary, global_step=epoch_index, tag='deno_embed')
+                self.tensorboard.add_embedding(
+                    V_cono, self.data.vocabulary, global_step=epoch_index, tag='cono_embed')
         # End Epochs
 
     def load_cherries(self) -> None:
@@ -645,100 +619,23 @@ class RecomposerExperiment(Experiment):
 @dataclass
 class RecomposerConfig():
     # Essential
-    input_dir: str = '../data/processed/labeled_speeches/1e-5/for_real'
+    input_dir: str = '../data/processed/bucket_labeled_speeches/1e-5/for_real'
     output_dir: str = '../results/debug'
     device: torch.device = torch.device('cuda')
     debug_subset_corpus: Optional[int] = None
     num_dataloader_threads: int = 0
+    dev_holdout: int = 10_000
+    test_holdout: int = 10_000
+    pin_memory: bool = False
 
     # Denotation Decomposer
-    deno_architecture: nn.Module = nn.Sequential(
-        # L1
-        nn.Linear(300, 200),
-        nn.SELU()
-
-        # # L2
-        # nn.Linear(300, 250),
-        # nn.SELU(),
-        # nn.Linear(250, 200),
-        # nn.SELU()
-
-        # # L3
-        # nn.Linear(300, 275),
-        # nn.SELU(),
-        # nn.Linear(275, 225),
-        # nn.SELU(),
-        # nn.Linear(225, 200),
-        # nn.SELU()
-
-        # # L4
-        # nn.Linear(300, 200),
-        # nn.SELU(),
-        # nn.Linear(200, 150),
-        # nn.SELU(),
-        # # nn.AlphaDropout(p=0.1),
-        # nn.Linear(150, 150),
-        # nn.SELU(),
-        # nn.Linear(150, 200),
-        # nn.SELU()
-
-        # # Antithesis
-        # nn.Linear(300, 100),
-        # nn.SELU(),
-        # nn.Linear(100, 100),
-        # nn.SELU(),
-        # nn.Linear(100, 100),
-        # nn.SELU(),
-        # nn.Linear(100, 200),
-        # nn.SELU()
-    )
-    decomposed_deno_size: int = 200
+    decomposed_deno_size: int = 300
     deno_delta: float = 1  # denotation weight 𝛿
-    deno_gamma: float = -8  # connotation weight 𝛾
+    deno_gamma: float = -15  # connotation weight 𝛾
 
     # Conotation Decomposer
-    cono_architecture: nn.Module = nn.Sequential(
-        # L1
-        nn.Linear(300, 100),
-        nn.SELU()
-
-        # # L2
-        # nn.Linear(300, 150),
-        # nn.SELU(),
-        # nn.Linear(150, 100),
-        # nn.SELU(),
-
-        # # L3
-        # nn.Linear(300, 250),
-        # nn.SELU(),
-        # nn.Linear(250, 150),
-        # nn.SELU(),
-        # nn.Linear(150, 100),
-        # nn.SELU()
-
-        # # L4
-        # nn.Linear(300, 200),
-        # nn.SELU(),
-        # nn.Linear(200, 150),
-        # nn.SELU(),
-        # # nn.AlphaDropout(p=0.1),
-        # nn.Linear(150, 100),
-        # nn.SELU(),
-        # nn.Linear(100, 100),
-        # nn.SELU()
-
-        # # Antithesis
-        # nn.Linear(300, 50),
-        # nn.SELU(),
-        # nn.Linear(50, 50),
-        # nn.SELU(),
-        # nn.Linear(50, 50),
-        # nn.SELU(),
-        # nn.Linear(50, 100),
-        # nn.SELU()
-    )
-    decomposed_cono_size: int = 100
-    cono_delta: float = -0.01  # denotation weight 𝛿
+    decomposed_cono_size: int = 300
+    cono_delta: float = -0.02  # denotation weight 𝛿
     cono_gamma: float = 1  # connotation weight 𝛾
 
     # Recomposer
@@ -747,19 +644,17 @@ class RecomposerConfig():
 
     batch_size: int = 2
     embed_size: int = 300
-    # hidden_size: int = 100  # MLP encoder
-    # encoded_size: int = 300  # encoder output
-    window_radius: int = 5  # context_size = 2 * window_radius
-    num_negative_samples: int = 10
     num_epochs: int = 30
     pretrained_embedding: Optional[str] = '../data/pretrained_word2vec/for_real.txt'
     freeze_embedding: bool = True
+    window_radius: int = 5
+    num_negative_samples: int = 10
     optimizer: torch.optim.Optimizer = torch.optim.Adam
     # optimizer: torch.optim.Optimizer = torch.optim.SGD
-    learning_rate: float = 5e-5
+    learning_rate: float = 1e-4
     # momentum: float = 0.5
     # lr_scheduler: torch.optim.lr_scheduler._LRScheduler
-    num_prediction_classes: int = 2
+    num_prediction_classes: int = 5
     sparse_embedding_grad: bool = False  # faster if used with sparse optimizer
     init_trick: bool = False
     # 𝜀: float = 1e-5
@@ -770,14 +665,34 @@ class RecomposerConfig():
     # min_doc_length: int = 2  # for subsampling partisan neutral words
 
     # Evaluation
-    # cherry_pick: Optional[str] = '../data/evaluation/cherries.txt'
+    cherries: Optional[Tuple[str, ...]] = (
+        'estate_tax', 'death_tax',
+        'undocumented_immigrants', 'illegals',
+
+        'health_care_reform', 'obamacare',
+        'public_option', 'governmentrun', 'government_takeover',
+        'national_health_insurance', 'welfare_state',
+        'singlepayer', 'governmentrun_health_care',
+        'universal_health_care', 'socialized_medicine',
+
+        'campaign_spending', 'political_speech',
+        'independent_expenditures',
+
+        'recovery_and_reinvestment', 'stimulus_bill',
+        'military_spending', 'washington_spending',
+        'progrowth', 'create_jobs',
+
+        'unborn', 'fetus',
+        'prochoice', 'proabortion',
+        'family_planning',
+    )
 
     # Housekeeping
     export_error_analysis: Optional[int] = 1  # per epoch
     update_tensorboard: int = 1000  # per batch
     print_stats: int = 10_000  # per batch
-    eval_cherry: int = 10_000  # per batch
-    progress_bar_refresh_rate: int = 60  # per second
+    eval_dev_set: int = 50_000  # per batch
+    progress_bar_refresh_rate: int = 5  # per second
     reload_path: Optional[str] = None
     clear_tensorboard_log_in_output_dir: bool = True
     delete_all_exisiting_files_in_output_dir: bool = False
@@ -797,6 +712,8 @@ class RecomposerConfig():
             '-d', '--device', action='store', type=str)
 
         parser.add_argument(
+            '-a', '--architecture', action='store', type=str)
+        parser.add_argument(
             '-dd', '--deno-delta', action='store', type=float)
         parser.add_argument(
             '-dg', '--deno-gamma', action='store', type=float)
@@ -814,6 +731,46 @@ class RecomposerConfig():
         parser.add_argument(
             '--hidden-size', action='store', type=int)
         parser.parse_args(namespace=self)
+
+        if self.architecture == 'L1':
+            self.deno_architecture = nn.Sequential(
+                nn.Linear(300, 300),
+                nn.ReLU())
+            self.cono_architecture = nn.Sequential(
+                nn.Linear(300, 300),
+                nn.ReLU())
+        elif self.architecture == 'L2':
+            self.deno_architecture = nn.Sequential(
+                nn.Linear(300, 200),
+                nn.ReLU(),
+                nn.Linear(200, 300),
+                nn.ReLU())
+            self.cono_architecture = nn.Sequential(
+                nn.Linear(300, 200),
+                nn.ReLU(),
+                nn.Linear(200, 300),
+                nn.ReLU())
+        elif self.architecture == 'L4':
+            self.deno_architecture = nn.Sequential(
+                nn.Linear(300, 200),
+                nn.ReLU(),
+                nn.Linear(200, 150),
+                nn.ReLU(),
+                nn.Linear(150, 200),
+                nn.ReLU(),
+                nn.Linear(200, 300),
+                nn.ReLU())
+            self.cono_architecture = nn.Sequential(
+                nn.Linear(300, 200),
+                nn.ReLU(),
+                nn.Linear(200, 150),
+                nn.ReLU(),
+                nn.Linear(150, 200),
+                nn.ReLU(),
+                nn.Linear(200, 300),
+                nn.ReLU())
+        else:
+            raise ValueError('Unknown architecture argument.')
 
 
 def main() -> None:

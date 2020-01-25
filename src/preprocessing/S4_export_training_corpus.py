@@ -152,6 +152,28 @@ def export_plain_text_corpus(
     print(f'Total number of words = {num_words_exported:,}')
 
 
+def count_partisan_frequency(
+        sessions: Iterable[int],
+        input_dir: str
+        ) -> Tuple[Counter[str], Counter[str], Counter[str]]:
+    D_freq: Counter[str] = Counter()
+    R_freq: Counter[str] = Counter()
+    for session in tqdm(sessions, desc='Counting partisan frequency'):
+        for party in ('D', 'R'):
+            underscored_path = os.path.join(
+                input_dir, f'underscored_{party}{session}.txt')
+            with open(underscored_path, 'r') as underscored_corpus:
+                for line in underscored_corpus:
+                    # line = line.translate(remove_punctutation)  # Done in S3
+                    words = line.split()
+                    if party == 'D':
+                        D_freq.update(words)
+                    else:
+                        R_freq.update(words)
+    combined_frequency = D_freq + R_freq
+    return combined_frequency, D_freq, R_freq
+
+
 def build_vocabulary(
         frequency: Counter,
         min_frequency: int
@@ -416,55 +438,54 @@ def balance_classes(socialism: List, capitalism: List) -> List:
     return gridlock
 
 
-def export_party_classifier(
+def export_labeled_words(
         sessions: Iterable[int],
         output_dir: str,
         input_dir: str,
         subsampling_implementation: Optional[str],
         subsampling_threshold: float,
         min_word_freq: int,
-        min_sentence_len: int
+        min_document_len: int
         ) -> None:
-
-    raw_frequency: Counter[str] = Counter()
-    for session in tqdm(sessions, desc='Building vocabulary'):
-        for party in ('D', 'R'):
-            underscored_path = os.path.join(
-                input_dir, f'underscored_{party}{session}.txt')
-            with open(underscored_path, 'r') as underscored_corpus:
-                for speech in underscored_corpus:
-                    speech = speech.translate(remove_punctutation)
-                    words = speech.split()
-                    raw_frequency.update(words)
+    raw_frequency, D_raw_freq, R_raw_freq = count_partisan_frequency(
+        sessions, input_dir)
     word_to_id, id_to_word = build_vocabulary(raw_frequency, min_word_freq)
     keep_prob = subsampling(
         raw_frequency, subsampling_implementation, subsampling_threshold)
 
     Dem_word_ids: List[Tuple[int, int]] = []
     GOP_word_ids: List[Tuple[int, int]] = []
+    D_freq: Counter[str] = Counter()
+    R_freq: Counter[str] = Counter()
     subsampled_frequency: Counter[str] = Counter()
-    for session in tqdm(sessions, desc=' Exporting Sessions'):
+    for session in tqdm(sessions, desc='Processing Sessions'):
         for party in ('D', 'R'):
             underscored_path = os.path.join(
                 input_dir, f'underscored_{party}{session}.txt')
             with open(underscored_path, 'r') as underscored_corpus:
-                for speech in underscored_corpus:
-                    speech = speech.translate(remove_punctutation)
-                    subsampled_words = [
-                        word for word in speech.split()
+                for line in underscored_corpus:
+                    words = line.split()
+                    subsampled_word_ids = [
+                        word_to_id[word] for word in words
                         if (raw_frequency[word] > min_word_freq
                             and random.random() < keep_prob[word])
                     ]
-                    subsampled_frequency.update(subsampled_words)
+                    if len(subsampled_word_ids) < min_document_len:
+                        continue
+                    subsampled_frequency.update(words)
                     if party == 'D':
+                        D_freq.update(words)
                         Dem_word_ids.extend(
-                            [(0, word_to_id[word]) for word in subsampled_words])
+                            [(0, word_id)
+                             for word_id in subsampled_word_ids])
                     else:
+                        R_freq.update(words)
                         GOP_word_ids.extend(
-                            [(1, word_to_id[word]) for word in subsampled_words])
+                            [(1, word_id)
+                             for word_id in subsampled_word_ids])
 
     labels_and_word_ids = balance_classes(Dem_word_ids, GOP_word_ids)
-    validation_holdout = 50_000
+    validation_holdout = 10_000
     random.shuffle(labels_and_word_ids)
     train_data = labels_and_word_ids[validation_holdout:]
     valid_data = labels_and_word_ids[:validation_holdout]
@@ -475,28 +496,127 @@ def export_party_classifier(
     preview_path = os.path.join(output_dir, 'preview.txt')
     with open(preview_path, 'w') as preview:
         preview.write(f'vocabulary size = {len(word_to_id):,}\n')
-        # preview.write(f'total number of words = {num_words_exported:,}\n')
         preview.write(f'number of words = {num_words:,}\n')
         preview.write(f'subsampling implementation = {subsampling_implementation}\n')
         preview.write(f'subsampling threshold = {subsampling_threshold}\n')
         preview.write(f'minimum word frequency = {min_word_freq}\n')
-        # preview.write(f'\nPreview:\n')
-        # for sentence in export_speeches:
-        #     words = map(id_to_word.get, sentence.word_ids)  # type: ignore
-        #     if sentence.party == 0:
-        #         preview.write(f'D: {" ".join(words)}\n')
-        #     else:
-        #         preview.write(f'R: {" ".join(words)}\n')
 
     export_sorted_frequency(
         raw_frequency, subsampled_frequency, min_word_freq,
-        os.path.join(output_dir, 'vocabulary_frequency.txt'))
+        os.path.join(output_dir, 'vocabulary_subsampled_frequency.txt'))
+    export_sampled_frequency_by_party(
+        D_raw_freq, R_raw_freq, D_freq, R_freq, word_to_id,
+        os.path.join(output_dir, 'vocabulary_partisan_frequency'))
+
+    word_ids = [word_ids for _, word_ids in train_data]
+    labels = [label for label, _ in train_data]
+    cucumbers = {
+        'word_to_id': word_to_id,
+        'id_to_word': id_to_word,
+        'D_raw_freq': D_raw_freq,
+        'R_raw_freq': R_raw_freq,
+        'subsampled_frequency': subsampled_frequency,
+        'word_ids': word_ids,
+        'labels': labels}
 
     train_data_path = os.path.join(output_dir, f'train_data.pickle')
     with open(train_data_path, 'wb') as export_file:
-        pickle.dump(
-            (word_to_id, id_to_word, subsampled_frequency, train_data, valid_data),
-            export_file, protocol=-1)
+        pickle.dump(cucumbers, export_file, protocol=-1)
+    print('All set.')
+
+
+def export_bucket_labeled_words(
+        sessions: Iterable[int],
+        output_dir: str,
+        input_dir: str,
+        subsampling_implementation: Optional[str],
+        subsampling_threshold: float,
+        min_word_freq: int,
+        min_document_len: int
+        ) -> None:
+    raw_frequency, D_raw_freq, R_raw_freq = count_partisan_frequency(
+        sessions, input_dir)
+    word_to_id, id_to_word = build_vocabulary(raw_frequency, min_word_freq)
+    keep_prob = subsampling(
+        raw_frequency, subsampling_implementation, subsampling_threshold)
+
+    num_classes = 5
+
+    def bucket(word: str) -> int:
+        Df = D_raw_freq[word]
+        Rf = R_raw_freq[word]
+        skew = Rf / (Df + Rf)
+        if skew < .2:
+            return 0
+        elif .2 <= skew < .4:
+            return 1
+        elif .4 <= skew < .6:
+            return 2
+        elif .6 <= skew < .8:
+            return 3
+        else:
+            return 4
+
+    caucuses: Dict[int, List[int]] = {
+        label: [] for label in range(num_classes)}
+    for session in tqdm(sessions, desc='Processing Sessions'):
+        for party in ('D', 'R'):
+            underscored_path = os.path.join(
+                input_dir, f'underscored_{party}{session}.txt')
+            with open(underscored_path, 'r') as underscored_corpus:
+                for line in underscored_corpus:
+                    words = line.split()
+                    subsampled_words = [
+                        word for word in words
+                        if (raw_frequency[word] > min_word_freq
+                            and random.random() < keep_prob[word])
+                    ]
+                    if len(subsampled_words) < min_document_len:
+                        continue
+                    for word in subsampled_words:
+                        label = bucket(word)
+                        caucuses[label].append(word_to_id[word])
+
+    downsample_to = min([len(word_ids) for word_ids in caucuses.values()])
+    labeled_word_ids: List[Tuple[int, int]] = []
+    for label, word_ids in caucuses.items():
+        print(f'{label}: {len(word_ids):,}')
+        labeled_word_ids += [
+            (word_id, label)
+            for word_id in random.sample(word_ids, downsample_to)]
+    print(f'Downsampling all classes to {downsample_to:,}')
+
+    random.shuffle(labeled_word_ids)
+    num_words = len(labeled_word_ids)
+    print(f'Number of training words = {len(labeled_word_ids):,}')
+
+    preview_path = os.path.join(output_dir, 'preview.txt')
+    with open(preview_path, 'w') as preview:
+        preview.write(f'vocabulary size = {len(word_to_id):,}\n')
+        preview.write(f'number of words = {num_words:,}\n')
+        preview.write(f'subsampling implementation = {subsampling_implementation}\n')
+        preview.write(f'subsampling threshold = {subsampling_threshold}\n')
+        preview.write(f'minimum word frequency = {min_word_freq}\n')
+
+    # export_sorted_frequency(
+    #     raw_frequency, subsampled_frequency, min_word_freq,
+    #     os.path.join(output_dir, 'vocabulary_subsampled_frequency.txt'))
+    # export_sampled_frequency_by_party(
+    #     D_raw_freq, R_raw_freq, D_freq, R_freq, word_to_id,
+    #     os.path.join(output_dir, 'vocabulary_partisan_frequency'))
+
+    word_ids = [word_ids for word_ids, _ in labeled_word_ids]
+    labels = [label for _, label in labeled_word_ids]
+    cucumbers = {
+        'word_to_id': word_to_id,
+        'id_to_word': id_to_word,
+        'D_raw_freq': D_raw_freq,
+        'R_raw_freq': R_raw_freq,
+        'word_ids': word_ids,
+        'labels': labels}
+    data_path = os.path.join(output_dir, f'train_data.pickle')
+    with open(data_path, 'wb') as export_file:
+        pickle.dump(cucumbers, export_file, protocol=-1)
     print('All set.')
 
 
@@ -509,21 +629,8 @@ def export_labeled_speeches(
         min_word_freq: int,
         min_document_len: int
         ) -> None:
-    D_raw_freq: Counter[str] = Counter()
-    R_raw_freq: Counter[str] = Counter()
-    for session in tqdm(sessions, desc='Building vocabulary'):
-        for party in ('D', 'R'):
-            underscored_path = os.path.join(
-                input_dir, f'underscored_{party}{session}.txt')
-            with open(underscored_path, 'r') as underscored_corpus:
-                for line in underscored_corpus:
-                    # line = line.translate(remove_punctutation)  # Done in S3
-                    words = line.split()
-                    if party == 'D':
-                        D_raw_freq.update(words)
-                    else:
-                        R_raw_freq.update(words)
-    raw_frequency = D_raw_freq + R_raw_freq
+    raw_frequency, D_raw_freq, R_raw_freq = count_partisan_frequency(
+        sessions, input_dir)
     word_to_id, id_to_word = build_vocabulary(raw_frequency, min_word_freq)
     keep_prob = subsampling(
         raw_frequency, subsampling_implementation, subsampling_threshold)
@@ -533,7 +640,7 @@ def export_labeled_speeches(
     GOP_speeches: List[Document] = []
     D_freq: Counter[str] = Counter()
     R_freq: Counter[str] = Counter()
-    for session in tqdm(sessions, desc=' Processing Sessions'):
+    for session in tqdm(sessions, desc='Processing Sessions'):
         for party in ('D', 'R'):
             underscored_path = os.path.join(
                 input_dir, f'underscored_{party}{session}.txt')
@@ -616,6 +723,92 @@ def export_labeled_speeches(
     print('All set.')
 
 
+def export_bucket_labeled_speeches(
+        sessions: Iterable[int],
+        output_dir: str,
+        input_dir: str,
+        subsampling_implementation: Optional[str],
+        subsampling_threshold: float,
+        min_word_freq: int,
+        min_document_len: int
+        ) -> None:
+    raw_frequency, D_raw_freq, R_raw_freq = count_partisan_frequency(
+        sessions, input_dir)
+    word_to_id, id_to_word = build_vocabulary(raw_frequency, min_word_freq)
+    keep_prob = subsampling(
+        raw_frequency, subsampling_implementation, subsampling_threshold)
+
+    num_classes = 5
+
+    def bucket(word: str) -> int:
+        Df = D_raw_freq[word]
+        Rf = R_raw_freq[word]
+        skew = Rf / (Df + Rf)
+        if skew < .2:
+            return 0
+        elif .2 <= skew < .4:
+            return 1
+        elif .4 <= skew < .6:
+            return 2
+        elif .6 <= skew < .8:
+            return 3
+        else:
+            return 4
+
+    id_to_label: Dict[int, int] = {
+        word_to_id[word]: bucket(word)
+        for word in raw_frequency.keys()
+        if raw_frequency[word] > min_word_freq}
+
+    speeches: List[List[int]] = []
+    subsampled_frequency: Counter[str] = Counter()
+    for session in tqdm(sessions, desc='Processing Sessions'):
+        for party in ('D', 'R'):
+            underscored_path = os.path.join(
+                input_dir, f'underscored_{party}{session}.txt')
+            with open(underscored_path, 'r') as underscored_corpus:
+                for line in underscored_corpus:
+                    words = line.split()
+                    subsampled_words = [
+                        word for word in words
+                        if (raw_frequency[word] > min_word_freq
+                            and random.random() < keep_prob[word])
+                    ]
+                    if len(subsampled_words) < min_document_len:
+                        continue
+                    subsampled_frequency.update(subsampled_words)
+                    speeches.append(
+                        [word_to_id[word] for word in subsampled_words])
+
+    random.shuffle(speeches)
+    preview_path = os.path.join(output_dir, 'preview.txt')
+    with open(preview_path, 'w') as preview:
+        preview.write(f'vocabulary size = {len(word_to_id):,}\n')
+        preview.write(f'subsampling implementation = {subsampling_implementation}\n')
+        preview.write(f'subsampling threshold = {subsampling_threshold}\n')
+        preview.write(f'minimum word frequency = {min_word_freq}\n')
+
+    # export_sorted_frequency(
+    #     raw_frequency, subsampled_frequency, min_word_freq,
+    #     os.path.join(output_dir, 'vocabulary_subsampled_frequency.txt'))
+    # export_sampled_frequency_by_party(
+    #     D_raw_freq, R_raw_freq, D_freq, R_freq, word_to_id,
+    #     os.path.join(output_dir, 'vocabulary_partisan_frequency'))
+
+    cucumbers = {
+        'word_to_id': word_to_id,
+        'id_to_word': id_to_word,
+        'D_raw_freq': D_raw_freq,
+        'R_raw_freq': R_raw_freq,
+        'subsampled_frequency': subsampled_frequency,
+        'speeches': speeches,
+        'id_to_label': id_to_label}
+    data_path = os.path.join(output_dir, f'train_data.pickle')
+    with open(data_path, 'wb') as export_file:
+        pickle.dump(cucumbers, export_file, protocol=-1)
+    print('All set.')
+
+
 def export_labeled_skip_grams(
         sessions: Iterable[int],
         output_dir: str,
@@ -626,21 +819,8 @@ def export_labeled_skip_grams(
         min_word_freq: int,
         min_document_len: int
         ) -> None:
-    Dem_init_freq: Counter[str] = Counter()
-    GOP_init_freq: Counter[str] = Counter()
-    for session in tqdm(sessions, desc='Building vocabulary'):
-        for party in ('D', 'R'):
-            underscored_path = os.path.join(
-                input_dir, f'underscored_{party}{session}.txt')
-            with open(underscored_path, 'r') as underscored_corpus:
-                for line in underscored_corpus:
-                    # line = line.translate(remove_punctutation)  # Done in S3
-                    words = line.split()
-                    if party == 'D':
-                        Dem_init_freq.update(words)
-                    else:
-                        GOP_init_freq.update(words)
-    raw_frequency = Dem_init_freq + GOP_init_freq
+    raw_frequency, Dem_init_freq, GOP_init_freq = count_partisan_frequency(
+        sessions, input_dir)
     word_to_id, id_to_word = build_vocabulary(raw_frequency, min_word_freq)
     keep_prob = subsampling(
         raw_frequency, subsampling_implementation, subsampling_threshold)
@@ -795,22 +975,54 @@ def main() -> None:
     # end_to_end(corpus_path, output_dir, output_num_chunks, subsampling_implementation, subsampling_threshold, min_word_freq)
 
     # # Word-level party classifier
+    # sessions = range(97, 112)
     # underscored_dir = '../../data/interim/underscored_corpora'
-    # output_dir = '../../data/processed/word_classifier/2000s_1e-5'
+    # output_dir = '../../data/processed/labeled_words/1e-5/for_real'
     # subsampling_implementation: Optional[str] = 'paper'
     # subsampling_threshold = 1e-5
     # min_word_freq = 15
-    # min_sentence_len = 5
+    # min_document_len = 20
     # os.makedirs(output_dir, exist_ok=True)
     # print(f'Writing to {output_dir}')
-    # export_word_level_party_classifier(
+    # export_labeled_words(
     #     sessions, output_dir, underscored_dir,
     #     subsampling_implementation, subsampling_threshold,
-    #     min_word_freq, min_sentence_len)
+    #     min_word_freq, min_document_len)
 
-    # Adversarial
-    sessions = during['Obama']  # range(97, 112)
-    output_dir = f'../../data/processed/labeled_speeches/1e-5/Obama'
+    # # 5-Bucket Word-level party classifier
+    # sessions = range(97, 112)
+    # underscored_dir = '../../data/interim/underscored_corpora'
+    # output_dir = '../../data/processed/bucket_labeled_words/1e-5/debug'
+    # subsampling_implementation: Optional[str] = 'paper'
+    # subsampling_threshold = 1e-5
+    # min_word_freq = 15
+    # min_document_len = 20
+    # os.makedirs(output_dir, exist_ok=True)
+    # print(f'Writing to {output_dir}')
+    # export_bucket_labeled_words(
+    #     sessions, output_dir, underscored_dir,
+    #     subsampling_implementation, subsampling_threshold,
+    #     min_word_freq, min_document_len)
+
+    # # Adversarial
+    # sessions = range(97, 112)
+    # output_dir = f'../../data/processed/labeled_speeches/1e-5/Obama'
+    # subsampling_implementation: Optional[str] = 'paper'
+    # subsampling_threshold = 1e-5
+    # underscored_dir = '../../data/interim/underscored_corpora'
+    # min_word_freq = 15
+    # min_speech_length = 20
+    # os.makedirs(output_dir, exist_ok=True)
+    # tqdm.write(f'Reading {sessions}. Writing to {output_dir}')
+    # export_labeled_speeches(
+    #     sessions, output_dir, underscored_dir,
+    #     subsampling_implementation, subsampling_threshold,
+    #     min_word_freq, min_speech_length)
+
+
+    # Speeches with 5-bucket id_to_label
+    sessions = range(97, 112)
+    output_dir = f'../../data/processed/bucket_labeled_speeches/1e-5/for_real'
     subsampling_implementation: Optional[str] = 'paper'
     subsampling_threshold = 1e-5
     underscored_dir = '../../data/interim/underscored_corpora'
@@ -818,10 +1030,11 @@ def main() -> None:
     min_speech_length = 20
     os.makedirs(output_dir, exist_ok=True)
     tqdm.write(f'Reading {sessions}. Writing to {output_dir}')
-    export_labeled_speeches(
+    export_bucket_labeled_speeches(
         sessions, output_dir, underscored_dir,
         subsampling_implementation, subsampling_threshold,
         min_word_freq, min_speech_length)
+
 
     # # Preparsed Adversarial
     # sessions = range(97, 112)
