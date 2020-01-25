@@ -4,5 +4,6 @@ attic
 results
 results_attic
 congressional_env
+hyperparameter_search.py
 src/congressional_adversary.egg-info
 src/utils/word_similarity
