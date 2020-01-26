@@ -13,7 +13,7 @@ from tqdm import tqdm
 import numpy as np
 import editdistance  # for excluding trivial nearest neighbors
 
-from sklearn.metrics import pairwise
+# from sklearn.metrics import pairwise
 # from sklearn.metrics import confusion_matrix
 # from matplotlib import pyplot as plt
 # import seaborn as sns
@@ -38,9 +38,9 @@ class Decomposer(nn.Module):
         vocab_size = len(data.word_to_id)
         # self.deno_to_id = data.deno_to_id  # only for getting baseline accuracy
         self.id_to_deno = data.id_to_deno  # only for error analysis
-        self.graph_labels = [
-            data.id_to_deno[i]
-            for i in range(len(data.id_to_deno))]
+        # self.graph_labels = [
+        #     data.id_to_deno[i]
+        #     for i in range(len(data.id_to_deno))]
 
         # Initialize Embedding
         if config.pretrained_embedding is not None:
@@ -78,9 +78,11 @@ class Decomposer(nn.Module):
         # Initailize neighbor cono homogeneity eval partisan vocabulary
         self.word_to_id = data.word_to_id
         self.id_to_word = data.id_to_word
-        self.Dem_frequency: Counter[str] = data.Dem_frequency
-        self.GOP_frequency: Counter[str] = data.GOP_frequency
 
+        self.freq = data.word_freq
+        self.grounding: Dict[str, Counter[str]] = data.grounding
+        self.D_freq = self.grounding['D']
+        self.R_freq = self.grounding['R']
         Dem_ids: List[int] = []
         GOP_ids: List[int] = []
         neutral_ids: List[int] = []
@@ -88,12 +90,9 @@ class Decomposer(nn.Module):
         GOP_lower_bound = 0.5 + neutral_bound
         Dem_upper_bound = 0.5 - neutral_bound
         for word_id, word in self.id_to_word.items():
-            R_ratio = (
-                self.GOP_frequency[word] /
-                (self.Dem_frequency[word] + self.GOP_frequency[word]))
-            if R_ratio > GOP_lower_bound:
+            if self.R_ratio(word) > GOP_lower_bound:
                 GOP_ids.append(word_id)
-            elif R_ratio < Dem_upper_bound:
+            elif self.R_ratio(word) < Dem_upper_bound:
                 Dem_ids.append(word_id)
             else:
                 neutral_ids.append(word_id)
@@ -104,6 +103,9 @@ class Decomposer(nn.Module):
         print(f'{len(GOP_ids)} capitalists\n'
               f'{len(Dem_ids)} socialists\n'
               f'{len(neutral_ids)} neoliberal shills\n')
+
+        import IPython
+        IPython.embed()
 
     def forward(
             self,
@@ -206,9 +208,7 @@ class Decomposer(nn.Module):
         return embed
 
     def R_ratio(self, word: str) -> float:
-        D_freq = self.Dem_frequency[word]
-        R_freq = self.GOP_frequency[word]
-        return R_freq / (D_freq + R_freq)
+        return self.R_freq[word] / self.freq[word]
 
     def neighbor_heterogeneity_continuous(
             self,
@@ -299,8 +299,9 @@ class LabeledSentences(Dataset):
         self.id_to_word = preprocessed['id_to_word']
         self.deno_to_id = preprocessed['deno_to_id']
         self.id_to_deno = preprocessed['id_to_deno']
-        self.Dem_frequency: Counter[str] = preprocessed['Dem_freq']
-        self.GOP_frequency: Counter[str] = preprocessed['GOP_freq']
+        self.word_freq = preprocessed['word_freq']
+        # Dict[deno/cono, Counter[word]]
+        self.grounding: Dict[str, Counter[str]] = preprocessed['grounding']
 
         self.train_seq: List[List[int]] = preprocessed['train_sent_word_ids']
         self.train_deno_labels: List[int] = preprocessed['train_deno_labels']
@@ -468,9 +469,9 @@ class DecomposerExperiment(Experiment):
 
     def train(self) -> None:
         config = self.config
-        # self.save_everything(
-        #     os.path.join(self.config.output_dir, f'untrained.pt'))
-        # assert False
+        self.save_everything(
+            os.path.join(self.config.output_dir, f'untrained.pt'))
+        assert False
         epoch_pbar = tqdm(range(1, config.num_epochs + 1), desc='Epochs')
         for epoch_index in epoch_pbar:
             if not config.print_stats:
@@ -513,8 +514,8 @@ class DecomposerExperiment(Experiment):
                         self.data.dev_cono_labels.to(self.device))
 
                     # D_h = self.model.neighbor_homogeneity_discrete(self.model.Dem_ids)
-                    R_hd = self.model.neighbor_homogeneity_discrete(self.model.GOP_ids)
-                    N_hd = self.model.neighbor_homogeneity_discrete(self.model.neutral_ids)
+                    # R_hd = self.model.neighbor_homogeneity_discrete(self.model.GOP_ids)
+                    # N_hd = self.model.neighbor_homogeneity_discrete(self.model.neutral_ids)
 
                     # D_h = self.model.neighbor_heterogeneity_continuous(self.model.Dem_ids)
                     R_hc = self.model.neighbor_heterogeneity_continuous(self.model.GOP_ids)
@@ -531,9 +532,9 @@ class DecomposerExperiment(Experiment):
                         # 'Connotation Decomposer/nonpolitical_word_sim_cf_pretrained': cono_check,
                         'Denotation Decomposer/accuracy_dev_cono': cono_accuracy,
                         # 'Intrinsic Evaluation/Dem_neighbor_homogenity': D_h,
-                        'Intrinsic Evaluation/GOP_neighbor_homogenity': R_hd,
+                        # 'Intrinsic Evaluation/GOP_neighbor_homogenity': R_hd,
                         'Intrinsic Evaluation/GOP_neighbor_heterogeneity_continous': R_hc,
-                        'Intrinsic Evaluation/neutral_neighbor_homogenity': N_hd,
+                        # 'Intrinsic Evaluation/neutral_neighbor_homogenity': N_hd,
                         'Intrinsic Evaluation/neutral_neighbor_heterogeneity_continous': N_hc,
                         # 'Recomposer/nonpolitical_word_sim_cf_pretrained': recomp_check}
                     })
@@ -662,7 +663,7 @@ class DecomposerExperiment(Experiment):
 @dataclass
 class DecomposerConfig():
     # Essential
-    input_dir: str = '../data/processed/bill_mentions/topic_deno'
+    input_dir: str = '../data/processed/bill_mentions/debug' #topic_deno
     # input_dir: str = '../data/processed/bill_mentions/title_deno'
 
     output_dir: str = '../results/debug'
