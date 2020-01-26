@@ -18,8 +18,6 @@ from sklearn.metrics import pairwise
 # from matplotlib import pyplot as plt
 # import seaborn as sns
 
-# from skip_gram import SkipGramNegativeSampling
-# from search_bill_mentions import Bill, Speaker, Speech
 from utils.experiment import Experiment
 from utils.improvised_typing import Scalar, Vector, Matrix, R3Tensor
 # from utils.word_similarity import all_wordsim

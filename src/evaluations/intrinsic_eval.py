@@ -1,15 +1,12 @@
-import pickle
 import csv
-import os
 from typing import Set, Tuple, NamedTuple, List, Dict, Counter, Optional
 
 import torch
 from torch import nn
 import numpy as np
-# from scipy.spatial import distance
 from scipy.stats import spearmanr
 
-from bill_decomposer import Decomposer, DecomposerConfig
+from decomposer import Decomposer, DecomposerConfig
 
 np.random.seed(42)
 torch.manual_seed(42)
@@ -97,25 +94,6 @@ class Embedding():
             print(f'{sim:.4f}\t{neighbor_word}')
         print('\n')
 
-    # def nearest_neighbor(self, query: str, top_k: int = 10):
-    #     try:
-    #         query_id = self.word_to_id[query]
-    #     except KeyError:
-    #         raise KeyError(f'{query} is out of vocabulary. Sorry!')
-
-    #     query_vec = self.embedding[query_id]
-
-    #     distances = [distance.cosine(query_vec, vec)
-    #                  for vec in self.embedding]
-    #     neighbors = np.argsort(distances)
-    #     print(f"{query}'s neareset neighbors:")
-    #     for ranking in range(1, top_k + 1):
-    #         word_id = neighbors[ranking]
-    #         word = self.id_to_word[word_id]
-    #         cosine_similarity = 1 - distances[word_id]
-    #         print(f'{cosine_similarity:.4f}\t{word}')
-    #     print()
-
 
 class PhrasePair(NamedTuple):
     query: str
@@ -139,8 +117,8 @@ def load_cherry(path, exclude_hard_examples=True):
                 data.append(PhrasePair(
                     row['query'],
                     row['neighbor'],
-#                     row['query_words'],
-#                     row['neighbor_words'],
+                    # row['query_words'],
+                    # row['neighbor_words'],
                     float(row['semantic_similarity']),
                     float(row['cono_similarity'])))
     print(f'Loaded {len(data)} labeled entries at {path}')
@@ -228,3 +206,53 @@ def is_euphemism(pair) -> bool:
 
 def is_party_platform(pair) -> bool:
     return not same_deno(pair) and same_cono(pair)
+
+
+cherry_words = (
+    'military_budget', 'defense_budget',
+    # 'nuclear_option', 'constitutional_option',
+    'prochoice',  # 'proabortion',
+    'star_wars',  # 'strategic_defense_initiative',
+    'political_speech', 'campaign_spending',
+    'singlepayer',  # 'socialized_medicine',
+    # 'voodoo', 'supplyside',
+    'tax_expenditures',  # 'spending_programs',
+    'waterboarding', 'interrogation',
+    'cap_and_trade', 'national_energy_tax',
+    'governmentrun', 'public_option',
+    'medical_liability_reform',  # 'tort_reform',
+    # 'corporate_profits', 'earnings',
+    # 'equal_pay',  # 'the_paycheck_fairness_act',
+    'military_spending',  # 'washington_spending',
+    'higher_taxes',  # 'bigger_government',
+    'social_justice',  # 'womens_rights',
+    # 'national_health_insurance', # 'welfare_state',
+    'nuclear_war', 'deterrence',
+    'suffrage',  # 'womens_rights',
+    'inequality', 'racism',
+    # 'sweatshops', 'factories',
+    'trickledown', 'cut_taxes',
+    'equal_pay', 'pay_discrimination',
+    'wealthiest_americans', 'tax_breaks',
+    'record_profits', 'big_oil_companies',
+    # 'private_insurance_companies', 'medicare_advantage_program',
+    # 'trickledown',  # 'universal_health_care',
+    'big_banks',  # 'occupation_of_iraq',
+    # 'obamacare', 'islamists'
+)
+
+generic_words = (
+    'government',
+    'taxes',
+    'laws',
+    'jobs',
+    'tariff',
+    'health_care',
+    'finance',
+    'social_security',
+    'medicare',
+    'regulations',
+    'immigration',
+    'research',
+    'technology',
+)
