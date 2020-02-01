@@ -414,6 +414,7 @@ class DecomposerExperiment(Experiment):
             seq_word_ids: Vector,
             deno_labels: Vector,
             cono_labels: Vector,
+            update_encoder: bool,
             grad_clip: float = 5
             ) -> Tuple[float, float, float]:
         self.model.zero_grad()
@@ -424,18 +425,16 @@ class DecomposerExperiment(Experiment):
         self.f_deno_optimizer.step()
 
         self.model.zero_grad()
-        l_f_cono.backward(retain_graph=True)  # NOTE deleted retain_graph=True
+        l_f_cono.backward(retain_graph=update_encoder)
         nn.utils.clip_grad_norm_(self.model.cono_decoder.parameters(), grad_clip)
         self.f_cono_optimizer.step()
 
-        self.model.zero_grad()
-        L_master.backward()
-        nn.utils.clip_grad_norm_(self.model.embedding.parameters(), grad_clip)
-        # nn.utils.clip_grad_norm_(self.model.decomposer_g.encoder.parameters(), grad_clip)
-        self.decomposer_optimizer.step()
-
-
-        # ————
+        if update_encoder:
+            self.model.zero_grad()
+            L_master.backward()
+            nn.utils.clip_grad_norm_(self.model.embedding.parameters(), grad_clip)
+            # nn.utils.clip_grad_norm_(self.model.decomposer_g.encoder.parameters(), grad_clip)
+            self.decomposer_optimizer.step()
 
         # self.model.zero_grad()
         # l_g_deno.backward(retain_graph=True)
@@ -480,8 +479,9 @@ class DecomposerExperiment(Experiment):
                 deno_labels = batch[1].to(self.device)
                 cono_labels = batch[2].to(self.device)
 
+                update_encoder = batch_index % config.encoder_grad_update_freq == 0
                 L_master, l_f_deno, l_f_cono = self._train(
-                    seq_word_ids, deno_labels, cono_labels)
+                    seq_word_ids, deno_labels, cono_labels, update_encoder)
 
                 if batch_index % config.update_tensorboard == 0:
                     deno_accuracy, cono_accuracy = self.model.accuracy(
@@ -686,7 +686,7 @@ class DecomposerConfig():
     batch_size: int = 128
     embed_size: int = 300
     num_epochs: int = 50
-    # encoder_grad_update_freq: int = 3  # per adversary update
+    encoder_grad_update_freq: int = 4  # per adversary update
 
     # pretrained_embedding: Optional[str] = None
     pretrained_embedding: Optional[str] = '../data/pretrained_word2vec/for_real.txt'
