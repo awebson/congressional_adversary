@@ -23,7 +23,7 @@ MIN_WORD_FREQ = 15
 DENO_LABEL = 'topic'
 MAX_DEV_HOLDOUT = 100  # faux speeches per session
 in_dir = '../../data/interim/bill_mentions/'
-out_dir = '../../data/processed/bill_mentions/debug'
+out_dir = '../../data/processed/bill_mentions/topic_deno'
 os.makedirs(out_dir, exist_ok=True)
 print('Minimum number of mentions per bill =', MIN_NUM_MENTIONS)
 
@@ -134,20 +134,30 @@ print(f'len dev faux sent = {len(dev_sent)}')
 
 random.shuffle(train_sent)
 word_freq = Counter((w for sent in train_sent for w in sent.words))
-deno_freq = Counter((sent.deno for sent in train_sent))
+sent_deno_freq = Counter((sent.deno for sent in train_sent))
 
-# Dict[deno/cono, Counter[word]]
-grounding: Dict[str, Counter[str]] = DefaultDict(Counter)
+grounding: Dict[str, Counter[str]] = DefaultDict(Counter)  # word -> Counter[deno/cono]
+counts: Dict[str, Counter[str]] = DefaultDict(Counter)  # deno/cono -> Counter[word]
 for sent in train_sent:
-    # deno & cono labels are the same for all words in a faux-sentence
-    deno_counter = grounding[sent.deno]
-    cono_counter = grounding[sent.cono]
     for word in sent.words:
-        deno_counter[word] += 1
-        cono_counter[word] += 1
+        counts[sent.deno][word] += 1
+        counts[sent.cono][word] += 1
+        grounding[word][sent.deno] += 1
+        grounding[word][sent.cono] += 1
+counts['freq'] = word_freq
+
+for word, ground in grounding.items():
+    majority_deno = ground.most_common(3)  # HACK
+    for guess, _ in majority_deno:
+        if guess not in ('D', 'R'):
+            ground['majority_deno'] = guess  # type: ignore
+            break
+    assert ground['D'] + ground['R'] == word_freq[word]
+    ground['freq'] = word_freq[word]
+    ground['R_ratio'] = ground['R'] / word_freq[word]  # type: ignore
 
 word_to_id, id_to_word = build_vocabulary(word_freq, MIN_WORD_FREQ)
-deno_to_id, id_to_deno = build_vocabulary(deno_freq, MIN_NUM_MENTIONS)
+deno_to_id, id_to_deno = build_vocabulary(sent_deno_freq, MIN_NUM_MENTIONS)
 cono_to_id = {
     'D': 0,
     'R': 1}
@@ -177,15 +187,16 @@ cucumbers = {
     'id_to_word': id_to_word,
     'deno_to_id': deno_to_id,
     'id_to_deno': id_to_deno,
-    'word_freq': word_freq,
-    'grounding': grounding
+    # 'word_freq': word_freq,
+    'grounding': grounding,
+    'counts': counts
 }
 out_path = os.path.join(out_dir, 'train_data.pickle')
 with open(out_path, 'wb') as out_file:
     pickle.dump(cucumbers, out_file, protocol=-1)
 
-inspect_label_path = os.path.join(out_dir, 'deno_labels.txt')
+inspect_label_path = os.path.join(out_dir, 'sentence_deno_freq.txt')
 with open(inspect_label_path, 'w') as file:
     file.write('freq\tdeno_label\n')
-    for d, f in sorted(deno_freq.items(), key=lambda t: t[1], reverse=True):
+    for d, f in sorted(sent_deno_freq.items(), key=lambda t: t[1], reverse=True):
         file.write(f'{f}\t{d}\n')

@@ -78,11 +78,8 @@ class Decomposer(nn.Module):
         # Initailize neighbor cono homogeneity eval partisan vocabulary
         self.word_to_id = data.word_to_id
         self.id_to_word = data.id_to_word
-
-        self.freq = data.word_freq
-        self.grounding: Dict[str, Counter[str]] = data.grounding
-        self.D_freq = self.grounding['D']
-        self.R_freq = self.grounding['R']
+        self.counts = data.counts  # saved just in case
+        self.grounding = data.grounding
         Dem_ids: List[int] = []
         GOP_ids: List[int] = []
         neutral_ids: List[int] = []
@@ -90,9 +87,10 @@ class Decomposer(nn.Module):
         GOP_lower_bound = 0.5 + neutral_bound
         Dem_upper_bound = 0.5 - neutral_bound
         for word_id, word in self.id_to_word.items():
-            if self.R_ratio(word) > GOP_lower_bound:
+            R_ratio = self.grounding[word]['R_ratio']
+            if R_ratio > GOP_lower_bound:
                 GOP_ids.append(word_id)
-            elif self.R_ratio(word) < Dem_upper_bound:
+            elif R_ratio < Dem_upper_bound:
                 Dem_ids.append(word_id)
             else:
                 neutral_ids.append(word_id)
@@ -103,9 +101,6 @@ class Decomposer(nn.Module):
         print(f'{len(GOP_ids)} capitalists\n'
               f'{len(Dem_ids)} socialists\n'
               f'{len(neutral_ids)} neoliberal shills\n')
-
-        import IPython
-        IPython.embed()
 
     def forward(
             self,
@@ -207,9 +202,6 @@ class Decomposer(nn.Module):
         self.train()
         return embed
 
-    def R_ratio(self, word: str) -> float:
-        return self.R_freq[word] / self.freq[word]
-
     def neighbor_heterogeneity_continuous(
             self,
             query_ids: Vector,
@@ -227,10 +219,10 @@ class Decomposer(nn.Module):
         homogeneity = []
         for query_index, sorted_target_indices in enumerate(top_neighbor_ids):
             query_id = query_ids[query_index].item()
-            query_words = self.id_to_word[query_id]
+            query_word = self.id_to_word[query_id]
             num_neighbors = 0
 
-            query_R_ratio = self.R_ratio(query_words)
+            query_R_ratio = self.grounding[query_word]['R_ratio']
             freq_ratio_distances = []
             for sort_rank, target_id in enumerate(sorted_target_indices):
                 target_id = target_id.item()
@@ -240,10 +232,10 @@ class Decomposer(nn.Module):
                     continue
                 # target_id = target_ids[target_index]  # target is always all embed
                 target_words = self.id_to_word[target_id]
-                if editdistance.eval(query_words, target_words) < 3:
+                if editdistance.eval(query_word, target_words) < 3:
                     continue
                 num_neighbors += 1
-                target_R_ratio = self.R_ratio(target_words)
+                target_R_ratio = self.grounding[target_words]['R_ratio']
                 # freq_ratio_distances.append((target_R_ratio - query_R_ratio) ** 2)
                 freq_ratio_distances.append(abs(target_R_ratio - query_R_ratio))
             # homogeneity.append(np.sqrt(np.mean(freq_ratio_distances)))
@@ -299,9 +291,10 @@ class LabeledSentences(Dataset):
         self.id_to_word = preprocessed['id_to_word']
         self.deno_to_id = preprocessed['deno_to_id']
         self.id_to_deno = preprocessed['id_to_deno']
-        self.word_freq = preprocessed['word_freq']
-        # Dict[deno/cono, Counter[word]]
+        # word -> Counter[deno/cono]
         self.grounding: Dict[str, Counter[str]] = preprocessed['grounding']
+        # deno/cono -> Counter[word]
+        self.counts: Dict[str, Counter[str]] = preprocessed['counts']
 
         self.train_seq: List[List[int]] = preprocessed['train_sent_word_ids']
         self.train_deno_labels: List[int] = preprocessed['train_deno_labels']
@@ -469,9 +462,9 @@ class DecomposerExperiment(Experiment):
 
     def train(self) -> None:
         config = self.config
-        self.save_everything(
-            os.path.join(self.config.output_dir, f'untrained.pt'))
-        assert False
+        # self.save_everything(
+        #     os.path.join(self.config.output_dir, f'untrained.pt'))
+        # assert False
         epoch_pbar = tqdm(range(1, config.num_epochs + 1), desc='Epochs')
         for epoch_index in epoch_pbar:
             if not config.print_stats:
@@ -663,7 +656,7 @@ class DecomposerExperiment(Experiment):
 @dataclass
 class DecomposerConfig():
     # Essential
-    input_dir: str = '../data/processed/bill_mentions/debug' #topic_deno
+    input_dir: str = '../data/processed/bill_mentions/topic_deno'
     # input_dir: str = '../data/processed/bill_mentions/title_deno'
 
     output_dir: str = '../results/debug'
@@ -693,6 +686,8 @@ class DecomposerConfig():
     batch_size: int = 128
     embed_size: int = 300
     num_epochs: int = 50
+    # encoder_grad_update_freq: int = 3  # per adversary update
+
     # pretrained_embedding: Optional[str] = None
     pretrained_embedding: Optional[str] = '../data/pretrained_word2vec/for_real.txt'
     # '../results/analysis/L4 0c/epoch50.pt'
@@ -741,6 +736,7 @@ class DecomposerConfig():
     print_stats: Optional[int] = 10_000  # per batch
     eval_dev_set: int = 10_000  # per batch
     progress_bar_refresh_rate: int = 5  # per second
+    suppress_stdout: bool = False  # during hyperparameter tuning
     reload_path: Optional[str] = None
     clear_tensorboard_log_in_output_dir: bool = True
     delete_all_exisiting_files_in_output_dir: bool = False

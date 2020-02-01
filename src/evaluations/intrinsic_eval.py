@@ -6,8 +6,6 @@ from torch import nn
 import numpy as np
 from scipy.stats import spearmanr
 
-from decomposer import Decomposer, DecomposerConfig
-
 np.random.seed(42)
 torch.manual_seed(42)
 
