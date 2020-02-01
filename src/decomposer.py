@@ -45,9 +45,10 @@ class Decomposer(nn.Module):
         # Initialize Embedding
         if config.pretrained_embedding is not None:
             config.embed_size = data.pretrained_embedding.shape[1]
-            self.embedding = nn.Embedding.from_pretrained(data.pretrained_embedding)
+            self.embedding = nn.EmbeddingBag.from_pretrained(
+                data.pretrained_embedding, mode='sum')
         else:
-            self.embedding = nn.Embedding(vocab_size, config.embed_size)
+            self.embedding = nn.EmbeddingBag(vocab_size, config.embed_size)
             init_range = 1.0 / config.embed_size
             nn.init.uniform_(self.embedding.weight.data, -init_range, init_range)
         self.embedding.weight.requires_grad = not config.freeze_embedding
@@ -108,8 +109,7 @@ class Decomposer(nn.Module):
             deno_labels: Vector,
             cono_labels: Vector
             ) -> Scalar:
-        embed: R3Tensor = self.embedding(seq_word_ids)
-        seq_repr: Matrix = torch.mean(embed, dim=1)
+        seq_repr: Matrix = self.embedding(seq_word_ids)  # sum EmbedBag
 
         deno_logits = self.deno_decoder(seq_repr)
         deno_loss = nn.functional.cross_entropy(deno_logits, deno_labels)
@@ -125,8 +125,7 @@ class Decomposer(nn.Module):
     def predict(self, seq_word_ids: Vector) -> Vector:
         self.eval()
         with torch.no_grad():
-            embed = self.embedding(seq_word_ids)
-            seq_repr: Matrix = torch.mean(embed, dim=1)
+            seq_repr: Matrix = self.embedding(seq_word_ids)  # sum EmbedBag
 
             deno = self.deno_decoder(seq_repr)
             cono = self.cono_decoder(seq_repr)
@@ -190,24 +189,24 @@ class Decomposer(nn.Module):
     def export_embedding(
             self, device: Optional[torch.device] = None
             ) -> Matrix:
-        all_vocab_ids = torch.arange(
-            self.embedding.num_embeddings, dtype=torch.long)
-        if not device:
-            device = self.device
-        all_vocab_ids = all_vocab_ids.to(device)
+        # all_vocab_ids = torch.arange(
+        #     self.embedding.num_embeddings, dtype=torch.long)
+        # if not device:
+        #     device = self.device
+        # all_vocab_ids = all_vocab_ids.to(device)
 
-        self.eval()
-        with torch.no_grad():
-            embed = self.embedding(all_vocab_ids)
-        self.train()
-        return embed
+        # self.eval()
+        # with torch.no_grad():
+        #     embed = self.embedding(all_vocab_ids)
+        # self.train()
+        return self.embedding.weight.detach()
 
     def neighbor_heterogeneity_continuous(
             self,
             query_ids: Vector,
             top_k: int = 10
             ) -> float:
-        query_ids = query_ids.to(self.device)
+        query_ids = query_ids.to(self.device).unsqueeze(1)
         query_embed = self.embedding(query_ids)
 
         with torch.no_grad():
