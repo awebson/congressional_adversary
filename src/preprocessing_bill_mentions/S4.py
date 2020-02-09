@@ -12,7 +12,10 @@ random.seed(42)
 procedural_words = {
     'yield', 'motion', 'order', 'ordered', 'quorum', 'roll', 'unanimous',
     'mr', 'madam', 'speaker', 'chairman', 'president', 'senator',
-    'gentleman', 'colleague'}
+    'gentleman', 'colleague',
+    'today', 'rise', 'rise today', 'pleased_to_introduce',
+    'introducing_today', 'would_like'
+}
 stop_words = set(stopwords.words('english')).union(procedural_words)
 
 sessions = range(97, 112)  # scraped up to 93
