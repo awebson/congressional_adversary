@@ -1,9 +1,9 @@
 data
 analysis
-attic
+_attic
+_rug
 results
-results_attic
 congressional_env
-hyperparameter_search.py
+hps_*.py
 src/congressional_adversary.egg-info
 src/utils/word_similarity
