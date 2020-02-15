@@ -279,6 +279,11 @@ class Decomposer(nn.Module):
             homogeneity.append(num_same_cono / top_k)
         return np.mean(homogeneity)
 
+    def naive_similarity(self) -> float:
+        half = self.embedding.num_embeddings // 2
+        return nn.functional.cosine_similarity(
+            self.embedding.weight[:half], self.embedding.weight[half:]).mean().item()
+
 
 class LabeledSentences(Dataset):
 
@@ -414,25 +419,26 @@ class DecomposerExperiment(Experiment):
             deno_labels: Vector,
             cono_labels: Vector,
             update_encoder: bool,
-            grad_clip: float = 5
+            update_decoder: bool
             ) -> Tuple[float, float, float]:
+        grad_clip = self.config.clip_grad_norm
         self.model.zero_grad()
         L_master, l_f_deno, l_f_cono = self.model(seq_word_ids, deno_labels, cono_labels)
 
-        l_f_deno.backward(retain_graph=True)
-        nn.utils.clip_grad_norm_(self.model.deno_decoder.parameters(), grad_clip)
-        self.f_deno_optimizer.step()
+        if update_decoder:
+            l_f_deno.backward(retain_graph=True)
+            nn.utils.clip_grad_norm_(self.model.deno_decoder.parameters(), grad_clip)
+            self.f_deno_optimizer.step()
 
-        self.model.zero_grad()
-        l_f_cono.backward(retain_graph=update_encoder)
-        nn.utils.clip_grad_norm_(self.model.cono_decoder.parameters(), grad_clip)
-        self.f_cono_optimizer.step()
+            self.model.zero_grad()
+            l_f_cono.backward(retain_graph=update_encoder)
+            nn.utils.clip_grad_norm_(self.model.cono_decoder.parameters(), grad_clip)
+            self.f_cono_optimizer.step()
 
         if update_encoder:
             self.model.zero_grad()
             L_master.backward()
             nn.utils.clip_grad_norm_(self.model.embedding.parameters(), grad_clip)
-            # nn.utils.clip_grad_norm_(self.model.decomposer_g.encoder.parameters(), grad_clip)
             self.decomposer_optimizer.step()
 
         # self.model.zero_grad()
@@ -463,7 +469,10 @@ class DecomposerExperiment(Experiment):
         # self.save_everything(
         #     os.path.join(self.config.output_dir, f'untrained.pt'))
         # assert False
-        epoch_pbar = tqdm(range(1, config.num_epochs + 1), desc='Epochs')
+        if not config.print_stats:
+            epoch_pbar = tqdm(range(1, config.num_epochs + 1), desc=config.output_dir)
+        else:
+            epoch_pbar = tqdm(range(1, config.num_epochs + 1), desc='Epochs')
         for epoch_index in epoch_pbar:
             if not config.print_stats:
                 batches = enumerate(self.dataloader)
@@ -477,10 +486,10 @@ class DecomposerExperiment(Experiment):
                 seq_word_ids = batch[0].to(self.device)
                 deno_labels = batch[1].to(self.device)
                 cono_labels = batch[2].to(self.device)
-
-                update_encoder = batch_index % config.encoder_grad_update_freq == 0
                 L_master, l_f_deno, l_f_cono = self._train(
-                    seq_word_ids, deno_labels, cono_labels, update_encoder)
+                    seq_word_ids, deno_labels, cono_labels,
+                    update_encoder=batch_index % config.encoder_update_cycle == 0,
+                    update_decoder=batch_index % config.decoder_update_cycle == 0)
 
                 if batch_index % config.update_tensorboard == 0:
                     deno_accuracy, cono_accuracy = self.model.accuracy(
@@ -494,6 +503,7 @@ class DecomposerExperiment(Experiment):
                         # 'Connotation Decomposer/cono': l_g_cono,
                         # 'Connotation Decomposer/accuracy_train': g_accuracy,
                         # 'Recomposer/recomp': l_h,
+                        'Intrinsic Evaluation/naive_similarity': self.model.naive_similarity(),
                         'Recomposer/combined_loss': L_master
                     }
                     self.update_tensorboard(stats)
@@ -666,7 +676,7 @@ class DecomposerConfig():
     num_dataloader_threads: int = 12
     pin_memory: bool = True
 
-    beta: float = 5
+    beta: float = 10
     # Denotation Decomposer
     decomposed_deno_size: int = 300
     deno_delta: float = 1  # denotation weight 𝛿
@@ -685,11 +695,12 @@ class DecomposerConfig():
     batch_size: int = 128
     embed_size: int = 300
     num_epochs: int = 50
-    encoder_grad_update_freq: int = 4  # per adversary update
+    encoder_update_cycle: int = 1  # per batch
+    decoder_update_cycle: int = 1  # per batch
 
     # pretrained_embedding: Optional[str] = None
     pretrained_embedding: Optional[str] = '../data/pretrained_word2vec/for_real.txt'
-    # '../results/analysis/L4 0c/epoch50.pt'
+    pretrained_embedding: Optional[str] = '../data/pretrained_word2vec/bill_mentions.txt'
     freeze_embedding: bool = False  # NOTE
     # window_radius: int = 5
     # num_negative_samples: int = 10
@@ -700,6 +711,7 @@ class DecomposerConfig():
     # lr_scheduler: torch.optim.lr_scheduler._LRScheduler
     # num_prediction_classes: int = 5
     # 𝜀: float = 1e-5
+    clip_grad_norm: float = 10.0
 
     # # Subsampling Trick
     # subsampling_threshold_schedule: Optional[Iterable[float]] = None
