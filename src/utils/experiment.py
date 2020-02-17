@@ -165,12 +165,13 @@ class Experiment(ABC):
         if increment_global_step:
             self.tb_global_step += 1
 
-    def print_timestamp(self) -> None:
+    def print_timestamp(self, epoch_index: int) -> None:
         # timestamp = datetime.now().strftime('%-I:%M %p')
         timestamp = datetime.now().strftime('%X')
         tqdm.write(
-            f'TensorBoard Global Step = {self.tb_global_step:,} at '
-            f'{timestamp}\n\n')
+            f'{timestamp}, '
+            f'Epoch {epoch_index}, '
+            f'TensorBoard Global Step = {self.tb_global_step:,}')
 
     @abstractmethod
     def train(self) -> Any:
