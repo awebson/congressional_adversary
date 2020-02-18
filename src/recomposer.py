@@ -59,7 +59,7 @@ class Recomposer(nn.Module):
             self.pretrained_embed.weight.requires_grad = False
         else:
             raise ValueError('The Recomposer requires a pretrained embedding.')
-        self.recomposer = nn.Linear(600, 300)
+        # self.recomposer = nn.Linear(600, 300)
         self.rho = config.recomposer_rho
         self.to(self.device)
 
@@ -101,7 +101,8 @@ class Recomposer(nn.Module):
         L_C, l_Cd, l_Cc, cono_vecs = self.cono_decomposer(
             seq_word_ids, deno_labels, cono_labels, recompose=True)
 
-        recomposed = self.recomposer(torch.cat((deno_vecs, cono_vecs), dim=-1))
+        # recomposed = self.recomposer(torch.cat((deno_vecs, cono_vecs), dim=-1))
+        recomposed = deno_vecs + cono_vecs  # cosine similarity ignores magnitude
         pretrained = self.pretrained_embed(seq_word_ids)
         L_R = 1 - nn.functional.cosine_similarity(recomposed, pretrained, dim=-1).mean()
 
@@ -167,9 +168,9 @@ class RecomposerExperiment(Experiment):
             self.model.cono_decomposer.cono_decoder.parameters(),
             lr=config.learning_rate)
 
-        self.R_optimizer = config.optimizer(
-            self.model.recomposer.parameters(),
-            lr=config.learning_rate)
+        # self.R_optimizer = config.optimizer(
+        #     self.model.recomposer.parameters(),
+        #     lr=config.learning_rate)
 
         self.to_be_saved = {
             'config': self.config,
@@ -207,7 +208,6 @@ class RecomposerExperiment(Experiment):
         l_Dc.backward(retain_graph=True)
         self.D_cono_optimizer.step()
 
-
         # Connotation Decomposer
         self.model.zero_grad()
         L_C.backward(retain_graph=True)
@@ -221,11 +221,11 @@ class RecomposerExperiment(Experiment):
         l_Cc.backward(retain_graph=True)
         self.C_cono_optimizer.step()
 
-        # Recomposer
-        self.model.zero_grad()
-        L_R.backward()
-        # nn.utils.clip_grad_norm_(self.model.decomposer_g.cono_decoder.parameters(), grad_clip)
-        self.R_optimizer.step()
+        # # Recomposer
+        # self.model.zero_grad()
+        # L_R.backward()
+        # # nn.utils.clip_grad_norm_(self.model.decomposer_g.cono_decoder.parameters(), grad_clip)
+        # self.R_optimizer.step()
 
         return (
             L_D.item(),
