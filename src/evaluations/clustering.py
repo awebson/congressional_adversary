@@ -21,15 +21,28 @@ torch.manual_seed(42)
 sns.set()
 
 DEVICE = 'cpu'
-PE = torch.load(
-    '../../results/pretrained/init.pt', map_location=DEVICE)['model']
+
+if __name__ == 'recomposer.py':  # HACK
+    pretrained_path = '../results/pretrained superset/init.pt'
+else:
+    pretrained_path = '../../results/pretrained superset/init.pt'
+PE = torch.load(pretrained_path, map_location=DEVICE)['model']
 PE.deno_to_id = {val: key for key, val in PE.id_to_deno.items()}
 GD = PE.grounding
 
 
-def load(path):
+def load(path: str, check_vocab: bool = True):
+    model = torch.load(path, map_location=DEVICE)['model']
+    if check_vocab:
+        assert model.word_to_id == PE.word_to_id
+    return model.embedding.weight.detach().numpy()
+
+
+def load_recomposer(path):
     stuff = torch.load(path, map_location=DEVICE)['model']
-    return stuff.embedding.weight.detach().numpy()
+    D_embed = stuff.deno_decomposer.embedding.weight.detach().numpy()
+    C_embed = stuff.cono_decomposer.embedding.weight.detach().numpy()
+    return D_embed, C_embed
 
 
 def gather(words):
@@ -83,6 +96,31 @@ def load_en_masse(in_dir, endswith):
     return models
 
 
+def load_recomposers_en_masse(in_dir, endswith):
+    D_models = {
+        'pretrained superset': load('../../results/pretrained superset/init.pt'),
+        'pretrained subset': load('../../results/pretrained subset/init.pt')}
+    C_models = {
+        'pretrained superset': load('../../results/pretrained superset/init.pt'),
+        'pretrained subset': load('../../results/pretrained subset/init.pt')}
+    for dirpath, _, filenames in os.walk(in_dir):
+        for file in filenames:
+            if file.endswith(endswith):
+                path = os.path.join(dirpath, file)
+                name = path.lstrip(in_dir).replace('/', ' ')
+                D_embed, C_embed = load_recomposer(path)
+                # Brittle HACK
+                name = name.split()
+                D_name = ' '.join(name[0:2] + name[4:])
+                R_name = ' '.join(name[2:])
+                D_models[D_name] = D_embed
+                C_models[R_name] = C_embed
+                print(name)
+    if len(D_models) == 2:
+        raise FileNotFoundError('No model with endswith path found at in_dir?')
+    return D_models, C_models
+
+
 def graph_en_masse(
         models,
         out_dir,
@@ -120,35 +158,6 @@ def graph_en_masse(
                 os.path.join(out_dir, f'{model_name}.png'))
 
 
-def load_recomposer(path):
-    stuff = torch.load(path, map_location=DEVICE)['model']
-    D_embed = stuff.deno_decomposer.embedding.weight.detach().numpy()
-    C_embed = stuff.cono_decomposer.embedding.weight.detach().numpy()
-    return D_embed, C_embed
-
-def load_recomposers_en_masse(in_dir, endswith):
-    D_models = {
-        'pretrained superset': load('../../results/pretrained/init.pt'),
-        'pretrained': load('../../results/pretrained bill mentions/init.pt')}
-    C_models = {
-        'pretrained superset': load('../../results/pretrained/init.pt'),
-        'pretrained': load('../../results/pretrained bill mentions/init.pt')}
-    for dirpath, _, filenames in os.walk(in_dir):
-        for file in filenames:
-            if file.endswith(endswith):
-                path = os.path.join(dirpath, file)
-                name = path.lstrip(in_dir).replace('/', ' ')
-                D_embed, C_embed = load_recomposer(path)
-                # Brittle Hack
-                name = name.split()
-                D_name = ' '.join(name[0:2] + name[4:])
-                R_name = ' '.join(name[2:])
-                D_models[D_name] = D_embed
-                C_models[R_name] = C_embed
-                print(name)
-    return D_models, C_models
-
-
 def discretize_cono(skew):
     if skew < 0.5:
         return 0
@@ -160,25 +169,22 @@ def NN_cluster_ids(embed, query_ids, categorical, top_k=5):
     query_ids = torch.tensor(query_ids, device=DEVICE)
     embed = torch.tensor(embed, device=DEVICE)
     embed = nn.Embedding.from_pretrained(embed, freeze=True)
-
-    query_embed = embed(query_ids)
-    top_neighbor_ids = [
-        nn.functional.cosine_similarity(
-            q.view(1, -1), embed.weight).argsort(descending=True)
-        for q in query_embed]
+    with torch.no_grad():
+        query_vectors = embed(query_ids)
+        cos_sim = nn.functional.cosine_similarity(
+            query_vectors.unsqueeze(1),
+            embed.weight.unsqueeze(0),
+            dim=2)
+        # add some buffer top_k for exluding low edit distance neighbors
+        cos_sim, neighbor_ids = cos_sim.topk(k=top_k + 10, dim=-1)
 
     cluster_labels = []
     true_labels = []
-    for query_index, sorted_target_indices in enumerate(top_neighbor_ids):
+    for query_index, sorted_target_indices in enumerate(neighbor_ids):
         query_id = query_ids[query_index].item()
         query_word = PE.id_to_word[query_id]
-        num_neighbors = 0
-        # if categorical:
-        #     query_label = PE.deno_to_id[GD[query_word]['majority_deno']]
-        # else:
-        #     query_label = discretize_cono(GD[query_word]['R_ratio'])
         query_label = query_index
-
+        num_neighbors = 0
         for sort_rank, target_id in enumerate(sorted_target_indices):
             target_id = target_id.item()
             if num_neighbors == top_k:
@@ -206,6 +212,9 @@ def NN_cluster_ids(embed, query_ids, categorical, top_k=5):
 #                 if GD[w]['freq'] > 99]
 # random_words = random.sample(random_words, 50)
 # rand_ids, rand_freq, rand_skew, rand_deno = gather(random_words)
+# print(f'{len(GOP_ids)} capitalists\n'
+#       f'{len(Dem_ids)} socialists\n'
+#       f'{len(neutral_ids)} neoliberal shills\n')
 
 R_words = [w for w in PE.word_to_id.keys()
            if GD[w]['freq'] > 99 and GD[w]['R_ratio'] > 0.75]

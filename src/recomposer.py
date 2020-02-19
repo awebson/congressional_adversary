@@ -253,7 +253,7 @@ class RecomposerExperiment(Experiment):
                 if batch_index % config.update_tensorboard == 0:
                     D_deno_acc, D_cono_acc, C_deno_acc, C_cono_acc = model.accuracy(
                         seq_word_ids, deno_labels, cono_labels)
-                    stats = {
+                    self.update_tensorboard({
                         'Denotation Decomposer/deno_loss': l_Dd,
                         'Denotation Decomposer/cono_loss': l_Dc,
                         'Denotation Decomposer/accuracy_train_deno': D_deno_acc,
@@ -267,17 +267,9 @@ class RecomposerExperiment(Experiment):
                         'Combined Losses/Denotation Decomposer': L_D,
                         'Combined Losses/Connotation Decomposer': L_C,
                         'Combined Losses/Recomposer': L_R
-                    }
-                    self.update_tensorboard(stats)
-                # if config.print_stats and batch_index % config.print_stats == 0:
-                #     self.print_stats(epoch_index, batch_index, stats)
-                if batch_index % config.eval_dev_set == 0:
-                    query = model.word_to_id['citizens_united']
-                    query = torch.tensor(query).unsqueeze(0)
-                    top_neighbor_ids, cos_sim = model.deno_decomposer.nearest_neighbors(query, verbose=True)
-                    for cs, neighbor_id in zip(cos_sim[0][1:21], top_neighbor_ids[0][1:21]):
-                        print(f'{cs.item():.4f}', model.id_to_word[neighbor_id.item()])
+                    })
 
+                if batch_index % config.eval_dev_set == 0:
                     D_deno_acc, D_cono_acc, C_deno_acc, C_cono_acc = model.accuracy(
                         self.data.dev_seq.to(self.device),
                         self.data.dev_deno_labels.to(self.device),
@@ -354,8 +346,8 @@ class RecomposerConfig():
     decoder_update_cycle: int = 1  # per batch
 
     # pretrained_embedding: Optional[str] = None
-    pretrained_embedding: Optional[str] = '../data/pretrained_word2vec/for_real.txt'
-    # pretrained_embedding: Optional[str] = '../data/pretrained_word2vec/bill_mentions_HS.txt'
+    # pretrained_embedding: Optional[str] = '../data/pretrained_word2vec/for_real.txt'
+    pretrained_embedding: Optional[str] = '../data/pretrained_word2vec/bill_mentions_HS.txt'
     freeze_embedding: bool = False  # NOTE
     # window_radius: int = 5
     # num_negative_samples: int = 10

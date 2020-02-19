@@ -172,22 +172,18 @@ class Decomposer(nn.Module):
             top_k: int = 10,
             verbose: bool = False,
             ) -> List[Vector]:
-        query_ids = query_ids.to(self.device)  # .unsqueeze(1) NOTE recheck this!
-
-        # NOTE replace with torch.topk
+        query_ids = query_ids.to(self.device)
         with torch.no_grad():
             query_vectors = self.embedding(query_ids)
-            cos_sim: List[Vector] = [
-                nn.functional.cosine_similarity(
-                    q.view(1, -1), self.embedding.weight)
-                for q in query_vectors]
-            top_neighbor_ids = [cs.argsort(descending=True) for cs in cos_sim]
+            cos_sim = nn.functional.cosine_similarity(
+                query_vectors.unsqueeze(1),
+                self.embedding.weight.unsqueeze(0),
+                dim=2)
+            cos_sim, neighbor_ids = cos_sim.topk(k=top_k + 10, dim=-1)
         if verbose:
-            cos_sim = [cs.sort(descending=True) for cs in cos_sim]
-            cos_sim = [i for i, _ in cos_sim]
-            return top_neighbor_ids, cos_sim
+            return cos_sim, neighbor_ids
         else:
-            return top_neighbor_ids
+            return neighbor_ids
 
     @staticmethod
     def discretize_cono(skew: float) -> int:
@@ -526,8 +522,8 @@ class DecomposerConfig():
     decoder_update_cycle: int = 1  # per batch
 
     # pretrained_embedding: Optional[str] = None
-    pretrained_embedding: Optional[str] = '../data/pretrained_word2vec/for_real.txt'
-    # pretrained_embedding: Optional[str] = '../data/pretrained_word2vec/bill_mentions_HS.txt'
+    # pretrained_embedding: Optional[str] = '../data/pretrained_word2vec/for_real.txt'
+    pretrained_embedding: Optional[str] = '../data/pretrained_word2vec/bill_mentions_HS.txt'
     freeze_embedding: bool = False  # NOTE
     # window_radius: int = 5
     # num_negative_samples: int = 10
