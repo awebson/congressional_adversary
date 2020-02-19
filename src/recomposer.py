@@ -63,32 +63,12 @@ class Recomposer(nn.Module):
         self.rho = config.recomposer_rho
         self.to(self.device)
 
-        self.id_to_deno = data.id_to_deno  # only for error analysis
+        # Only for error analysis
+        # self.id_to_deno = data.id_to_deno
         self.word_to_id = data.word_to_id
         self.id_to_word = data.id_to_word
-        self.counts = data.counts  # saved just in case
-        self.grounding = data.grounding
-        # Dem_ids: List[int] = []
-        # GOP_ids: List[int] = []
-        # neutral_ids: List[int] = []
-        # neutral_bound = 0.25
-        # GOP_lower_bound = 0.5 + neutral_bound
-        # Dem_upper_bound = 0.5 - neutral_bound
-        # for word_id, word in self.id_to_word.items():
-        #     R_ratio = self.grounding[word]['R_ratio']
-        #     if R_ratio > GOP_lower_bound:
-        #         GOP_ids.append(word_id)
-        #     elif R_ratio < Dem_upper_bound:
-        #         Dem_ids.append(word_id)
-        #     else:
-        #         neutral_ids.append(word_id)
-        # neutral_ids = random.sample(neutral_ids, 2000)  # NOTE
-        # self.Dem_ids = torch.tensor(Dem_ids)
-        # self.GOP_ids = torch.tensor(GOP_ids)
-        # self.neutral_ids = torch.tensor(neutral_ids)
-        # print(f'{len(GOP_ids)} capitalists\n'
-        #       f'{len(Dem_ids)} socialists\n'
-        #       f'{len(neutral_ids)} neoliberal shills\n')
+        # self.counts = data.counts  # saved just in case
+        # self.grounding = data.grounding
 
     def forward(
             self,
@@ -110,7 +90,7 @@ class Recomposer(nn.Module):
         L_C += self.rho * L_R
         return L_D, l_Dd, l_Dc, L_C, l_Cd, l_Cc, L_R
 
-    def predict(self, seq_word_ids: Vector) -> Vector:
+    def predict(self, seq_word_ids: Vector) -> Tuple[Vector, ...]:
         self.eval()
         D_deno_conf, D_cono_conf = self.deno_decomposer.predict(seq_word_ids)
         C_deno_conf, C_cono_conf = self.cono_decomposer.predict(seq_word_ids)
@@ -123,12 +103,23 @@ class Recomposer(nn.Module):
             deno_labels: Vector,
             cono_labels: Vector,
             error_analysis_path: Optional[str] = None
-            ) -> Tuple[float, float]:
+            ) -> Tuple[float, ...]:
         D_deno_accuracy, D_cono_accuracy = self.deno_decomposer.accuracy(
             seq_word_ids, deno_labels, cono_labels)
         C_deno_accuracy, C_cono_accuracy = self.cono_decomposer.accuracy(
             seq_word_ids, deno_labels, cono_labels)
         return D_deno_accuracy, D_cono_accuracy, C_deno_accuracy, C_cono_accuracy
+
+    def NN_cluster_homogeneity(
+            self,
+            query_ids: Vector,
+            top_k: int = 5
+            ) -> Tuple[float, ...]:
+        D_homogeneity, D_homemade_homogeneity = self.deno_decomposer.NN_cluster_homogeneity(
+            query_ids, eval_deno=True, top_k=top_k)
+        C_homogeneity, C_homemade_homogeneity = self.cono_decomposer.NN_cluster_homogeneity(
+            query_ids, eval_deno=True, top_k=top_k)
+        return D_homogeneity, D_homemade_homogeneity, C_homogeneity, C_homemade_homogeneity
 
 
 class RecomposerExperiment(Experiment):
@@ -175,22 +166,16 @@ class RecomposerExperiment(Experiment):
         self.to_be_saved = {
             'config': self.config,
             'model': self.model}
-        # self.custom_stats_format = (
-        #     'ℒ = {Recomposer/combined_loss:.3f}\t'
-        #     'Dd = {Denotation Decomposer/deno_loss:.3f}\t'
-        #     'Dc = {Denotation Decomposer/cono_loss:.3f}\t'
-        #     'Cd = {Connotation Decomposer/deno:.3f}\t'
-        #     'Cc = {Connotation Decomposer/cono:.3f}\t'
-        #     'R = {Recomposer/recomp:.3f}\t'
-        #     'cono accuracy = {Evaluation/connotation_accuracy:.2%}'
-        # )
+
+        from evaluations.clustering import J_ids
+        self.eval_word_ids = torch.tensor(J_ids)
 
     def _train(
             self,
             seq_word_ids: Vector,
             deno_labels: Vector,
             cono_labels: Vector,
-            ) -> Tuple[float, float, float]:
+            ) -> Tuple[float, ...]:
         # grad_clip = self.config.clip_grad_norm
         self.model.zero_grad()
         L_D, l_Dd, l_Dc, L_C, l_Cd, l_Cc, L_R = self.model(
@@ -238,6 +223,7 @@ class RecomposerExperiment(Experiment):
 
     def train(self) -> None:
         config = self.config
+        model = self.model
         # For debugging
         # self.save_everything(
         #     os.path.join(self.config.output_dir, f'untrained.pt'))
@@ -265,7 +251,7 @@ class RecomposerExperiment(Experiment):
                     seq_word_ids, deno_labels, cono_labels)
 
                 if batch_index % config.update_tensorboard == 0:
-                    D_deno_acc, D_cono_acc, C_deno_acc, C_cono_acc = self.model.accuracy(
+                    D_deno_acc, D_cono_acc, C_deno_acc, C_cono_acc = model.accuracy(
                         seq_word_ids, deno_labels, cono_labels)
                     stats = {
                         'Denotation Decomposer/deno_loss': l_Dd,
@@ -286,21 +272,28 @@ class RecomposerExperiment(Experiment):
                 # if config.print_stats and batch_index % config.print_stats == 0:
                 #     self.print_stats(epoch_index, batch_index, stats)
                 if batch_index % config.eval_dev_set == 0:
-                    D_deno_acc, D_cono_acc, C_deno_acc, C_cono_acc = self.model.accuracy(
+                    query = model.word_to_id['citizens_united']
+                    query = torch.tensor(query).unsqueeze(0)
+                    top_neighbor_ids, cos_sim = model.deno_decomposer.nearest_neighbors(query, verbose=True)
+                    for cs, neighbor_id in zip(cos_sim[0][1:21], top_neighbor_ids[0][1:21]):
+                        print(f'{cs.item():.4f}', model.id_to_word[neighbor_id.item()])
+
+                    D_deno_acc, D_cono_acc, C_deno_acc, C_cono_acc = model.accuracy(
                         self.data.dev_seq.to(self.device),
                         self.data.dev_deno_labels.to(self.device),
                         self.data.dev_cono_labels.to(self.device))
+
+                    D_h, D_hh, C_h, C_hh = model.NN_cluster_homogeneity(self.eval_word_ids)
                     self.update_tensorboard({
                         'Denotation Decomposer/accuracy_dev_deno': D_deno_acc,
                         'Denotation Decomposer/accuracy_dev_cono': D_cono_acc,
                         'Connotation Decomposer/accuracy_dev_deno': C_deno_acc,
                         'Connotation Decomposer/accuracy_dev_cono': C_cono_acc,
-                        # 'Intrinsic Evaluation/Dem_neighbor_homogenity': D_h,
-                        # 'Intrinsic Evaluation/GOP_neighbor_homogenity': R_hd,
-                        # 'Intrinsic Evaluation/GOP_neighbor_heterogeneity_continous': R_hc,
-                        # 'Intrinsic Evaluation/neutral_neighbor_homogenity': N_hd,
-                        # 'Intrinsic Evaluation/neutral_neighbor_heterogeneity_continous': N_hc,
-                        # 'Recomposer/nonpolitical_word_sim_cf_pretrained': recomp_check}
+
+                        'Denotation Decomposer/homogeneity': D_h,
+                        'Denotation Decomposer/homogeneity homemade': D_hh,
+                        'Connotation Decomposer/homogeneity': C_h,
+                        'Connotation Decomposer/homogeneity homemade': C_hh,
                     })
                 self.tb_global_step += 1
             # End Batches
@@ -310,11 +303,11 @@ class RecomposerExperiment(Experiment):
             # if config.export_error_analysis:
             #     if (epoch_index % config.export_error_analysis == 0
             #             or epoch_index == 1):
-            #         # self.model.all_vocab_connotation(os.path.join(
+            #         # model.all_vocab_connotation(os.path.join(
             #         #     config.output_dir, f'vocab_cono_epoch{epoch_index}.txt'))
             #         analysis_path = os.path.join(
             #             config.output_dir, f'error_analysis_epoch{epoch_index}.tsv')
-            #         deno_accuracy, cono_accuracy = self.model.accuracy(
+            #         deno_accuracy, cono_accuracy = model.accuracy(
             #             self.data.dev_seq.to(self.device),
             #             self.data.dev_deno_labels.to(self.device),
             #             self.data.dev_cono_labels.to(self.device),
@@ -336,8 +329,8 @@ class RecomposerConfig():
     num_dataloader_threads: int = 12
     pin_memory: bool = True
 
-    # delta: Optional[float] = None  # placeholders, only change programmatically
-    # gamma: Optional[float] = None
+    delta: Optional[float] = None  # placeholders, assigned programmatically
+    gamma: Optional[float] = None
     beta: float = 10  # bias term
     # Denotation Decomposer
     deno_size: int = 300
@@ -350,7 +343,7 @@ class RecomposerConfig():
     cono_gamma: float = 1  # connotation weight 𝛾
 
     # Recomposer
-    recomposer_rho: float = 1
+    recomposer_rho: float = 10
     # dropout_p: float = 0.1
 
     architecture: str = 'L1'

@@ -5,10 +5,12 @@ import os
 from dataclasses import dataclass
 from typing import Tuple, List, Dict, Counter, Optional
 
+import numpy as np
 import torch
 from torch import nn
 from torch.nn.utils import rnn
 from torch.utils.data import Dataset, DataLoader
+from sklearn.metrics import homogeneity_score
 from tqdm import tqdm
 import editdistance  # for excluding trivial nearest neighbors
 
@@ -20,7 +22,6 @@ import editdistance  # for excluding trivial nearest neighbors
 
 from utils.experiment import Experiment
 from utils.improvised_typing import Scalar, Vector, Matrix, R3Tensor
-# from evaluations import intrinsic_eval
 
 random.seed(42)
 torch.manual_seed(42)
@@ -33,14 +34,8 @@ class Decomposer(nn.Module):
             config: 'DecomposerConfig',
             data: 'LabeledSentences'):
         super().__init__()
-        vocab_size = len(data.word_to_id)
-        # self.deno_to_id = data.deno_to_id  # only for getting baseline accuracy
-        self.id_to_deno = data.id_to_deno  # only for error analysis
-        # self.graph_labels = [
-        #     data.id_to_deno[i]
-        #     for i in range(len(data.id_to_deno))]
 
-        # Initialize Embedding
+        vocab_size = len(data.word_to_id)
         if config.pretrained_embedding is not None:
             config.embed_size = data.pretrained_embedding.shape[1]
             self.embedding = nn.Embedding.from_pretrained(data.pretrained_embedding)
@@ -49,13 +44,6 @@ class Decomposer(nn.Module):
             init_range = 1.0 / config.embed_size
             nn.init.uniform_(self.embedding.weight.data, -init_range, init_range)
         self.embedding.weight.requires_grad = not config.freeze_embedding
-
-        # Decomposer
-        # self.encoder = architecture
-        self.delta = config.delta
-        self.gamma = config.gamma
-        self.beta = config.beta
-        self.device = config.device
 
         num_deno_classes = len(data.deno_to_id)
         num_cono_classes = 2
@@ -71,34 +59,24 @@ class Decomposer(nn.Module):
         # self.cono_decoder = nn.Linear(repr_size, num_cono_classes)
         self.cono_decoder = config.cono_architecture
         assert self.cono_decoder[-2].out_features == num_cono_classes
+
+        self.delta = config.delta
+        self.gamma = config.gamma
+        self.beta = config.beta
+        self.device = config.device
         self.to(self.device)
+
+        self.deno_to_id = data.deno_to_id  # for homogeneity evaluation
+        self.id_to_deno = data.id_to_deno  # for error analysis
+        # self.graph_labels = [
+        #     data.id_to_deno[i]
+        #     for i in range(len(data.id_to_deno))]
 
         # Initailize neighbor cono homogeneity eval partisan vocabulary
         self.word_to_id = data.word_to_id
         self.id_to_word = data.id_to_word
         self.counts = data.counts  # saved just in case
         self.grounding = data.grounding
-        # Dem_ids: List[int] = []
-        # GOP_ids: List[int] = []
-        # neutral_ids: List[int] = []
-        # neutral_bound = 0.25
-        # GOP_lower_bound = 0.5 + neutral_bound
-        # Dem_upper_bound = 0.5 - neutral_bound
-        # for word_id, word in self.id_to_word.items():
-        #     R_ratio = self.grounding[word]['R_ratio']
-        #     if R_ratio > GOP_lower_bound:
-        #         GOP_ids.append(word_id)
-        #     elif R_ratio < Dem_upper_bound:
-        #         Dem_ids.append(word_id)
-        #     else:
-        #         neutral_ids.append(word_id)
-        # neutral_ids = random.sample(neutral_ids, 2000)  # NOTE
-        # self.Dem_ids = torch.tensor(Dem_ids)
-        # self.GOP_ids = torch.tensor(GOP_ids)
-        # self.neutral_ids = torch.tensor(neutral_ids)
-        # print(f'{len(GOP_ids)} capitalists\n'
-        #       f'{len(Dem_ids)} socialists\n'
-        #       f'{len(neutral_ids)} neoliberal shills\n')
 
     def forward(
             self,
@@ -191,16 +169,82 @@ class Decomposer(nn.Module):
     def nearest_neighbors(
             self,
             query_ids: Vector,
-            top_k: int = 10
+            top_k: int = 10,
+            verbose: bool = False,
             ) -> List[Vector]:
-        query_ids = query_ids.to(self.device).unsqueeze(1)
+        query_ids = query_ids.to(self.device)  # .unsqueeze(1) NOTE recheck this!
+
+        # NOTE replace with torch.topk
         with torch.no_grad():
-            query_embed = self.embedding(query_ids)
-            top_neighbor_ids = [
+            query_vectors = self.embedding(query_ids)
+            cos_sim: List[Vector] = [
                 nn.functional.cosine_similarity(
-                    q.view(1, -1), self.embedding.weight).argsort(descending=True)
-                for q in query_embed]
-        return top_neighbor_ids
+                    q.view(1, -1), self.embedding.weight)
+                for q in query_vectors]
+            top_neighbor_ids = [cs.argsort(descending=True) for cs in cos_sim]
+        if verbose:
+            cos_sim = [cs.sort(descending=True) for cs in cos_sim]
+            cos_sim = [i for i, _ in cos_sim]
+            return top_neighbor_ids, cos_sim
+        else:
+            return top_neighbor_ids
+
+    @staticmethod
+    def discretize_cono(skew: float) -> int:
+        if skew < 0.5:
+            return 0
+        else:
+            return 1
+
+    def NN_cluster_homogeneity(
+            self,
+            query_ids: Vector,
+            eval_deno: bool,
+            top_k: int = 5
+            ) -> Tuple[float, float] :
+        top_neighbor_ids = self.nearest_neighbors(query_ids, top_k)
+        cluster_ids = []
+        true_labels = []
+        naive_homogeneity = []
+        for query_index, sorted_target_indices in enumerate(top_neighbor_ids):
+            query_id = query_ids[query_index].item()
+            query_word = self.id_to_word[query_id]
+            cluster_id = query_index
+
+            num_same_label = 0
+            if eval_deno:
+                query_label = self.deno_to_id[self.grounding[query_word]['majority_deno']]
+            else:
+                query_label = self.discretize_cono(self.grounding[query_word]['R_ratio'])
+
+            num_neighbors = 0
+            for sort_rank, target_id in enumerate(sorted_target_indices):
+                target_id = target_id.item()
+                if num_neighbors == top_k:
+                    break
+                if query_id == target_id:
+                    continue
+                target_word = self.id_to_word[target_id]
+                if editdistance.eval(query_word, target_word) < 3:
+                    continue
+                num_neighbors += 1
+
+                if eval_deno:
+                    neighbor_label = self.deno_to_id[
+                        self.grounding[target_word]['majority_deno']]
+                else:
+                    neighbor_label = self.discretize_cono(
+                        self.grounding[target_word]['R_ratio'])
+                cluster_ids.append(cluster_id)
+                true_labels.append(neighbor_label)
+
+                if neighbor_label == query_label:
+                    num_same_label += 1
+            # End Looping Nearest Neighbors
+            naive_homogeneity.append(num_same_label / top_k)
+
+        homogeneity = homogeneity_score(true_labels, cluster_ids)
+        return homogeneity, np.mean(naive_homogeneity)
 
     def homemade_heterogeneity(
             self,
@@ -234,32 +278,6 @@ class Decomposer(nn.Module):
                 freq_ratio_distances.append(abs(target_R_ratio - query_R_ratio))
             # homogeneity.append(np.sqrt(np.mean(freq_ratio_distances)))
             homogeneity.append(np.mean(freq_ratio_distances))
-        return np.mean(homogeneity)
-
-    def homemade_homogeneity_discrete(
-            self,
-            query_ids: Vector,
-            top_neighbor_ids: List[Vector],
-            top_k: int = 10
-            ) -> float:
-        homogeneity = []
-        for query_index, sorted_target_indices in enumerate(top_neighbor_ids):
-            query_id = query_ids[query_index].item()
-            query_words = self.id_to_word[query_id]
-            num_neighbors = 0
-            num_same_cono = 0
-            for sort_rank, target_id in enumerate(sorted_target_indices):
-                if num_neighbors == top_k:
-                    break
-                if query_id == target_id:
-                    continue
-                target_words = self.id_to_word[target_id]
-                if editdistance.eval(query_words, target_words) < 3:
-                    continue
-                num_neighbors += 1
-                if target_id in query_ids:
-                    num_same_cono += 1
-            homogeneity.append(num_same_cono / top_k)
         return np.mean(homogeneity)
 
 
@@ -395,11 +413,9 @@ class DecomposerExperiment(Experiment):
     def train(self) -> None:
         config = self.config
         # For debugging
-        # self.save_everything(
-        #     os.path.join(self.config.output_dir, f'untrained.pt'))
-        # import IPython
-        # IPython.embed()
-        # raise SystemExit
+        self.save_everything(
+            os.path.join(self.config.output_dir, f'init.pt'))
+        raise SystemExit
 
         if not config.print_stats:
             epoch_pbar = tqdm(range(1, config.num_epochs + 1), desc=config.output_dir)
