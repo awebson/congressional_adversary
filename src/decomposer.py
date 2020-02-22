@@ -175,11 +175,17 @@ class Decomposer(nn.Module):
         query_ids = query_ids.to(self.device)
         with torch.no_grad():
             query_vectors = self.embedding(query_ids)
-            cos_sim = nn.functional.cosine_similarity(
-                query_vectors.unsqueeze(1),
-                self.embedding.weight.unsqueeze(0),
-                dim=2)
-            cos_sim, neighbor_ids = cos_sim.topk(k=top_k + 10, dim=-1)
+        # try:
+        #     cos_sim = nn.functional.cosine_similarity(
+        #         query_vectors.unsqueeze(1),
+        #         self.embedding.weight.unsqueeze(0),
+        #         dim=2)
+        # except RuntimeError:  # insufficient GPU memory
+        cos_sim = torch.stack([
+            nn.functional.cosine_similarity(
+                q.unsqueeze(0), self.embedding.weight)
+            for q in query_vectors])
+        cos_sim, neighbor_ids = cos_sim.topk(k=top_k + 10, dim=-1)
         if verbose:
             return cos_sim, neighbor_ids
         else:
@@ -197,7 +203,7 @@ class Decomposer(nn.Module):
             query_ids: Vector,
             eval_deno: bool,
             top_k: int = 5
-            ) -> Tuple[float, float] :
+            ) -> Tuple[float, float]:
         top_neighbor_ids = self.nearest_neighbors(query_ids, top_k)
         cluster_ids = []
         true_labels = []
@@ -514,7 +520,7 @@ class DecomposerConfig():
     gamma: float = -1  # connotation classifier weight 𝛾
 
     architecture: str = 'L1'
-    # dropout_p: float = 0.1
+    dropout_p: float = 0
     batch_size: int = 128
     embed_size: int = 300
     num_epochs: int = 50
@@ -596,8 +602,10 @@ class DecomposerConfig():
             self.deno_architecture = nn.Sequential(
                 nn.Linear(300, 300),
                 nn.SELU(),
+                nn.AlphaDropout(p=self.dropout_p),
                 nn.Linear(300, 300),
                 nn.SELU(),
+                nn.AlphaDropout(p=self.dropout_p),
                 nn.Linear(300, 300),
                 nn.SELU(),
                 nn.Linear(300, 41),
@@ -605,8 +613,10 @@ class DecomposerConfig():
             self.cono_architecture = nn.Sequential(
                 nn.Linear(300, 300),
                 nn.SELU(),
+                nn.AlphaDropout(p=self.dropout_p),
                 nn.Linear(300, 300),
                 nn.SELU(),
+                nn.AlphaDropout(p=self.dropout_p),
                 nn.Linear(300, 300),
                 nn.SELU(),
                 nn.Linear(300, 2),

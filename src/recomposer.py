@@ -66,7 +66,7 @@ class Recomposer(nn.Module):
         # Only for error analysis
         # self.id_to_deno = data.id_to_deno
         self.word_to_id = data.word_to_id
-        self.id_to_word = data.id_to_word
+        # self.id_to_word = data.id_to_word
         # self.counts = data.counts  # saved just in case
         # self.grounding = data.grounding
 
@@ -118,7 +118,7 @@ class Recomposer(nn.Module):
         D_homogeneity, D_homemade_homogeneity = self.deno_decomposer.NN_cluster_homogeneity(
             query_ids, eval_deno=True, top_k=top_k)
         C_homogeneity, C_homemade_homogeneity = self.cono_decomposer.NN_cluster_homogeneity(
-            query_ids, eval_deno=True, top_k=top_k)
+            query_ids, eval_deno=False, top_k=top_k)
         return D_homogeneity, D_homemade_homogeneity, C_homogeneity, C_homemade_homogeneity
 
 
@@ -336,7 +336,7 @@ class RecomposerConfig():
 
     # Recomposer
     recomposer_rho: float = 10
-    # dropout_p: float = 0.1
+    dropout_p: float = 0
 
     architecture: str = 'L1'
     batch_size: int = 128
@@ -424,8 +424,10 @@ class RecomposerConfig():
             self.deno_architecture = nn.Sequential(
                 nn.Linear(300, 300),
                 nn.SELU(),
+                nn.AlphaDropout(p=self.dropout_p),
                 nn.Linear(300, 300),
                 nn.SELU(),
+                nn.AlphaDropout(p=self.dropout_p),
                 nn.Linear(300, 300),
                 nn.SELU(),
                 nn.Linear(300, 41),
@@ -433,8 +435,10 @@ class RecomposerConfig():
             self.cono_architecture = nn.Sequential(
                 nn.Linear(300, 300),
                 nn.SELU(),
+                nn.AlphaDropout(p=self.dropout_p),
                 nn.Linear(300, 300),
                 nn.SELU(),
+                nn.AlphaDropout(p=self.dropout_p),
                 nn.Linear(300, 300),
                 nn.SELU(),
                 nn.Linear(300, 2),

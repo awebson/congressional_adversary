@@ -1,6 +1,6 @@
 import os
 import random
-from typing import List, Dict, Optional
+from typing import Tuple, Union, List, Dict, Optional
 
 import torch
 from torch import nn
@@ -11,9 +11,9 @@ import seaborn as sns
 from tqdm import tqdm
 from sklearn.manifold import TSNE
 from sklearn.decomposition import PCA
-from sklearn.metrics import homogeneity_completeness_v_measure
 
-from evaluations.euphemism import cherry_words, generic_words
+from decomposer import Decomposer, DecomposerConfig
+from evaluations.euphemism import cherry_words
 
 random.seed(42)
 np.random.seed(42)
@@ -22,30 +22,91 @@ sns.set()
 
 DEVICE = 'cpu'
 
-if __name__ == 'recomposer.py':  # HACK
-    pretrained_path = '../results/pretrained superset/init.pt'
-else:
-    pretrained_path = '../../results/pretrained superset/init.pt'
+# if __name__ == 'recomposer.py':  # HACK
+#     pretrained_path = '../results/pretrained superset/init.pt'
+# else:
+pretrained_path = os.path.expanduser(
+    '~/Research/congressional_adversary/results/pretrained superset/init.pt')
+
 PE = torch.load(pretrained_path, map_location=DEVICE)['model']
 PE.deno_to_id = {val: key for key, val in PE.id_to_deno.items()}
 GD = PE.grounding
 
 
-def load(path: str, check_vocab: bool = True):
+def load(path: str, check_vocab: bool = True) -> np.ndarray:
     model = torch.load(path, map_location=DEVICE)['model']
     if check_vocab:
         assert model.word_to_id == PE.word_to_id
     return model.embedding.weight.detach().numpy()
 
 
-def load_recomposer(path):
+def load_recomposer(path: str) -> Tuple[np.ndarray, np.ndarray]:
     stuff = torch.load(path, map_location=DEVICE)['model']
     D_embed = stuff.deno_decomposer.embedding.weight.detach().numpy()
     C_embed = stuff.cono_decomposer.embedding.weight.detach().numpy()
     return D_embed, C_embed
 
 
-def gather(words):
+def temp_config_parser(path: str) -> Dict[str, str]:
+    config = {}
+    with open(path) as file:
+        for line in file:
+            if '=' in line:
+                line = line.split('=')
+                config[line[0].strip()] = line[1].strip()
+    return config
+
+
+def load_en_masse(in_dir: str, endswith: str) -> Dict[str, np.ndarray]:
+    models = {}
+    for dirpath, _, filenames in tqdm(os.walk(in_dir)):
+        for file in filenames:
+            if file.endswith(endswith):
+                path = os.path.join(dirpath, file)
+                name = path.lstrip(in_dir).replace('/', ' ')
+                models[name] = load(path)
+    print(*models.keys(), sep='\n')
+    return models
+
+
+def load_recomposers_en_masse(
+        in_dirs: Union[str, List[str]],
+        suffixes: Union[str, List[str]]
+        ) -> Tuple[Dict[str, np.ndarray], ...]:
+    if not isinstance(in_dirs, List):
+        in_dirs = [in_dirs, ]
+    if not isinstance(suffixes, List):
+        suffixes = [suffixes, ]
+
+    D_models = {
+        'pretrained superset': load('../../results/pretrained superset/init.pt'),
+        'pretrained subset': load('../../results/pretrained subset/init.pt')}
+    C_models = {
+        'pretrained superset': load('../../results/pretrained superset/init.pt'),
+        'pretrained subset': load('../../results/pretrained subset/init.pt')}
+
+    for in_dir in in_dirs:
+        for dirpath, _, filenames in os.walk(in_dir):
+            for file in filenames:
+                for suffix in suffixes:
+                    if file.endswith(suffix):
+                        path = os.path.join(dirpath, file)
+                        name = path.lstrip(in_dir).replace('/', ' ')
+                        D_embed, C_embed = load_recomposer(path)
+
+                        # Brittle convenience
+                        name = name.split()
+                        D_name = ' '.join(name[0:2] + name[4:])
+                        R_name = ' '.join(name[2:])
+                        D_models[D_name] = D_embed
+                        C_models[R_name] = C_embed
+                        print(name)
+    if len(D_models) == 2:
+        raise FileNotFoundError('No model with path suffix found at in_dir?')
+    return D_models, C_models
+
+
+def gather(words: List[str]) -> Tuple[List[int], List[int], List[float], List[str]]:
     word_ids = [PE.word_to_id[w] for w in words]
     freq = [GD[w]['freq'] for w in words]
     skew = [GD[w]['R_ratio'] for w in words]
@@ -53,7 +114,13 @@ def gather(words):
     return word_ids, freq, skew, maj_deno
 
 
-def plot(coordinates, words, freq, skew, path):
+def plot(
+        coordinates: np.ndarray,
+        words: List[str],
+        freq: List[int],
+        skew: List[float],
+        path: str
+        ) -> None:
     fig, ax = plt.subplots(figsize=(15, 10))
     sns.scatterplot(
         coordinates[:, 0], coordinates[:, 1],
@@ -67,11 +134,17 @@ def plot(coordinates, words, freq, skew, path):
     plt.close(fig)
 
 
-def plot_categorical(coordinates, words, freq, skew, path):
+def plot_categorical(
+        coordinates: np.ndarray,
+        words: List[str],
+        freq: List[int],
+        categories: List[int],
+        path: str
+        ) -> None:
     fig, ax = plt.subplots(figsize=(20, 10))
     sns.scatterplot(
         coordinates[:, 0], coordinates[:, 1],
-        hue=skew, palette='muted', hue_norm=(0, 1),
+        hue=categories, palette='muted', hue_norm=(0, 1),
         size=freq, sizes=(100, 1000),
         legend='brief', ax=ax)
     chartBox = ax.get_position()
@@ -84,53 +157,17 @@ def plot_categorical(coordinates, words, freq, skew, path):
     plt.close(fig)
 
 
-def load_en_masse(in_dir, endswith):
-    models = {}
-    for dirpath, _, filenames in tqdm(os.walk(in_dir)):
-        for file in filenames:
-            if file.endswith(endswith):
-                path = os.path.join(dirpath, file)
-                name = path.lstrip(in_dir).replace('/', ' ')
-                models[name] = load(path)
-    print(*models.keys(), sep='\n')
-    return models
-
-
-def load_recomposers_en_masse(in_dir, endswith):
-    D_models = {
-        'pretrained superset': load('../../results/pretrained superset/init.pt'),
-        'pretrained subset': load('../../results/pretrained subset/init.pt')}
-    C_models = {
-        'pretrained superset': load('../../results/pretrained superset/init.pt'),
-        'pretrained subset': load('../../results/pretrained subset/init.pt')}
-    for dirpath, _, filenames in os.walk(in_dir):
-        for file in filenames:
-            if file.endswith(endswith):
-                path = os.path.join(dirpath, file)
-                name = path.lstrip(in_dir).replace('/', ' ')
-                D_embed, C_embed = load_recomposer(path)
-                # Brittle HACK
-                name = name.split()
-                D_name = ' '.join(name[0:2] + name[4:])
-                R_name = ' '.join(name[2:])
-                D_models[D_name] = D_embed
-                C_models[R_name] = C_embed
-                print(name)
-    if len(D_models) == 2:
-        raise FileNotFoundError('No model with endswith path found at in_dir?')
-    return D_models, C_models
-
-
 def graph_en_masse(
-        models,
-        out_dir,
-        reduction,  # 'PCA', 'TSNE', or 'both'
-        word_ids,
-        words,
-        hues,
-        sizes,
-        perplexity=None,
-        categorical=False):
+        models: Dict[str, np.ndarray],
+        out_dir: str,
+        reduction: str,  # 'PCA', 'TSNE', or 'both'
+        word_ids: List[int],
+        words: List[str],
+        hues: Union[List[float], List[int]],
+        sizes: List[int],
+        perplexity: Optional[int] = None,
+        categorical: bool = False
+        ) -> None:
     os.makedirs(out_dir, exist_ok=True)
     for model_name, embed in tqdm(models.items()):
         space = embed[word_ids]
@@ -158,14 +195,19 @@ def graph_en_masse(
                 os.path.join(out_dir, f'{model_name}.png'))
 
 
-def discretize_cono(skew):
+def discretize_cono(skew: float) -> int:
     if skew < 0.5:
         return 0
     else:
         return 1
 
 
-def NN_cluster_ids(embed, query_ids, categorical, top_k=5):
+def NN_cluster_ids(
+        embed: np.ndarray,
+        query_ids: List[int],
+        categorical: bool,
+        top_k: int = 5
+        ) -> Tuple[List[int], List[int]]:
     query_ids = torch.tensor(query_ids, device=DEVICE)
     embed = torch.tensor(embed, device=DEVICE)
     embed = nn.Embedding.from_pretrained(embed, freeze=True)
@@ -206,7 +248,7 @@ def NN_cluster_ids(embed, query_ids, categorical, top_k=5):
     return cluster_labels, true_labels
 
 
-# ch_ids, ch_freq, ch_skew, ch_deno = gather(cherry_words)
+cherry_ids, cherry_freq, cherry_skew, cherry_deno = gather(cherry_words)
 # gen_ids, gen_freq, gen_skew, gen_deno = gather(generic_words)
 # random_words = [w for w in PE.word_to_id.keys()
 #                 if GD[w]['freq'] > 99]
