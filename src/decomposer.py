@@ -172,7 +172,6 @@ class Decomposer(nn.Module):
             top_k: int = 10,
             verbose: bool = False,
             ) -> List[Vector]:
-        query_ids = query_ids.to(self.device)
         with torch.no_grad():
             query_vectors = self.embedding(query_ids)
         # try:
@@ -414,10 +413,10 @@ class DecomposerExperiment(Experiment):
 
     def train(self) -> None:
         config = self.config
-        # For debugging
-        self.save_everything(
-            os.path.join(self.config.output_dir, f'init.pt'))
-        raise SystemExit
+        # # For debugging
+        # self.save_everything(
+        #     os.path.join(self.config.output_dir, f'init.pt'))
+        # raise SystemExit
 
         if not config.print_stats:
             epoch_pbar = tqdm(range(1, config.num_epochs + 1), desc=config.output_dir)

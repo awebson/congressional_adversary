@@ -22,9 +22,8 @@ sns.set()
 
 DEVICE = 'cpu'
 
-# if __name__ == 'recomposer.py':  # HACK
-#     pretrained_path = '../results/pretrained superset/init.pt'
-# else:
+
+# HACK replace with os.path.dirname(os.path.dirname(__file__))
 pretrained_path = os.path.expanduser(
     '~/Research/congressional_adversary/results/pretrained superset/init.pt')
 
@@ -32,81 +31,9 @@ PE = torch.load(pretrained_path, map_location=DEVICE)['model']
 PE.deno_to_id = {val: key for key, val in PE.id_to_deno.items()}
 GD = PE.grounding
 
-
-def load(path: str, check_vocab: bool = True) -> np.ndarray:
-    model = torch.load(path, map_location=DEVICE)['model']
-    if check_vocab:
-        assert model.word_to_id == PE.word_to_id
-    return model.embedding.weight.detach().numpy()
-
-
-def load_recomposer(path: str) -> Tuple[np.ndarray, np.ndarray]:
-    stuff = torch.load(path, map_location=DEVICE)['model']
-    D_embed = stuff.deno_decomposer.embedding.weight.detach().numpy()
-    C_embed = stuff.cono_decomposer.embedding.weight.detach().numpy()
-    return D_embed, C_embed
-
-
-def temp_config_parser(path: str) -> Dict[str, str]:
-    config = {}
-    with open(path) as file:
-        for line in file:
-            if '=' in line:
-                line = line.split('=')
-                config[line[0].strip()] = line[1].strip()
-    return config
-
-
-def load_en_masse(in_dir: str, endswith: str) -> Dict[str, np.ndarray]:
-    models = {}
-    for dirpath, _, filenames in tqdm(os.walk(in_dir)):
-        for file in filenames:
-            if file.endswith(endswith):
-                path = os.path.join(dirpath, file)
-                name = path.lstrip(in_dir).replace('/', ' ')
-                models[name] = load(path)
-    print(*models.keys(), sep='\n')
-    return models
-
-
-def load_recomposers_en_masse(
-        in_dirs: Union[str, List[str]],
-        suffixes: Union[str, List[str]]
-        ) -> Tuple[Dict[str, np.ndarray], ...]:
-    if not isinstance(in_dirs, List):
-        in_dirs = [in_dirs, ]
-    if not isinstance(suffixes, List):
-        suffixes = [suffixes, ]
-
-    D_models = {
-        'pretrained superset': load('../../results/pretrained superset/init.pt'),
-        'pretrained subset': load('../../results/pretrained subset/init.pt')}
-    C_models = {
-        'pretrained superset': load('../../results/pretrained superset/init.pt'),
-        'pretrained subset': load('../../results/pretrained subset/init.pt')}
-
-    for in_dir in in_dirs:
-        for dirpath, _, filenames in os.walk(in_dir):
-            for file in filenames:
-                for suffix in suffixes:
-                    if file.endswith(suffix):
-                        path = os.path.join(dirpath, file)
-                        name = path.lstrip(in_dir).replace('/', ' ')
-                        D_embed, C_embed = load_recomposer(path)
-
-                        # Brittle convenience
-                        name = name.split()
-                        D_name = ' '.join(name[0:2] + name[4:])
-                        R_name = ' '.join(name[2:])
-                        D_models[D_name] = D_embed
-                        C_models[R_name] = C_embed
-                        print(name)
-    if len(D_models) == 2:
-        raise FileNotFoundError('No model with path suffix found at in_dir?')
-    return D_models, C_models
-
-
-def gather(words: List[str]) -> Tuple[List[int], List[int], List[float], List[str]]:
+def gather(
+        words: List[str]
+        ) -> Tuple[List[int], List[int], List[float], List[str]]:
     word_ids = [PE.word_to_id[w] for w in words]
     freq = [GD[w]['freq'] for w in words]
     skew = [GD[w]['R_ratio'] for w in words]
@@ -186,13 +113,13 @@ def graph_en_masse(
                 n_iter=5000, n_iter_without_progress=1000).fit_transform(space)
         else:
             raise ValueError('unknown dimension reduction method')
-        if not categorical:
-            plot(visual, words, sizes, hues,
-                 os.path.join(out_dir, f'{model_name}.png'))
-        else:
+        if categorical:
             plot_categorical(
                 visual, words, sizes, hues,
                 os.path.join(out_dir, f'{model_name}.png'))
+        else:
+            plot(visual, words, sizes, hues,
+                 os.path.join(out_dir, f'{model_name}.png'))
 
 
 def discretize_cono(skew: float) -> int:
