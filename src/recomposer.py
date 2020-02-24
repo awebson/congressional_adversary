@@ -1,28 +1,16 @@
 import argparse
 import random
-import pickle
-import os
 from copy import copy
 from dataclasses import dataclass
-from typing import Tuple, List, Dict, Counter, Optional
+from typing import Tuple, Optional
 
 import torch
 from torch import nn
-from torch.nn.utils import rnn
-from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
-import editdistance  # for excluding trivial nearest neighbors
-
-# from sklearn.metrics import pairwise
-# from sklearn.metrics import confusion_matrix
-# from matplotlib import pyplot as plt
-# import seaborn as sns
-# sns.set()
 
 from decomposer import Decomposer, DecomposerConfig, LabeledSentences
 from utils.experiment import Experiment
 from utils.improvised_typing import Scalar, Vector, Matrix, R3Tensor
-# from evaluations import intrinsic_eval
 
 random.seed(42)
 torch.manual_seed(42)
@@ -167,8 +155,9 @@ class RecomposerExperiment(Experiment):
             'config': self.config,
             'model': self.model}
 
-        from evaluations.clustering import J_ids
-        self.eval_word_ids = torch.tensor(J_ids)
+        from evaluations.helpers import polarized_words
+        self.eval_word_ids = torch.tensor(
+            [w.word_id for w in polarized_words], device=self.device)
 
     def _train(
             self,

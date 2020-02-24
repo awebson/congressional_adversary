@@ -174,16 +174,16 @@ class Decomposer(nn.Module):
             ) -> List[Vector]:
         with torch.no_grad():
             query_vectors = self.embedding(query_ids)
-        # try:
-        #     cos_sim = nn.functional.cosine_similarity(
-        #         query_vectors.unsqueeze(1),
-        #         self.embedding.weight.unsqueeze(0),
-        #         dim=2)
-        # except RuntimeError:  # insufficient GPU memory
-        cos_sim = torch.stack([
-            nn.functional.cosine_similarity(
-                q.unsqueeze(0), self.embedding.weight)
-            for q in query_vectors])
+        try:
+            cos_sim = nn.functional.cosine_similarity(
+                query_vectors.unsqueeze(1),
+                self.embedding.weight.unsqueeze(0),
+                dim=2)
+        except RuntimeError:  # insufficient GPU memory
+            cos_sim = torch.stack([
+                nn.functional.cosine_similarity(
+                    q.unsqueeze(0), self.embedding.weight)
+                for q in query_vectors])
         cos_sim, neighbor_ids = cos_sim.topk(k=top_k + 10, dim=-1)
         if verbose:
             return cos_sim, neighbor_ids
@@ -245,7 +245,7 @@ class Decomposer(nn.Module):
             naive_homogeneity.append(num_same_label / top_k)
 
         homogeneity = homogeneity_score(true_labels, cluster_ids)
-        return homogeneity, np.mean(naive_homogeneity)
+        return homogeneity # completness?, np.mean(naive_homogeneity)
 
     def homemade_heterogeneity(
             self,
