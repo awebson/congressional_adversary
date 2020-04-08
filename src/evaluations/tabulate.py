@@ -8,17 +8,18 @@ from torch.nn.utils import rnn
 
 from decomposer import Decomposer, DecomposerConfig, LabeledSentences
 from recomposer import Recomposer, RecomposerConfig
-from evaluations.helpers import lazy_load_recomposers, get_partisan_words
+from evaluations.helpers import lazy_load_recomposers, polarized_words
+from evaluations.euphemism import cherry_pairs
 
 warnings.simplefilter('ignore')
-DEVICE = 'cuda:0'
+DEVICE = 'cpu'
 EVAL_DENO_SPACE = True
-out_path = '../../analysis/deno_space_F0.tsv'
-# out_path = '../../analysis/cono_space_F0.tsv'
+out_path = '../../analysis/deno_space_3bin_all.tsv'
+# out_path = '../../analysis/cono_space_3bin_all.tsv'
 
 deno_spaces = lazy_load_recomposers(
     in_dirs=[Path('../../results/recomposer'), Path('../../results/sans recomposer')],
-    patterns=['*/epoch2.pt', '*/epoch10.pt', '*/epoch50.pt', '*/epoch100.pt'],
+    patterns=['*/epoch10.pt', '*/epoch25.pt', '*/epoch50.pt', '*/epoch75.pt', '*/epoch100.pt'],
     get_deno_decomposer=EVAL_DENO_SPACE,
     device=DEVICE)
 
@@ -30,19 +31,12 @@ deno_spaces = lazy_load_recomposers(
 #     get_deno_decomposer=EVAL_DENO_SPACE,
 #     device=DEVICE)
 
-# Sample Partisan Words
-capitalism = get_partisan_words(min_skew=0.75, max_skew=1, min_freq=0)
-socialism = get_partisan_words(min_skew=0, max_skew=0.25, min_freq=0)
-# neoliberal_shills = get_partisan_words(min_skew=)
-chauvinism = get_partisan_words(min_skew=0.75, max_skew=1, min_freq=100)
-bernie_bros = get_partisan_words(min_skew=0.75, max_skew=1, min_freq=100)
 
-polarized_words = capitalism + socialism
-crisis_words = chauvinism + bernie_bros
 polarized_ids = torch.tensor([w.word_id for w in polarized_words], device=DEVICE)
-crisis_ids = torch.tensor([w.word_id for w in crisis_words], device=DEVICE)
-print(len(polarized_words))
-print(len(crisis_words))
+# crisis_ids = torch.tensor([w.word_id for w in crisis_words], device=DEVICE)
+
+from evaluations.helpers import all_words  # random sample!
+all_ids = torch.tensor([w.word_id for w in all_words], device=DEVICE)
 
 # Load Accuracy Dev Sentences
 corpus_path = '../../data/processed/bill_mentions/topic_deno/train_data.pickle'
@@ -55,12 +49,29 @@ with open(corpus_path, 'rb') as corpus_file:
     dev_cono_labels = torch.tensor(preprocessed['dev_cono_labels'], device=DEVICE)
 del preprocessed
 
+
+# tabulate_cos_sim(luntz, deno_embed, cono_embed)
+def tabulate_cos_sim(
+        row: Dict,
+        pairs: List[Tuple[str, str]],
+        d_embed: np.ndarray,
+        c_embed: np.ndarray
+        ) -> None:
+    print('w1', 'w2', 'pretrained', 'deno', 'cono', 'diff', sep='\t')
+    for q1, q2 in pairs:
+        pretrained_cs = round(cos_sim(q1, q2, PE_embed), 4)
+        deno_cs = round(cos_sim(q1, q2, d_embed), 4)
+        cono_cs = round(cos_sim(q1, q2, c_embed), 4)
+        diff = round(deno_cs - cono_cs, 4)
+        print(q1, q2, pretrained_cs, deno_cs, cono_cs, diff, sep='\t')
+
+
 table: List[Dict] = []
 for model in deno_spaces:
     HFreq_Hdeno = model.NN_cluster_homogeneity(crisis_ids, eval_deno=True, top_k=5)
     HFreq_Hcono = model.NN_cluster_homogeneity(crisis_ids, eval_deno=False, top_k=5)
-    LFreq_Hdeno = model.NN_cluster_homogeneity(polarized_ids, eval_deno=True, top_k=5)
-    LFreq_Hcono = model.NN_cluster_homogeneity(polarized_ids, eval_deno=False, top_k=5)
+    LFreq_Hdeno = model.NN_cluster_homogeneity(all_ids, eval_deno=True, top_k=5)
+    LFreq_Hcono = model.NN_cluster_homogeneity(all_ids, eval_deno=False, top_k=5)
     deno_accuracy, cono_accuracy = model.accuracy(dev_seq, dev_deno_labels, dev_cono_labels)
 
     if 'pretrained' in model.name:
@@ -71,25 +82,28 @@ for model in deno_spaces:
             'epoch': model.stem,
             r'\delta\sub{D}': model.delta,
             r'\gamma\sub{D}': model.gamma,
+            r'\frac{delta}{gamma}': model.delta / model.gamma,
             r'\rho': model.config.recomposer_rho,
             'dropout': model.config.dropout_p}
 
     if EVAL_DENO_SPACE:
         row['deno dev accuracy'] = deno_accuracy
-        row['LFreq preserve deno'] = LFreq_Hdeno
-        row['HFreq preserve deno'] = HFreq_Hdeno
-        row['LFreq remove cono'] = LFreq_Hcono
-        row['HFreq remove cono'] = HFreq_Hcono
-        row['LFreq diff'] = LFreq_Hdeno - LFreq_Hcono
-        row['HFreq diff'] = HFreq_Hdeno - HFreq_Hcono
-    else:  # eval cono space
         row['cono dev accuracy'] = cono_accuracy
-        row['LFreq remove deno'] = LFreq_Hdeno
-        row['HFreq remove deno'] = HFreq_Hdeno
-        row['LFreq preserve cono'] = LFreq_Hcono
-        row['HFreq preserve cono'] = HFreq_Hcono
-        row['LFreq diff'] = LFreq_Hcono - LFreq_Hdeno
-        row['HFreq diff'] = HFreq_Hcono - HFreq_Hdeno
+        row['preserve deno'] = LFreq_Hdeno
+        # row['HFreq preserve deno'] = HFreq_Hdeno
+        row['remove cono'] = LFreq_Hcono
+        # row['HFreq remove cono'] = HFreq_Hcono
+        row['diff'] = LFreq_Hdeno - LFreq_Hcono
+        # row['HFreq diff'] = HFreq_Hdeno - HFreq_Hcono
+    else:  # eval cono space
+        row['deno dev accuracy'] = deno_accuracy
+        row['cono dev accuracy'] = cono_accuracy
+        row['remove deno'] = LFreq_Hdeno
+        # row['HFreq remove deno'] = HFreq_Hdeno
+        row['preserve cono'] = LFreq_Hcono
+        # row['HFreq preserve cono'] = HFreq_Hcono
+        row['diff'] = LFreq_Hcono - LFreq_Hdeno
+        # row['HFreq diff'] = HFreq_Hcono - HFreq_Hdeno
 
     for key, val in row.items():
         if isinstance(val, float):

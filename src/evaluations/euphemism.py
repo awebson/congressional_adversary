@@ -206,6 +206,31 @@ def is_party_platform(pair) -> bool:
     return not same_deno(pair) and same_cono(pair)
 
 
+cherry_pairs = [
+    # Luntz Report, all GOP euphemisms
+    ('government', 'washington'),
+    # ('private_account', 'personal_account'),
+    # ('tax_reform', 'tax_simplification'),
+    ('estate_tax', 'death_tax'),
+    ('capitalism', 'free_market'),  # global economy, globalization
+    # ('outsourcing', 'innovation'),  # "root cause" of outsourcing, regulation
+    ('undocumented', 'illegal_aliens'),  # OOV undocumented_workers
+    ('foreign_trade', 'international_trade'),  # foreign, global all bad
+    # ('drilling_for_oil', 'exploring_for_energy'),
+    # ('drilling', 'energy_exploration'),
+    # ('tort_reform', 'lawsuit_abuse_reform'),
+    # ('trial_lawyer', 'personal_injury_lawyer'),  # aka ambulance chasers
+    # ('corporate_transparency', 'corporate_accountability'),
+    # ('school_choice', 'parental_choice'),  # equal_opportunity_in_education
+    #('healthcare_choice', 'right_to_choose')
+
+    # Own Cherries
+    ('public_option', 'governmentrun'),
+    ('political_speech', 'campaign_spending'),  # hard example
+    ('cut_taxes', 'trickledown')  # OOV supplyside
+]
+
+
 cherry_words = (
     'military_budget', 'defense_budget',
     # 'nuclear_option', 'constitutional_option',

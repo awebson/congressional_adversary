@@ -190,12 +190,21 @@ class Decomposer(nn.Module):
         else:
             return neighbor_ids
 
+    # @staticmethod
+    # def discretize_cono(skew: float) -> int:
+    #     if skew < 0.5:
+    #         return 0
+    #     else:
+    #         return 1
+
     @staticmethod
     def discretize_cono(skew: float) -> int:
-        if skew < 0.5:
+        if skew < 0.2:
             return 0
-        else:
+        elif skew < 0.8:
             return 1
+        else:
+            return 2
 
     def NN_cluster_homogeneity(
             self,
@@ -245,7 +254,7 @@ class Decomposer(nn.Module):
             naive_homogeneity.append(num_same_label / top_k)
 
         homogeneity = homogeneity_score(true_labels, cluster_ids)
-        return homogeneity # completness?, np.mean(naive_homogeneity)
+        return homogeneity  # completness?, np.mean(naive_homogeneity)
 
     def homemade_heterogeneity(
             self,

@@ -27,10 +27,10 @@ def plot(
     sns.scatterplot(
         coordinates[:, 0], coordinates[:, 1],
         hue=skew, palette='coolwarm',  # hue_norm=(0, 1),
-        size=freq, sizes=(100, 1000),
+        size=freq, sizes=(200, 1000),
         legend=None, ax=ax)
     for coord, w in zip(coordinates, words):
-        ax.annotate(w.word, coord, fontsize=12)
+        ax.annotate(w.word, coord, fontsize=20)
     with open(path, 'wb') as file:
         fig.savefig(file, dpi=300)
     plt.close(fig)
@@ -42,19 +42,19 @@ def plot_categorical(
         path: Path
         ) -> None:
     fig, ax = plt.subplots(figsize=(20, 10))
-    categories = [w.majority_deno_id for w in words]
+    categories = [w.majority_deno for w in words]
     freq = [w.freq for w in words]
     sns.scatterplot(
         coordinates[:, 0], coordinates[:, 1],
         hue=categories, palette='muted', hue_norm=(0, 1),
-        size=freq, sizes=(100, 1000),
+        size=freq, sizes=(200, 1000),
         legend='brief', ax=ax)
     chartBox = ax.get_position()
     ax.set_position(  # adjust legend
         [chartBox.x0, chartBox.y0, chartBox.width * 0.6, chartBox.height])
     ax.legend(loc='upper center', bbox_to_anchor=(1.45, 0.8), ncol=1)
     for coord, w in zip(coordinates, words):
-        ax.annotate(w.word, coord, fontsize=12)
+        ax.annotate(w.word, coord, fontsize=20)
     with open(path, 'wb') as file:
         fig.savefig(file, dpi=300)
     plt.close(fig)
@@ -64,14 +64,15 @@ def graph_en_masse(
         models: Dict[str, np.ndarray],
         out_dir: Path,
         reduction: str,  # 'PCA', 'TSNE', or 'both'
-        word_ids: List[int],
-        words: List[str],
-        hues: Union[List[float], List[int]],
-        sizes: List[int],
+        # word_ids: List[int],
+        words: List[GroundedWord],
+        # hues: Union[List[float], List[int]],
+        # sizes: List[int],
         perplexity: Optional[int] = None,
         categorical: bool = False
         ) -> None:
     Path.mkdir(out_dir, parents=True, exist_ok=True)
+    word_ids = np.array([w.word_id for w in words])
     for model_name, embed in tqdm(models.items()):
         space = embed[word_ids]
         if reduction == 'PCA':
