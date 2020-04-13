@@ -159,9 +159,8 @@ def load_recomposers_en_masse(
 def vec(query: str, embed: np.ndarray) -> np.ndarray:
     try:
         query_id = PE.word_to_id[query]
-    except KeyError as error:
-        print(f'Out of vocabulary: {query}')
-        raise error
+    except KeyError:
+        raise KeyError(f'Out of vocabulary: {query}')
     return embed[query_id]
 
 
@@ -212,9 +211,11 @@ def nearest_neighbors(
         print(f"{query}'s neareset neighbors:")
     else:
         query_vec = query
-    distances = [distance.cosine(query_vec, neighbor_vec) for neighbor_vec in embed]
+    distances = [
+        distance.cosine(query_vec, neighbor_vec)
+        for neighbor_vec in embed]
     neighbors = np.argsort(distances)
-    for ranking in range(1, top_k + 1):
+    for ranking in range(0, top_k + 1):
         word_id = neighbors[ranking]
         word = PE.id_to_word[word_id]
         cosine_similarity = 1 - distances[word_id]
@@ -227,7 +228,7 @@ def nearest_neighbors(
     #     neighbor_word = self.id_to_word[neighbor_id]
     #     sim = cos_sim[neighbor_id]
     #     print(f'{sim:.4f}\t{neighbor_word}')
-    print('\n')
+    print()
 
 
 @dataclass
