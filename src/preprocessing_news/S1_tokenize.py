@@ -1,15 +1,23 @@
 import xml.etree.ElementTree as ET
 import pickle
 from pathlib import Path
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Dict, Iterable, Optional
 
 import stanza
 from tqdm import tqdm
 
-Sentence = stanza.models.common.doc.Sentence
-Token = stanza.models.common.doc.Token
+# Sentence = stanza.models.common.doc.Sentence
+# Token = stanza.models.common.doc.Token
 # Span = stanza.models.common.doc.Span
+
+@dataclass
+class Sentence():
+    tokens: List[List[str]]
+    normalized_tokens: List[List[str]] = field(default_factory=list)
+    subsampled_tokens: List[List[str]] = field(default_factory=list)
+    numerical_tokens: List[List[int]] = field(default_factory=list)
+
 
 @dataclass
 class LabeledDoc():
@@ -21,7 +29,6 @@ class LabeledDoc():
     text: str
     date: Optional[str] = None
     sentences: Optional[List[Sentence]] = None
-    numerical_sentences: Optional[List[List[int]]] = None
 #     entities: Optional[List[Span]] = None
 
 
@@ -81,12 +88,12 @@ def main() -> None:
     Path.mkdir(out_dir, parents=True, exist_ok=True)
 
     for part_index, some_docs in tqdm(
-            enumerate(partition(data, 600)), total=600, desc='Partitions'):
+            enumerate(partition(data, 60)), total=60, desc='Partitions'):
         for doc in tqdm(some_docs, desc='Documents'):
             processed = processor(doc.text)
             doc.sentences = [
-                [token.text for token in sent.tokens]
-                for sent in processed.sentences]
+                Sentence([token.text for token in stanza_sent.tokens])
+                for stanza_sent in processed.sentences]
         with open(out_dir / f'tokenized_{part_index}.pickle', 'wb') as file:
             pickle.dump(some_docs, file, protocol=-1)
 
