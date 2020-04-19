@@ -32,9 +32,8 @@ class Decomposer(nn.Module):
     def __init__(
             self,
             config: 'DecomposerConfig',
-            data: 'LabeledSentences'):
+            data: 'LabeledDocuments'):
         super().__init__()
-
         vocab_size = len(data.word_to_id)
         if config.pretrained_embedding is not None:
             config.embed_size = data.pretrained_embedding.shape[1]
@@ -87,9 +86,6 @@ class Decomposer(nn.Module):
             center_word_ids, true_context_ids)  # , negative_context_ids)
 
         cono_logits = self.cono_decoder(seq_repr)
-
-        # import IPython
-        # IPython.embed()
         cono_loss = nn.functional.cross_entropy(cono_logits, cono_labels)
 
         decomposer_loss = (self.delta * deno_loss +
@@ -163,21 +159,21 @@ class Decomposer(nn.Module):
         cono_correct_indicies = cono_predictions.eq(cono_labels)
         cono_accuracy = cono_correct_indicies.float().mean().item()
 
-        if error_analysis_path:
-            analysis_file = open(error_analysis_path, 'w')
-            analysis_file.write('pred_conf\tpred\tlabel_conf\tlabel\tseq\n')
-            output = []
-            for pred_confs, pred_id, label_id, seq_ids in zip(
-                    deno_conf, deno_predictions, deno_labels, seq_word_ids):
-                pred_conf = f'{pred_confs[pred_id].item():.4f}'
-                label_conf = f'{pred_confs[label_id].item():.4f}'
-                pred = self.id_to_deno[pred_id.item()]
-                label = self.id_to_deno[label_id.item()]
-                seq = ' '.join([self.id_to_word[i.item()] for i in seq_ids])
-                output.append((pred_conf, pred, label_conf, label, seq))
-            # output.sort(key=lambda t: t[1], reverse=True)
-            for stuff in output:
-                analysis_file.write('\t'.join(stuff) + '\n')
+        # if error_analysis_path:
+        #     analysis_file = open(error_analysis_path, 'w')
+        #     analysis_file.write('pred_conf\tpred\tlabel_conf\tlabel\tseq\n')
+        #     output = []
+        #     for pred_confs, pred_id, label_id, seq_ids in zip(
+        #             deno_conf, deno_predictions, deno_labels, seq_word_ids):
+        #         pred_conf = f'{pred_confs[pred_id].item():.4f}'
+        #         label_conf = f'{pred_confs[label_id].item():.4f}'
+        #         pred = self.id_to_deno[pred_id.item()]
+        #         label = self.id_to_deno[label_id.item()]
+        #         seq = ' '.join([self.id_to_word[i.item()] for i in seq_ids])
+        #         output.append((pred_conf, pred, label_conf, label, seq))
+        #     # output.sort(key=lambda t: t[1], reverse=True)
+        #     for stuff in output:
+        #         analysis_file.write('\t'.join(stuff) + '\n')
 
         # if error_analysis_path:  # confusion  matrix
         #     cf_mtx = confusion_matrix(deno_labels.cpu(), deno_predictions.cpu())
@@ -317,7 +313,7 @@ class Decomposer(nn.Module):
         return np.mean(homogeneity)
 
 
-class LabeledSentences(Dataset):
+class LabeledDocuments(Dataset):
 
     def __init__(self, config: 'DecomposerConfig'):
         corpus_path = os.path.join(config.input_dir, 'train_data.pickle')
@@ -508,7 +504,7 @@ class DecomposerExperiment(Experiment):
 
     def __init__(self, config: 'DecomposerConfig'):
         super().__init__(config)
-        self.data = LabeledSentences(config)
+        self.data = LabeledDocuments(config)
         self.dataloader = DataLoader(
             self.data,
             batch_size=config.batch_size,
@@ -557,7 +553,7 @@ class DecomposerExperiment(Experiment):
         grad_clip = self.config.clip_grad_norm
         self.model.zero_grad()
         L_decomp, l_deno, l_cono = self.model(
-            center_word_ids, context_word_ids, # negative_ids,
+            center_word_ids, context_word_ids,  # negative_ids,
             seq_word_ids, cono_labels)
 
         if update_decoder:
@@ -675,7 +671,7 @@ class DecomposerConfig():
     debug_subset_corpus: Optional[int] = None
     # dev_holdout: int = 5_000
     # test_holdout: int = 10_000
-    num_dataloader_threads: int = 12  # NOTE
+    num_dataloader_threads: int = 6  # NOTE
     pin_memory: bool = True
 
     beta: float = 10
@@ -714,7 +710,7 @@ class DecomposerConfig():
     reload_path: Optional[str] = None
     clear_tensorboard_log_in_output_dir: bool = True
     delete_all_exisiting_files_in_output_dir: bool = False
-    auto_save_per_epoch: Optional[int] = 10
+    auto_save_per_epoch: Optional[int] = 2
     auto_save_if_interrupted: bool = False
 
     def __post_init__(self) -> None:

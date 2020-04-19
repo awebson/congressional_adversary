@@ -13,6 +13,7 @@ from recomposer import Recomposer, RecomposerConfig
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 pretrained_path = PROJECT_ROOT / 'results/pretrained subset/init.pt'
+# pretrained_path = PROJECT_ROOT / 'results/pretrained superset/init.pt'
 print(f'Loading vocabulary from {pretrained_path}')
 PE = torch.load(pretrained_path)['model']
 # PE_embed = PE.embedding.weight.detach().cpu().numpy()
