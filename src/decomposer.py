@@ -1,5 +1,4 @@
 import argparse
-import random
 import pickle
 import os
 from dataclasses import dataclass, field
@@ -8,8 +7,6 @@ from typing import Tuple, List, Dict, Counter, Iterable, Optional
 import numpy as np
 import torch
 from torch import nn
-from torch.nn.utils import rnn
-from torch.utils.data import IterableDataset, DataLoader
 from sklearn.metrics import homogeneity_score
 from tqdm import tqdm
 import editdistance  # for excluding trivial nearest neighbors
@@ -24,8 +21,7 @@ from utils.experiment import Experiment
 from utils.improvised_typing import Scalar, Vector, Matrix, R3Tensor
 from preprocessing_news.S1_tokenize import Sentence, LabeledDoc
 
-
-random.seed(42)
+import random
 torch.manual_seed(42)
 
 
@@ -54,8 +50,14 @@ class Decomposer(nn.Module):
             nn.init.uniform_(self.embedding.weight.data, -init_range, init_range)
         self.embedding.weight.requires_grad = not config.freeze_embedding
 
-        self.negative_sampling_probs = data.negative_sampling_probs
         self.num_negative_samples = config.num_negative_samples
+        self.negative_sampling_probs = data.negative_sampling_probs
+        self.word_to_id = data.word_to_id
+        self.id_to_word = data.id_to_word
+        self.delta = config.delta
+        self.gamma = config.gamma
+        self.beta = config.beta
+
         # num_cono_classes = config.num_cono_classes
         # sent_repr_size = 300
 
@@ -69,16 +71,26 @@ class Decomposer(nn.Module):
         self.cono_decoder = config.cono_decoder
         # assert self.cono_decoder[-2].out_features == num_cono_classes
 
-        self.delta = config.delta
-        self.gamma = config.gamma
-        self.beta = config.beta
+        # Initialize cono grounding: Convert Dict[str, List[int]] to Matrix
+        # self.numericalize_cono: Dict[str, int] = config.numericalize_cono
+        self.cono_grounding = torch.zeros(
+            self.embedding.num_embeddings, config.num_cono_classes,
+            dtype=torch.int64)
+
+        for word, word_id in self.word_to_id.items():
+            self.cono_grounding[self.word_to_id[word]] = torch.tensor(
+                data.cono_grounding[word])
+
+        # Initailize deno grounding
+        # all_vocab_ids = torch.arange(self.embedding.num_embeddings)
+        # deno_ground_neighbor_cos_sim, neighbor_ids = self.nearest_neighbors(
+        #     all_vocab_ids, top_k=10, verbose=True)
+        # F.cross_entropy(deno_ground_neighbor_cos_sim, decomposed_neighbor_cos_sim)
+        # self.deno_grounding: Dict[str, Set[int]] = {
+        #     word: {neighbor_ids}}
+
         self.device = config.device
         self.to(self.device)
-
-        # Initailize neighbor cono homogeneity eval partisan vocabulary
-        self.word_to_id = data.word_to_id
-        self.id_to_word = data.id_to_word
-        # self.grounding = data.grounding
 
     def forward(
             self,
@@ -91,8 +103,7 @@ class Decomposer(nn.Module):
         word_vecs: R3Tensor = self.embedding(seq_word_ids)
         seq_repr: Matrix = torch.mean(word_vecs, dim=1)
 
-        deno_loss = self.skip_gram_loss(
-            center_word_ids, true_context_ids)  # , negative_context_ids)
+        deno_loss = self.skip_gram_loss(center_word_ids, true_context_ids)
 
         cono_logits = self.cono_decoder(seq_repr)
         cono_loss = nn.functional.cross_entropy(cono_logits, cono_labels)
@@ -126,7 +137,7 @@ class Decomposer(nn.Module):
         # negative_context = self.deno_decoder(encoded_negative_context)
 
         # batch_size * embed_size
-        objective = torch.sum(
+        objective = torch.sum(  # dot product
             torch.mul(center, true_context),  # Hadamard product
             dim=1)  # be -> b
         objective = nn.functional.logsigmoid(objective)
@@ -202,7 +213,7 @@ class Decomposer(nn.Module):
             query_ids: Vector,
             top_k: int = 10,
             verbose: bool = False,
-            ) -> List[Vector]:
+            ) -> Matrix:  # List[Vector]?
         with torch.no_grad():
             query_vectors = self.embedding(query_ids)
         try:
@@ -220,22 +231,6 @@ class Decomposer(nn.Module):
             return cos_sim, neighbor_ids
         else:
             return neighbor_ids
-
-    # @staticmethod
-    # def discretize_cono(skew: float) -> int:
-    #     if skew < 0.5:
-    #         return 0
-    #     else:
-    #         return 1
-
-    @staticmethod
-    def discretize_cono(skew: float) -> int:
-        if skew < 0.2:
-            return 0
-        elif skew < 0.8:
-            return 1
-        else:
-            return 2
 
     def NN_cluster_homogeneity(
             self,
@@ -326,6 +321,8 @@ class LabeledDocuments(torch.utils.data.IterableDataset):
 
     def __init__(self, config: 'DecomposerConfig'):
         super().__init__()
+        self.batch_size = config.batch_size
+        self.num_sents = sum([len(doc.sentences) for doc in self.documents])
         self.window_radius = config.skip_gram_window_radius
         self.numericalize_cono = config.numericalize_cono
 
@@ -334,17 +331,18 @@ class LabeledDocuments(torch.utils.data.IterableDataset):
             preprocessed = pickle.load(corpus_file)
         self.word_to_id = preprocessed['word_to_id']
         self.id_to_word = preprocessed['id_to_word']
+        self.cono_grounding: Dict[str, List[int]] = preprocessed['cono_grounding']
         self.documents: List[LabeledDoc] = preprocessed['documents']
         self.negative_sampling_probs = torch.tensor(preprocessed['negative_sampling_probs'])
+
 
         # Set up multiprocessing
         self.total_workload = len(self.documents)
         self.worker_start: Optional[int] = None
         self.worker_end: Optional[int] = None
 
-
     def __len__(self) -> int:
-        return len(self.documents)
+        return self.num_sents
 
     def __iter__(self) -> Iterable[Tuple]:
         """
@@ -352,6 +350,9 @@ class LabeledDocuments(torch.utils.data.IterableDataset):
         Connotation: (a sentence of word_ids, cono_label)
         """
         documents = self.documents[self.worker_start:self.worker_end]
+        print('Shuffling')
+        random.shuffle(documents)
+
         for doc in documents:
             cono_label = self.numericalize_cono[doc.party]
             for sent in doc.sentences:
@@ -366,44 +367,55 @@ class LabeledDocuments(torch.utils.data.IterableDataset):
                         seq[center_index + 1:right_index + 1])
                     context_word_ids += context_word_id
                     center_word_ids += [center_word_id] * len(context_word_id)
-                yield seq, center_word_ids, context_word_ids, cono_label
+                # yield seq, center_word_ids, context_word_ids, cono_label
+
+                seq = [torch.tensor(seq), ]
+                yield (
+                    nn.utils.rnn.pad_sequence(seq, batch_first=True),
+                    torch.tensor(center_word_ids),
+                    torch.tensor(context_word_ids),
+                    torch.tensor([cono_label, ])
+                )
+
 
     @staticmethod
-    def worker_init_fn(worker_id) -> None:
-        """the docs say it should accept a worker_id input... for what?"""
+    def worker_init_fn(worker_id: int) -> None:
         worker = torch.utils.data.get_worker_info()
+        assert worker.id == worker_id
         dataset = worker.dataset
         per_worker = dataset.total_workload // worker.num_workers
         dataset.worker_start = worker.id * per_worker
         dataset.worker_end = min(dataset.worker_start + per_worker,
                                  dataset.total_workload)
+        print(f'Worker {worker_id + 1}/{worker.num_workers} loading data '
+              f'range({dataset.worker_start}, {dataset.worker_end})')
 
-    @staticmethod
-    def collate(
-            sentences: List[Tuple[  # len = batch_size
-            List[int],  # word ids
-            List[int],  # center word ids
-            List[int],  # context word ids
-            int]]       # cono_label
-            ) -> Tuple[Vector, Vector, Matrix, Vector]:
-        """Flatten per sentence data into a variable-sized batch."""
-        seq_word_ids: List[Vector] = []
-        center_ids: List[int] = []
-        context_ids: List[int] = []
-        cono_labels: List[int] = []
-        for seq, center, context, cono_label in sentences:
-            center_ids += center
-            context_ids += context
-            seq_word_ids.append(torch.tensor(seq))
-            cono_labels.append(cono_label)
-        # TODO is this faster?
-        # seq_word_ids = [torch.tensor(w) for w, _, _,  in sentences]
-        # cono_labels = torch.tensor([c for _, _, c in sentences])
-        return (
-            rnn.pad_sequence(seq_word_ids, batch_first=True),
-            torch.tensor(center_ids),
-            torch.tensor(context_ids),
-            torch.tensor(cono_labels))
+    # @staticmethod
+    # def collate(
+    #         sentences: List[Tuple[  # len = batch_size
+    #         List[int],  # word ids
+    #         List[int],  # center word ids
+    #         List[int],  # context word ids
+    #         int]]       # cono_label
+    #         ) -> Tuple[Vector, Vector, Matrix, Vector]:
+    #     """Flatten per sentence data into a variable-sized batch."""
+    #     seq_word_ids: List[Vector] = []
+    #     center_ids: List[int] = []
+    #     context_ids: List[int] = []
+    #     cono_labels: List[int] = []
+    #     for seq, center, context, cono_label in sentences:
+    #         center_ids += center
+    #         context_ids += context
+    #         seq_word_ids.append(torch.tensor(seq))
+    #         cono_labels.append(cono_label)
+    #     # TODO is this faster?
+    #     # seq_word_ids = [torch.tensor(w) for w, _, _,  in sentences]
+    #     # cono_labels = torch.tensor([c for _, _, c in sentences])
+    #     return (
+    #         nn.utils.rnn.pad_sequence(seq_word_ids, batch_first=True),
+    #         torch.tensor(center_ids),
+    #         torch.tensor(context_ids),
+    #         torch.tensor(cono_labels))
 
 
 class DecomposerExperiment(Experiment):
@@ -411,19 +423,21 @@ class DecomposerExperiment(Experiment):
     def __init__(self, config: 'DecomposerConfig'):
         super().__init__(config)
         self.data = LabeledDocuments(config)
-        self.dataloader = DataLoader(
+        self.dataloader = torch.utils.data.DataLoader(
             self.data,
-            batch_size=config.batch_size,
-            collate_fn=self.data.collate,
+            # batch_size=config.batch_size,
+            batch_size=None,  # disable auto batching, see __iter__
+            # drop_last=True,
+            # collate_fn=self.data.collate,
             num_workers=config.num_dataloader_threads,
             worker_init_fn=self.data.worker_init_fn,
             pin_memory=True)
         self.model = Decomposer(config, self.data)
 
         # For Debugging
-        # for name, param in self.model.named_parameters():
-        #     if param.requires_grad:
-        #         print(name)  # param.data)
+        for name, param in self.model.named_parameters():
+            if param.requires_grad:
+                print(name)  # param.data)
 
         # self.deno_optimizer = config.optimizer(
         #     self.model.deno_decoder.parameters(),
@@ -438,19 +452,11 @@ class DecomposerExperiment(Experiment):
         self.to_be_saved = {
             'config': self.config,
             'model': self.model}
-        # self.custom_stats_format = (
-        #     'ℒ = {Decomposer/combined_loss:.3f}\t'
-        #     'd = {Decomposer/deno_loss:.3f}\t'
-        #     'c = {Decomposer/cono_loss:.3f}\t'
-        #     'decomp = {Recomposer/recomp:.3f}\t'
-        #     'cono accuracy = {Evaluation/connotation_accuracy:.2%}'
-        # )
 
     def _train(
             self,
             center_word_ids: Vector,
             context_word_ids: Vector,
-            # negative_ids: Matrix,
             seq_word_ids: Matrix,
             cono_labels: Vector,
             update_encoder: bool = True,
@@ -459,8 +465,7 @@ class DecomposerExperiment(Experiment):
         grad_clip = self.config.clip_grad_norm
         self.model.zero_grad()
         L_decomp, l_deno, l_cono = self.model(
-            center_word_ids, context_word_ids,  # negative_ids,
-            seq_word_ids, cono_labels)
+            center_word_ids, context_word_ids, seq_word_ids, cono_labels)
 
         if update_decoder:
             # l_deno.backward(retain_graph=True)
@@ -505,9 +510,11 @@ class DecomposerExperiment(Experiment):
                 context_word_ids = batch[2].to(self.device)
                 cono_labels = batch[3].to(self.device)
 
+                # import IPython
+                # IPython.embed()
+
                 L_decomp, l_deno, l_cono = self._train(
-                    center_word_ids, context_word_ids,  # negative_ids,
-                    seq_word_ids, cono_labels)
+                    center_word_ids, context_word_ids, seq_word_ids, cono_labels)
                 if batch_index % config.update_tensorboard == 0:
                     cono_accuracy = self.model.accuracy(seq_word_ids, cono_labels)
                     stats = {
@@ -568,13 +575,13 @@ class DecomposerExperiment(Experiment):
 @dataclass
 class DecomposerConfig():
     # Essential
-    input_dir: str = '../data/processed/news'
+    input_dir: str = '../data/processed/news/toy'
     output_dir: str = '../results/debug'
     device: torch.device = torch.device('cuda')
     debug_subset_corpus: Optional[int] = None
     # dev_holdout: int = 5_000
     # test_holdout: int = 10_000
-    num_dataloader_threads: int = 6
+    num_dataloader_threads: int = 0
 
     beta: float = 10
     decomposed_size: int = 300
@@ -583,7 +590,7 @@ class DecomposerConfig():
 
     architecture: str = 'L1'
     dropout_p: float = 0
-    batch_size: int = 64
+    batch_size: int = 64  # number of sentences per batch
     embed_size: int = 300
     num_epochs: int = 10
     # encoder_update_cycle: int = 1  # per batch
