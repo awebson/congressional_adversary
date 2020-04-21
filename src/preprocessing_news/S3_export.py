@@ -3,7 +3,7 @@ import math
 import random
 import pickle
 from pathlib import Path
-from typing import Tuple, List, Dict, Counter, Optional
+from typing import Tuple, List, Dict, DefaultDict, Counter, Optional
 
 from tqdm import tqdm
 
@@ -75,7 +75,7 @@ def subsampling(
 def main(
         in_dir: Path,
         out_dir: Path,
-        num_corpus_parts: int,
+        num_corpus_chunks: int,
         min_frequency: int,
         min_sent_len: int,
         max_sent_len: int,
@@ -84,7 +84,7 @@ def main(
         conserve_RAM: bool = True  # turn off to inspect intermediate results
         ) -> None:
     corpus: List[LabeledDoc] = []
-    for part_index in tqdm(range(num_corpus_parts), desc='Loading cache'):
+    for part_index in tqdm(range(num_corpus_chunks), desc='Loading cache'):
         with open(in_dir / f'tokenized_{part_index}.pickle', 'rb') as in_file:
             corpus += pickle.load(in_file)
 
@@ -98,17 +98,21 @@ def main(
 
     # Lowercase, discard punctuations, replace numbers
     number = re.compile(r'\d')
-    nonalphanumeric = re.compile(r"[^a-zA-Z0-9_.\-'’]")  # with exceptions
+    starts_with_letter = re.compile(r"^\w")
+    nonalphanumeric = re.compile(r"[^a-zA-Z0-9_.\-'’]")  # allow in-word dash or period
+    # mystery_ellipsis = re.compile(r"[.]+2")
     norm_freq: Counter[str] = Counter()
     for doc in tqdm(corpus, desc='Normalize tokens'):
         for sent in doc.sentences:
-            for word in sent.tokens:
-                if nonalphanumeric.search(word):
+            for token in sent.underscored_tokens:  # NOTE cf. .tokens
+                if not starts_with_letter.search(token):
                     continue
-                if number.search(word):
+                # if nonalphanumeric.search(token):
+                #     continue
+                if number.search(token):
                     norm_token = '<NUM>'
                 else:
-                    norm_token = word.lower()
+                    norm_token = token.lower()
                 sent.normalized_tokens.append(norm_token)
                 norm_freq[norm_token] += 1
             if conserve_RAM:
@@ -128,16 +132,29 @@ def main(
     norm_freq = new_freq
     print(f'Filtered vocabulary size = {len(norm_freq):,}', file=preview)
 
+    # Count connotation grounding prior to subsampling trick
+    numericalize_cono = {
+        'left': 0,
+        'left-center': 1,
+        'least': 2,
+        'right-center': 3,
+        'right': 4}
+    # cono_grounding: DefaultDict[str, List[int]] = DefaultDict(
+    #     lambda: [0, 0, 0, 0, 0])  # unfortunately unpicklable
+    cono_grounding: Dict[str, List] = {'<PAD>': [0, 0, 0, 0, 0]}
     # Subsampling & filter by mix/max sentence length
     keep_prob = subsampling(norm_freq, subsample_heuristic, subsample_threshold)
     final_freq: Counter[str] = Counter()
-    for doc in tqdm(corpus, desc='Subsample frequent words'):
+    for doc in tqdm(corpus, desc='Counting connotation & subsample frequent words'):
         for sent in doc.sentences:
             for token in sent.normalized_tokens:
                 if token not in norm_freq:
                     token = '<UNK>'
                 if random.random() < keep_prob[token]:
                     sent.subsampled_tokens.append(token)
+                if token not in cono_grounding:
+                    cono_grounding[token] = [0, 0, 0, 0, 0]
+                cono_grounding[token][numericalize_cono[doc.party]] += 1
 
             if min_sent_len <= len(sent.subsampled_tokens) <= max_sent_len:
                 final_freq.update(sent.subsampled_tokens)
@@ -157,7 +174,7 @@ def main(
 
     # Numericalize corpus by word_ids
     word_to_id, id_to_word = build_vocabulary(final_freq)
-    for doc in tqdm(corpus, desc='Converting to word_ids'):
+    for doc in tqdm(corpus, desc='Converting to word ids'):
         for sent in doc.sentences:
             sent.numerical_tokens = [
                 word_to_id[token] for token in sent.subsampled_tokens]
@@ -178,6 +195,7 @@ def main(
     cucumbers = {
         'word_to_id': word_to_id,
         'id_to_word': id_to_word,
+        'cono_grounding': cono_grounding,
         'negative_sampling_probs': negative_sampling_probs,
         'documents': corpus}
     print(f'Writing to {out_dir}')
@@ -198,7 +216,7 @@ def main(
             # print(vars(doc), end='\n\n', file=preview)
     preview.write('\n')
     for key, val in final_freq.most_common():
-        print(f'{val:,}:\t {key}', file=preview)
+        print(f'{val:,}:\t{key}\t{cono_grounding[key]}', file=preview)
     preview.close()
 
 
@@ -209,7 +227,7 @@ if __name__ == '__main__':
         min_frequency=10,
         min_sent_len=5,
         max_sent_len=20,
-        num_corpus_parts=5,
+        num_corpus_chunks=5,
         subsample_heuristic='paper',
         subsample_threshold=1e-3,
         conserve_RAM=True)
