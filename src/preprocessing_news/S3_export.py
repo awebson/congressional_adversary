@@ -98,14 +98,14 @@ def main(
 
     # Lowercase, discard punctuations, replace numbers
     number = re.compile(r'\d')
-    nonalphanumeric = re.compile(r'\W')  # TODO NOTE exclude underscore
+    nonalphanumeric = re.compile(r"[^a-zA-Z0-9_.\-'’]")  # with exceptions
     norm_freq: Counter[str] = Counter()
     for doc in tqdm(corpus, desc='Normalize tokens'):
         for sent in doc.sentences:
             for word in sent.tokens:
-                if nonalphanumeric.match(word):
+                if nonalphanumeric.search(word):
                     continue
-                if number.match(word):
+                if number.search(word):
                     norm_token = '<NUM>'
                 else:
                     norm_token = word.lower()
