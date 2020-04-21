@@ -145,7 +145,7 @@ def main(
     # Subsampling & filter by mix/max sentence length
     keep_prob = subsampling(norm_freq, subsample_heuristic, subsample_threshold)
     final_freq: Counter[str] = Counter()
-    for doc in tqdm(corpus, desc='Counting connotation & subsample frequent words'):
+    for doc in tqdm(corpus, desc='Ground connotation & subsample frequent words'):
         for sent in doc.sentences:
             for token in sent.normalized_tokens:
                 if token not in norm_freq:
@@ -155,16 +155,22 @@ def main(
                 if token not in cono_grounding:
                     cono_grounding[token] = [0, 0, 0, 0, 0]
                 cono_grounding[token][numericalize_cono[doc.party]] += 1
-
-            if min_sent_len <= len(sent.subsampled_tokens) <= max_sent_len:
-                final_freq.update(sent.subsampled_tokens)
+            # End looping tokens
+            if len(sent.subsampled_tokens) >= min_sent_len:
+                if len(sent.subsampled_tokens) <= max_sent_len:
+                    final_freq.update(sent.subsampled_tokens)
+                else:  # NOTE truncate long sentences
+                    sent.subsampled_tokens = sent.subsampled_tokens[:max_sent_len]
+                    final_freq.update(sent.subsampled_tokens)
             else:
                 sent.subsampled_tokens = None
             if conserve_RAM:
                 del sent.normalized_tokens
+        # End looping sentences
         doc.sentences = [
             sent for sent in doc.sentences
             if sent.subsampled_tokens is not None]
+    # End looping documents
     corpus = [doc for doc in corpus if len(doc.sentences) > 0]
 
     print(f'Final vocabulary size = {len(final_freq):,}', file=preview)
@@ -203,13 +209,14 @@ def main(
         pickle.dump(cucumbers, out_file, protocol=-1)
 
     # Print out vocabulary & some random sentences for sanity check
-    docs = random.sample(corpus, 50)
+    docs = random.sample(corpus, 100)
     preview.write('\n')
     for doc in docs:
         sent = doc.sentences[0]
         if not conserve_RAM:
             print(sent.tokens, file=preview)
             print(sent.normalized_tokens, file=preview)
+            print(sent.numerical_tokens, file=preview)
             print(sent.subsampled_tokens, end='\n\n', file=preview)
         else:
             print(sent.numerical_tokens, file=preview)
@@ -218,16 +225,17 @@ def main(
     for key, val in final_freq.most_common():
         print(f'{val:,}:\t{key}\t{cono_grounding[key]}', file=preview)
     preview.close()
+    print('All set!')
 
 
 if __name__ == '__main__':
     main(
         in_dir=Path('../../data/interim/news'),
-        out_dir=Path('../../data/processed/news'),
+        out_dir=Path('../../data/processed/news/toy'),
         min_frequency=10,
         min_sent_len=5,
         max_sent_len=20,
-        num_corpus_chunks=5,
+        num_corpus_chunks=3,
         subsample_heuristic='paper',
         subsample_threshold=1e-3,
-        conserve_RAM=True)
+        conserve_RAM=False)
