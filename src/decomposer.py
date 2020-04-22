@@ -329,10 +329,14 @@ class LabeledDocuments(torch.utils.data.IterableDataset):
         self.id_to_word = preprocessed['id_to_word']
         self.cono_grounding: Dict[str, List[int]] = preprocessed['cono_grounding']
         self.documents: List[LabeledDoc] = preprocessed['documents']
-        self.negative_sampling_probs = torch.tensor(preprocessed['negative_sampling_probs'])
-        self.estimated_num_batches = sum(
-            [len(sent.numerical_tokens) for doc in self.documents for sent in doc.sentences]
-            ) * self.window_radius * 2 // self.batch_size
+        self.negative_sampling_probs: Vector = torch.tensor(
+            preprocessed['negative_sampling_probs'])
+        self.estimated_num_batches = (
+            sum([len(sent.numerical_tokens)
+                 for doc in self.documents
+                 for sent in doc.sentences])
+            * self.window_radius * 2
+            // self.batch_size)
 
         # Set up multiprocessing
         self.total_workload = len(self.documents)
@@ -600,12 +604,12 @@ class DecomposerConfig():
     debug_subset_corpus: Optional[int] = None
     # dev_holdout: int = 5_000
     # test_holdout: int = 10_000
-    num_dataloader_threads: int = 0
+    num_dataloader_threads: int = 6
 
     beta: float = 10
     decomposed_size: int = 300
     delta: float = 1  # denotation classifier weight 𝛿
-    gamma: float = 0  # connotation classifier weight 𝛾
+    gamma: float = 1  # connotation classifier weight 𝛾
 
     architecture: str = 'L1'
     dropout_p: float = 0
@@ -622,7 +626,7 @@ class DecomposerConfig():
     num_negative_samples: int = 10
     optimizer: torch.optim.Optimizer = torch.optim.Adam
     # optimizer: torch.optim.Optimizer = torch.optim.SGD
-    learning_rate: float = 2e-4
+    learning_rate: float = 1e-4
     # momentum: float = 0.5
     # lr_scheduler: torch.optim.lr_scheduler._LRScheduler
     # num_prediction_classes: int = 5
