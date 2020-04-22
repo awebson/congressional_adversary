@@ -85,8 +85,10 @@ def partition(corpus: List, num_chunks: int) -> Iterable[List]:
 def main() -> None:
     print('Loading XML...')
     in_dir = Path.home() / 'Research/hyperpartisan_news'
-    metadata = ET.parse(in_dir / 'ground-truth-training-bypublisher-20181122.xml')
-    corpus = ET.parse(in_dir / 'articles-training-bypublisher-20181122.xml')
+    # metadata = ET.parse(in_dir / 'ground-truth-training-bypublisher-20181122.xml')
+    # corpus = ET.parse(in_dir / 'articles-training-bypublisher-20181122.xml')
+    corpus = ET.parse(in_dir / 'articles-validation-bypublisher-20181122.xml')
+    metadata = ET.parse(in_dir / 'ground-truth-validation-bypublisher-20181122.xml')
 
     labels = {
         stuff.attrib['id']: stuff.attrib
@@ -129,7 +131,7 @@ def main() -> None:
     # data = data[:len(data) // 2]  # first half
     # data = data[len(data) // 2:]  # second half
 
-    out_dir = Path('../../data/interim/news/')
+    out_dir = Path('../../data/interim/news/validation')
     Path.mkdir(out_dir, parents=True, exist_ok=True)
 
     num_chunks = 100

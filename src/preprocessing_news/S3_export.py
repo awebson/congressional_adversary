@@ -216,14 +216,15 @@ def main(
         if not conserve_RAM:
             print(sent.tokens, file=preview)
             print(sent.normalized_tokens, file=preview)
-            print(sent.numerical_tokens, file=preview)
-            print(sent.subsampled_tokens, end='\n\n', file=preview)
+            print(sent.subsampled_tokens, file=preview)
+            print(sent.numerical_tokens, file=preview, end='\n\n')
         else:
             print(sent.numerical_tokens, file=preview)
             # print(vars(doc), end='\n\n', file=preview)
-    preview.write('\n')
+    preview.write('\n\nword\tsubsampled_freq\tconnotation\tword_id\n')
     for key, val in final_freq.most_common():
-        print(f'{val:,}:\t{key}\t{cono_grounding[key]}', file=preview)
+        print(f'{val:,}:\t{key}\t{cono_grounding[key]}\t{word_to_id[key]}',
+              file=preview)
     preview.close()
     print('All set!')
 
@@ -237,5 +238,5 @@ if __name__ == '__main__':
         max_sent_len=20,
         num_corpus_chunks=3,
         subsample_heuristic='paper',
-        subsample_threshold=1e-3,
+        subsample_threshold=1e-5,
         conserve_RAM=False)

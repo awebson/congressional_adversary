@@ -3,9 +3,10 @@ import pprint
 from abc import ABC, abstractmethod
 from datetime import datetime
 from dataclasses import dataclass, asdict
-from typing import Tuple, List, Dict, Optional, Any, no_type_check
+from typing import Set, Tuple, List, Dict, Optional, Any, no_type_check
 
 import torch
+from torch import nn
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
@@ -53,7 +54,6 @@ class Experiment(ABC):
                         tb_log_dir = os.path.join(config.output_dir, filename)
                         shutil.rmtree(tb_log_dir)
                         print(f'Deleted {filename} in output_dir')
-
         timestamp = datetime.now().strftime("%m-%d %H-%M-%S")
         log_dir = os.path.join(config.output_dir, f'TB {timestamp}')
         self.tensorboard = SummaryWriter(log_dir=log_dir)
@@ -177,91 +177,109 @@ class Experiment(ABC):
     def train(self) -> Any:
         pass
 
-    @no_type_check
+    # @staticmethod
+    # def load_embedding(
+    #         in_path: str,
+    #         word_to_id: Dict[str, int]
+    #         ) -> torch.Tensor:
+    #     if in_path.endswith('txt'):
+    #         return self.load_txt_embedding(in_path, word_to_id)
+    #     elif in_path.endswith('pt'):
+    #         raise NotImplementedError('To-Do: check matching word_to_id')
+    #         # return torch.load(
+    #         #     in_path, map_location=config.device)['model'].embedding.weight
+    #     else:
+    #         raise ValueError('Unknown pretrained embedding format.')
+
     @staticmethod
-    def load_embedding(
+    def uniform_init_embedding(
+            vocab_size: int,
+            embed_size: int
+            ) -> torch.Tensor:
+        embedding = nn.Embedding(vocab_size, embed_size)
+        init_range = 1.0 / embed_size
+        nn.init.uniform_(embedding.weight.data, -init_range, init_range)
+        return embedding
+
+    @staticmethod
+    def load_txt_embedding(
             in_path: str,
-            word_to_id: Optional[Dict[str, int]] = None
-            ) -> Tuple[
-            torch.Tensor,
-            Dict[str, int],
-            Dict[int, str]]:
+            word_to_id: Dict[str, int]
+            ) -> torch.Tensor:
         """
         Load pretrained emebdding from a plain text file, where the first line
         specifies the vocabulary size and embedding dimensions.
 
-        If word_to_id is passed, embedding will be constructed with
-        the given word_ids.
+        The word_to_id argument should reflect the tokens in the training corpus,
+        the word ids of the pretrained matrix will be converted to match that
+        of the corpus.
         """
         print(f'Loading pretrained embedding from {in_path}', flush=True)
         with open(in_path) as file:
             vocab_size, embed_size = map(int, file.readline().split())
             print(f'vocab_size = {vocab_size:,}, embed_size = {embed_size}')
+            embedding: Dict[int, List[float]] = {}
+            out_of_vocabulary: Set[str] = set()
+            for line in file:
+                line = line.split()  # type: ignore
+                word = line[0]
+                try:
+                    word_id = word_to_id[word]
+                    embedding[word_id] = list(map(float, line[-embed_size:]))
+                except KeyError:  # pretrained has more vocab than corpus
+                    continue
+                    out_of_vocabulary.add(word)
+            assert len(word_to_id) == len(embedding)
+            if out_of_vocabulary:
+                print('The following words in the corpus are out of '
+                      'the vocabulary of the given pretrained embedding.')
+                print(out_of_vocabulary)
+                # raise KeyError
+            embedding = [
+                embedding[word_id]
+                for word_id in range(len(word_to_id))]
+        return nn.Embedding.from_pretrained(torch.tensor(embedding))
+        # Unsafe
+        # if word_to_id is None:
+        #     embedding: List[List[float]] = []
+        #     id_generator = 0
+        #     word_to_id: Dict[str, int] = {}  # type: ignore
+        #     id_to_word: Dict[int, str] = {}
+        #     for line in file:
+        #         line = line.split()
+        #         word = line[0]
+        #         embedding.append(list(map(float, line[-embed_size:])))
+        #         word_to_id[word] = id_generator
+        #         id_to_word[id_generator] = word
+        #         id_generator += 1
+        #     return torch.tensor(embedding), word_to_id, id_to_word
 
-            if word_to_id is None:
-                embedding: List[List[float]] = []
-                id_generator = 0
-                word_to_id: Dict[str, int] = {}  # type: ignore
-                id_to_word: Dict[int, str] = {}
-                for line in file:
-                    line = line.split()
-                    word = line[0]
-                    embedding.append(list(map(float, line[-embed_size:])))
-                    word_to_id[word] = id_generator
-                    id_to_word[id_generator] = word
-                    id_generator += 1
-                return torch.tensor(embedding), word_to_id, id_to_word
-            else:
-                embedding: Dict[int, List[float]] = {}
-                # out_of_vocabulary = set()
-                for line in file:
-                    line = line.split()
-                    word = line[0]
-                    try:
-                        word_id = word_to_id[word]
-                        embedding[word_id] = list(map(float, line[-embed_size:]))
-                    except KeyError:  # pretrained has more vocab than corpus
-                        continue
-                        # out_of_vocabulary.add(word)
+    # @staticmethod
+    # def convert_word_ids(
+    #         corpus: List[int],
+    #         corpus_id_to_word: Dict[int, str],
+    #         pretrained_word_to_id: Dict[str, int],
+    #         OOV_token: Optional[str] = None
+    #         ) -> List[int]:
+    #     """
+    #     Convert word_ids constructed from preprocessed corpus
+    #     to the word_ids used by pretrained_embedding.
+    #     """
+    #     converted = []
+    #     out_of_vocabulary = set()
+    #     for corpus_word_id in tqdm(corpus, desc='Converting word_ids'):
+    #         word = corpus_id_to_word[corpus_word_id]
+    #         try:
+    #             converted.append(pretrained_word_to_id[word])
+    #         except KeyError:
+    #             out_of_vocabulary.add(word)
+    #             if OOV_token:
+    #                 converted.append(pretrained_word_to_id[OOV_token])
 
-                assert len(word_to_id) == len(embedding)
-
-                # if out_of_vocabulary:
-                #     print('The following words in the corpus are out of '
-                #           'the vocabulary of the given pretrained embedding.')
-                #     print(out_of_vocabulary)
-                #     raise KeyError
-                embedding = [embedding[word_id]
-                             for word_id in range(len(word_to_id))]
-                return torch.tensor(embedding)
-
-
-    @staticmethod
-    def convert_word_ids(
-            corpus: List[int],
-            corpus_id_to_word: Dict[int, str],
-            pretrained_word_to_id: Dict[str, int],
-            OOV_token: Optional[str] = None
-            ) -> List[int]:
-        """
-        Convert word_ids constructed from preprocessed corpus
-        to the word_ids used by pretrained_embedding.
-        """
-        converted = []
-        out_of_vocabulary = set()
-        for corpus_word_id in tqdm(corpus, desc='Converting word_ids'):
-            word = corpus_id_to_word[corpus_word_id]
-            try:
-                converted.append(pretrained_word_to_id[word])
-            except KeyError:
-                out_of_vocabulary.add(word)
-                if OOV_token:
-                    converted.append(pretrained_word_to_id[OOV_token])
-
-        if out_of_vocabulary:
-            print('The following words in the corpus are out of'
-                  'the vocabulary of the given pretrained embedding.')
-            print(out_of_vocabulary)
-            if not OOV_token:
-                raise KeyError
-        return converted
+    #     if out_of_vocabulary:
+    #         print('The following words in the corpus are out of'
+    #               'the vocabulary of the given pretrained embedding.')
+    #         print(out_of_vocabulary)
+    #         if not OOV_token:
+    #             raise KeyError
+    #     return converted
