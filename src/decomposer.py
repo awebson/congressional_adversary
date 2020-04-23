@@ -59,7 +59,7 @@ class Decomposer(nn.Module):
             ) -> None:
         if config.pretrained_embedding is not None:
             self.embedding = Experiment.load_txt_embedding(
-                config.pretrained_embedding)
+                config.pretrained_embedding, word_to_id)
         else:
             self.embedding = nn.Embedding(len(word_to_id), config.embed_size)
             init_range = 1.0 / config.embed_size
@@ -84,7 +84,7 @@ class Decomposer(nn.Module):
         assert party_grounding is not self.cono_grounding
         party_grounding[combined_freq < 100] = torch.zeros(5, device=config.device)
         partisan_ratios = F.normalize(party_grounding, p=1)
-        num_samples = 100
+        num_samples = 200
         _, self.socialist_ids = partisan_ratios[:, 0].topk(num_samples)
         _, self.liberal_ids = partisan_ratios[:, 1].topk(num_samples)
         _, self.neutral_ids = partisan_ratios[:, 2].topk(num_samples)
@@ -608,8 +608,8 @@ class DecomposerConfig():
     # encoder_update_cycle: int = 1  # per batch
     # decoder_update_cycle: int = 1  # per batch
 
-    pretrained_embedding: Optional[str] = None  # NOTE
-    # pretrained_embedding: Optional[str] = '../data/pretrained_word2vec/for_real.txt'
+    # pretrained_embedding: Optional[str] = None
+    pretrained_embedding: Optional[str] = '../data/pretrained_word2vec/news_triad.txt'
     freeze_embedding: bool = False  # NOTE
     skip_gram_window_radius: int = 5
     num_negative_samples: int = 10

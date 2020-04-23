@@ -11,7 +11,6 @@ from preprocessing_news.S1_tokenize import Sentence, LabeledDoc
 
 random.seed(42)
 
-
 def build_vocabulary(
         frequency: Counter
         ) -> Tuple[
@@ -99,7 +98,7 @@ def main(
     # Lowercase, discard punctuations, replace numbers
     number = re.compile(r'\d')
     starts_with_letter = re.compile(r"^\w")
-    nonalphanumeric = re.compile(r"[^a-zA-Z0-9_.\-'’]")  # allow in-word dash or period
+    # nonalphanumeric = re.compile(r"[^a-zA-Z0-9_.\-'’]")  # allow in-word dash or period
     # mystery_ellipsis = re.compile(r"[.]+2")
     norm_freq: Counter[str] = Counter()
     for doc in tqdm(corpus, desc='Normalize tokens'):
@@ -123,14 +122,13 @@ def main(
           file=preview)
 
     # Filter counter with MIN_FREQ and count UNK
-    new_freq: Counter[str] = Counter()
+    UNK_filtered_freq: Counter[str] = Counter()
     for key, val in norm_freq.items():
         if val >= min_frequency:
-            new_freq[key] = val
+            UNK_filtered_freq[key] = val
         else:
-            new_freq['<UNK>'] += val
-    norm_freq = new_freq
-    print(f'Filtered vocabulary size = {len(norm_freq):,}', file=preview)
+            UNK_filtered_freq['<UNK>'] += val
+    print(f'Filtered vocabulary size = {len(UNK_filtered_freq):,}', file=preview)
 
     # Count connotation grounding prior to subsampling trick
     numericalize_cono = {
@@ -143,12 +141,12 @@ def main(
     #     lambda: [0, 0, 0, 0, 0])  # unfortunately unpicklable
     cono_grounding: Dict[str, List] = {'<PAD>': [0, 0, 0, 0, 0]}
     # Subsampling & filter by mix/max sentence length
-    keep_prob = subsampling(norm_freq, subsample_heuristic, subsample_threshold)
+    keep_prob = subsampling(UNK_filtered_freq, subsample_heuristic, subsample_threshold)
     final_freq: Counter[str] = Counter()
     for doc in tqdm(corpus, desc='Ground connotation & subsample frequent words'):
         for sent in doc.sentences:
             for token in sent.normalized_tokens:
-                if token not in norm_freq:
+                if token not in UNK_filtered_freq:
                     token = '<UNK>'
                 if random.random() < keep_prob[token]:
                     sent.subsampled_tokens.append(token)
@@ -162,7 +160,7 @@ def main(
                 else:  # NOTE truncate long sentences
                     sent.subsampled_tokens = sent.subsampled_tokens[:max_sent_len]
                     final_freq.update(sent.subsampled_tokens)
-            else:
+            else:  # discard short sentences
                 sent.subsampled_tokens = None
             if conserve_RAM:
                 del sent.normalized_tokens
@@ -232,11 +230,11 @@ def main(
 if __name__ == '__main__':
     main(
         in_dir=Path('../../data/interim/news'),
-        out_dir=Path('../../data/processed/news/toy'),
+        out_dir=Path('../../data/processed/news/'),
         min_frequency=10,
         min_sent_len=5,
         max_sent_len=20,
-        num_corpus_chunks=3,
+        num_corpus_chunks=33,
         subsample_heuristic='paper',
         subsample_threshold=1e-5,
-        conserve_RAM=False)
+        conserve_RAM=True)
