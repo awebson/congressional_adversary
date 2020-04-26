@@ -12,8 +12,8 @@ from decomposer import Decomposer, DecomposerConfig
 from recomposer import Recomposer, RecomposerConfig
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-pretrained_path = PROJECT_ROOT / 'results/pretrained subset/init.pt'
-# pretrained_path = PROJECT_ROOT / 'results/pretrained superset/init.pt'
+# pretrained_path = PROJECT_ROOT / 'results/bill topic/pretrained subset/init.pt'
+pretrained_path = PROJECT_ROOT / 'results/bill topic/pretrained superset/init.pt'
 print(f'Loading vocabulary from {pretrained_path}')
 PE = torch.load(pretrained_path)['model']
 # PE_embed = PE.embedding.weight.detach().cpu().numpy()
@@ -63,16 +63,6 @@ def load_recomposer(
     D_embed = model.deno_decomposer.embedding.weight.detach().numpy()
     C_embed = model.cono_decomposer.embedding.weight.detach().numpy()
     return D_embed, C_embed
-
-
-# def temp_config_parser(path: str) -> Dict[str, str]:
-#     config = {}
-#     with open(path) as file:
-#         for line in file:
-#             if '=' in line:
-#                 line = line.split('=')
-#                 config[line[0].strip()] = line[1].strip()
-#     return config
 
 
 def lazy_load_recomposers(

@@ -82,7 +82,7 @@ class Decomposer(nn.Module):
         party_grounding = self.cono_grounding.clone()
         combined_freq = party_grounding.sum(dim=1)
         assert party_grounding is not self.cono_grounding
-        party_grounding[combined_freq < 100] = torch.zeros(5, device=config.device)
+        party_grounding[combined_freq < 500] = torch.zeros(5, device=config.device)
         partisan_ratios = F.normalize(party_grounding, p=1)
         num_samples = 200
         _, self.socialist_ids = partisan_ratios[:, 0].topk(num_samples)
@@ -90,9 +90,11 @@ class Decomposer(nn.Module):
         _, self.neutral_ids = partisan_ratios[:, 2].topk(num_samples)
         _, self.conservative_ids = partisan_ratios[:, 3].topk(num_samples)
         _, self.chauvinist_ids = partisan_ratios[:, 4].topk(num_samples)
+        for i in self.conservative_ids:  # For debugging
+            print(self.id_to_word[i.item()], self.cono_grounding[i], partisan_ratios[i])
 
-        # for i in self.socialist_ids:  # For debugging
-        #     print(self.id_to_word[i.item()], self.cono_grounding[i], partisan_ratios[i])
+        # import IPython
+        # IPython.embed()
 
         # # Initailize denotation grounding
         # all_vocab_ids = torch.arange(self.embedding.num_embeddings)
@@ -355,6 +357,7 @@ class LabeledDocuments(torch.utils.data.IterableDataset):
         self.numericalize_cono = config.numericalize_cono
 
         corpus_path = os.path.join(config.input_dir, 'train.pickle')
+        print(f'Loading {corpus_path}', flush=True)
         with open(corpus_path, 'rb') as corpus_file:
             preprocessed = pickle.load(corpus_file)
         self.word_to_id: Dict[str, int] = preprocessed['word_to_id']
@@ -587,8 +590,8 @@ class DecomposerExperiment(Experiment):
 @dataclass
 class DecomposerConfig():
     # Essential
-    input_dir: str = '../data/processed/news'
-    output_dir: str = '../results/triad'
+    input_dir: str = '../data/processed/news/validation'
+    output_dir: str = '../results/debug'
     device: torch.device = torch.device('cuda')
     debug_subset_corpus: Optional[int] = None
     # dev_holdout: int = 5_000
@@ -608,8 +611,8 @@ class DecomposerConfig():
     # encoder_update_cycle: int = 1  # per batch
     # decoder_update_cycle: int = 1  # per batch
 
-    # pretrained_embedding: Optional[str] = None
-    pretrained_embedding: Optional[str] = '../data/pretrained_word2vec/news_triad.txt'
+    pretrained_embedding: Optional[str] = None
+    # pretrained_embedding: Optional[str] = '../data/pretrained_word2vec/news_triad.txt'
     freeze_embedding: bool = False  # NOTE
     skip_gram_window_radius: int = 5
     num_negative_samples: int = 10

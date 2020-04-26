@@ -204,7 +204,8 @@ class Experiment(ABC):
     @staticmethod
     def load_txt_embedding(
             in_path: str,
-            word_to_id: Dict[str, int]
+            word_to_id: Dict[str, int],
+            verbose: bool = True
             ) -> torch.Tensor:
         """
         Load pretrained emebdding from a plain text file, where the first line
@@ -214,30 +215,35 @@ class Experiment(ABC):
         the word ids of the pretrained matrix will be converted to match that
         of the corpus.
         """
+        real_vocab_size = len(word_to_id)
         print(f'Loading pretrained embedding from {in_path}', flush=True)
+        pretrained: Dict[str, List[float]] = {}
         with open(in_path) as file:
-            vocab_size, embed_size = map(int, file.readline().split())
-            print(f'vocab_size = {vocab_size:,}, embed_size = {embed_size}')
-            embedding: Dict[int, List[float]] = {}
-            out_of_vocabulary: Set[str] = set()
+            PE_vocab_size, embed_size = file.readline().split()
+            embed_size = int(embed_size)
+            print(f'Pretrained vocab size = {PE_vocab_size}, embed dim = {embed_size}')
             for line in file:
                 line = line.split()  # type: ignore
                 word = line[0]
-                try:
-                    word_id = word_to_id[word]
-                    embedding[word_id] = list(map(float, line[-embed_size:]))
-                except KeyError:  # pretrained has more vocab than corpus
-                    continue
-                    out_of_vocabulary.add(word)
-            assert len(word_to_id) == len(embedding)
-            if out_of_vocabulary:
-                print('The following words in the corpus are out of '
-                      'the vocabulary of the given pretrained embedding.')
-                print(out_of_vocabulary)
-                # raise KeyError
-            embedding = [
-                embedding[word_id]
-                for word_id in range(len(word_to_id))]
+                pretrained[word] = list(map(float, line[-embed_size:]))
+        # if len(pretrained) < real_vocab_size:  # len(pretrained) != PE_vocab_size
+        #     print(f'Note: pretrained vocab size = {len(pretrained):,}'
+        #           f' < {real_vocab_size:,} = training corpus vocab size')
+
+        out_of_vocabulary: Set[str] = set()
+        embedding = torch.zeros(real_vocab_size, embed_size, dtype=torch.float32)
+        init_range = 1.0 / embed_size  # initialize matrix for OOV rows
+        nn.init.uniform_(embedding, -init_range, init_range)
+        for word, word_id in word_to_id.items():
+            try:
+                vector = pretrained[word]
+                embedding[word_id] = torch.tensor(vector)
+            except KeyError:
+                out_of_vocabulary.add(word)
+        if out_of_vocabulary:
+            print('The following words in the training corpus are out of '
+                  'the vocabulary of the given pretrained embedding: ')
+            print(out_of_vocabulary)
         return nn.Embedding.from_pretrained(torch.tensor(embedding))
         # Unsafe
         # if word_to_id is None:
