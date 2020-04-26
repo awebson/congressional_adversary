@@ -2,14 +2,14 @@ import xml.etree.ElementTree as ET
 import pickle
 from pathlib import Path
 from dataclasses import dataclass, field
-from typing import Tuple, List, Iterable, Optional
+from typing import Set, Tuple, List, Iterable, Optional
 
 import stanza
 from tqdm import tqdm
 
-# Sentence = stanza.models.common.doc.Sentence
-# Token = stanza.models.common.doc.Token
-# Span = stanza.models.common.doc.Span
+EXCLUDE_NER_TYPES = {
+    'DATE', 'ORDINAL', 'CARDINAL', 'PERCENT', 'MONEY', 'TIME', 'QUANTITY'}
+
 
 @dataclass
 class Sentence():
@@ -33,8 +33,6 @@ class LabeledDoc():
     sentences: Optional[List[Sentence]] = None
 
 
-EXCLUDE = {'DATE', 'ORDINAL', 'CARDINAL', 'PERCENT', 'MONEY', 'TIME', 'QUANTITY'}
-
 def underscore_NER(tokens):
     new_seq = []
     for index, token in enumerate(tokens):
@@ -42,7 +40,7 @@ def underscore_NER(tokens):
             new_seq.append(token.text)
             continue
         prefix, ent_type = token.ner.split('-')
-        if ent_type in EXCLUDE:
+        if ent_type in EXCLUDE_NER_TYPES:
             new_seq.append('<NUM>')
         elif prefix == 'S':  # single-token length
             new_seq.append(token.text)
@@ -97,6 +95,8 @@ def main() -> None:
 
     print('Parsing XML...')
     data = []
+    existed: Set[str] = set()
+    duplicate_count = 0
     for article in corpus.getroot():
         attr = article.attrib
         text = []
@@ -105,6 +105,11 @@ def main() -> None:
             if para:  # not whitespace
                 text.append(para)
         text = ' '.join(text)
+        if text in existed:
+            duplicate_count += 1
+            continue
+        else:
+            existed.add(text)
 
         if text:  # nonempty
             label = labels[attr['id']]
@@ -118,7 +123,9 @@ def main() -> None:
                 text=text))
         else:
             print('Missing:', article.attrib)
-    print(f'Number of nonempty articles = {len(data):,}')
+    print(f'Number of duplicated articles = {duplicate_count:,}')
+    print(f'Number of nonduplicate articles = {len(data):,}')
+    del existed
 
     stanza_processor = stanza.Pipeline(
         lang='en', processors='tokenize,ner',
