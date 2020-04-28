@@ -3,7 +3,7 @@ from pathlib import Path
 
 from decomposer import Decomposer, DecomposerConfig
 from recomposer import Recomposer, RecomposerConfig
-from helpers import load, load_recomposer, PE
+# from helpers import load, load_recomposer, PE
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
@@ -27,9 +27,12 @@ args = parser.parse_args()
 #         embed = D_embed
 # id_to_word = PE.id_to_word
 
+args.in_file = '../../results/SGNS deno/pretrained super large/init.pt'
+
 import torch
 model = torch.load(Path(args.in_file), map_location='cpu')['model']
-embed = model.deno_decomposer.embedding.weight.detach().cpu().numpy()
+embed = model.embedding.weight.detach().cpu().numpy()
+# embed = model.deno_decomposer.embedding.weight.detach().cpu().numpy()
 id_to_word = model.id_to_word
 
 with open(args.out_file, 'w') as out_file:

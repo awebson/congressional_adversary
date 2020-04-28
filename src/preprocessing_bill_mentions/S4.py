@@ -19,6 +19,7 @@ procedural_words = {
 stop_words = set(stopwords.words('english')).union(procedural_words)
 
 sessions = range(97, 112)  # scraped up to 93
+NUM_CONTEXT_SPEECHES = 0
 MIN_NUM_MENTIONS = 3
 FIXED_SENT_LEN = 15
 MIN_SENT_LEN = 5
@@ -68,9 +69,7 @@ def process_sentences(session: int) -> Tuple[List[Sentence], List[Sentence]]:
             continue
 
         per_session_mention += 1
-        # NOTE hardcoded context_size
-        # for i in range(speech_index - 2, speech_index + 8):
-        for i in range(speech_index + 1, speech_index + 6):
+        for i in range(speech_index + 1, speech_index + 1 + NUM_CONTEXT_SPEECHES):
             try:
                 speeches[i].bill = speech.bill
             except IndexError:

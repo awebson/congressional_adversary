@@ -12,8 +12,9 @@ from decomposer import Decomposer, DecomposerConfig
 from recomposer import Recomposer, RecomposerConfig
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-# pretrained_path = PROJECT_ROOT / 'results/bill topic/pretrained subset/init.pt'
-pretrained_path = PROJECT_ROOT / 'results/bill topic/pretrained superset/init.pt'
+pretrained_path = PROJECT_ROOT / 'results/bill topic/pretrained subset/init.pt'
+# pretrained_path = PROJECT_ROOT / 'results/bill topic/pretrained superset/init.pt'
+# pretrained_path = PROJECT_ROOT / 'results/SGNS deno/pretrained super large/init.pt'
 print(f'Loading vocabulary from {pretrained_path}')
 PE = torch.load(pretrained_path)['model']
 # PE_embed = PE.embedding.weight.detach().cpu().numpy()

@@ -231,7 +231,7 @@ if __name__ == '__main__':
     main(
         in_dir=Path('../../data/interim/news/validation'),
         out_dir=Path('../../data/processed/news/validation'),
-        min_frequency=10,
+        min_frequency=15,
         min_sent_len=5,
         max_sent_len=20,
         num_corpus_chunks=100,

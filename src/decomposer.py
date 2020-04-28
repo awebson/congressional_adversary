@@ -90,8 +90,8 @@ class Decomposer(nn.Module):
         _, self.neutral_ids = partisan_ratios[:, 2].topk(num_samples)
         _, self.conservative_ids = partisan_ratios[:, 3].topk(num_samples)
         _, self.chauvinist_ids = partisan_ratios[:, 4].topk(num_samples)
-        for i in self.conservative_ids:  # For debugging
-            print(self.id_to_word[i.item()], self.cono_grounding[i], partisan_ratios[i])
+        # for i in self.conservative_ids:  # For debugging
+        #     print(self.id_to_word[i.item()], self.cono_grounding[i], partisan_ratios[i])
 
         # import IPython
         # IPython.embed()
@@ -591,7 +591,7 @@ class DecomposerExperiment(Experiment):
 class DecomposerConfig():
     # Essential
     input_dir: str = '../data/processed/news/validation'
-    output_dir: str = '../results/debug'
+    output_dir: str = '../results/news/validation'
     device: torch.device = torch.device('cuda')
     debug_subset_corpus: Optional[int] = None
     # dev_holdout: int = 5_000
@@ -607,12 +607,12 @@ class DecomposerConfig():
     dropout_p: float = 0
     batch_size: int = 128
     embed_size: int = 300
-    num_epochs: int = 20
+    num_epochs: int = 15
     # encoder_update_cycle: int = 1  # per batch
     # decoder_update_cycle: int = 1  # per batch
 
-    pretrained_embedding: Optional[str] = None
-    # pretrained_embedding: Optional[str] = '../data/pretrained_word2vec/news_triad.txt'
+    # pretrained_embedding: Optional[str] = None
+    pretrained_embedding: Optional[str] = '../data/pretrained_word2vec/news_validation.txt'
     freeze_embedding: bool = False  # NOTE
     skip_gram_window_radius: int = 5
     num_negative_samples: int = 10
