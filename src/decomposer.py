@@ -82,7 +82,7 @@ class Decomposer(nn.Module):
         party_grounding = self.cono_grounding.clone()
         combined_freq = party_grounding.sum(dim=1)
         assert party_grounding is not self.cono_grounding
-        party_grounding[combined_freq < 500] = torch.zeros(5, device=config.device)
+        party_grounding[combined_freq < 100] = torch.zeros(5, device=config.device)
         partisan_ratios = F.normalize(party_grounding, p=1)
         num_samples = 200
         _, self.socialist_ids = partisan_ratios[:, 0].topk(num_samples)
@@ -90,7 +90,7 @@ class Decomposer(nn.Module):
         _, self.neutral_ids = partisan_ratios[:, 2].topk(num_samples)
         _, self.conservative_ids = partisan_ratios[:, 3].topk(num_samples)
         _, self.chauvinist_ids = partisan_ratios[:, 4].topk(num_samples)
-        # for i in self.conservative_ids:  # For debugging
+        # for i in self.socialist_ids:  # For debugging
         #     print(self.id_to_word[i.item()], self.cono_grounding[i], partisan_ratios[i])
 
         # import IPython
@@ -505,9 +505,9 @@ class DecomposerExperiment(Experiment):
     def train(self) -> None:
         config = self.config
         model = self.model
-        # # For debugging
-        # self.save_everything(
-        #     os.path.join(self.config.output_dir, f'init.pt'))
+        # For debugging
+        self.save_everything(
+            os.path.join(self.config.output_dir, f'init.pt'))
         # raise SystemExit
 
         if not config.print_stats:
@@ -590,7 +590,7 @@ class DecomposerExperiment(Experiment):
 @dataclass
 class DecomposerConfig():
     # Essential
-    input_dir: str = '../data/processed/news/validation'
+    input_dir: str = '../data/ready/validation half'
     output_dir: str = '../results/news/validation'
     device: torch.device = torch.device('cuda')
     debug_subset_corpus: Optional[int] = None

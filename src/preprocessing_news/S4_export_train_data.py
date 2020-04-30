@@ -74,7 +74,6 @@ def subsampling(
 def main(
         in_dir: Path,
         out_dir: Path,
-        num_corpus_chunks: int,
         min_frequency: int,
         min_sent_len: int,
         max_sent_len: int,
@@ -82,11 +81,6 @@ def main(
         subsample_threshold: float,
         conserve_RAM: bool = True  # turn off to inspect intermediate results
         ) -> None:
-    corpus: List[LabeledDoc] = []
-    for part_index in tqdm(range(num_corpus_chunks), desc='Loading cache'):
-        with open(in_dir / f'tokenized_{part_index}.pickle', 'rb') as in_file:
-            corpus += pickle.load(in_file)
-
     Path.mkdir(out_dir, parents=True, exist_ok=True)
     preview = open(out_dir / f'preview.txt', 'w')
     print(f'Min word frequency = {min_frequency}', file=preview)
@@ -95,30 +89,17 @@ def main(
     print(f'SGNS subsample heuristic= {subsample_heuristic}', file=preview)
     print(f'SGNS subsample threshold = {subsample_threshold}', file=preview)
 
-    # Lowercase, discard punctuations, replace numbers
-    number = re.compile(r'\d')
-    starts_with_letter = re.compile(r"^\w")
-    # nonalphanumeric = re.compile(r"[^a-zA-Z0-9_.\-'’]")  # allow in-word dash or period
-    # mystery_ellipsis = re.compile(r"[.]+2")
+    corpus: List[LabeledDoc] = []
+    print('Loading multi-word expression underscored pickle...')
+    with open(in_dir / f'MWE_underscored.pickle', 'rb') as in_file:
+        corpus += pickle.load(in_file)
+
     norm_freq: Counter[str] = Counter()
-    for doc in tqdm(corpus, desc='Normalize tokens'):
+    for doc in tqdm(corpus, desc='Counting UNKs'):
         for sent in doc.sentences:
-            for token in sent.underscored_tokens:  # NOTE cf. .tokens
-                if not starts_with_letter.search(token):
-                    continue
-                # if nonalphanumeric.search(token):
-                #     continue
-                if number.search(token):
-                    norm_token = '<NUM>'
-                else:
-                    norm_token = token.lower()
-                sent.normalized_tokens.append(norm_token)
-                norm_freq[norm_token] += 1
-            if conserve_RAM:
-                del sent.tokens
+            norm_freq.update(sent.underscored_tokens)
     print(f'Noramlized vocabulary size = {len(norm_freq):,}', file=preview)
-    print(f'Presampled number of words = '
-          f'{sum(freq for freq in norm_freq.values()):,}',
+    print(f'Number of words = {sum(freq for freq in norm_freq.values()):,}',
           file=preview)
 
     # Filter counter with MIN_FREQ and count UNK
@@ -145,7 +126,7 @@ def main(
     final_freq: Counter[str] = Counter()
     for doc in tqdm(corpus, desc='Ground connotation & subsample frequent words'):
         for sent in doc.sentences:
-            for token in sent.normalized_tokens:
+            for token in sent.underscored_tokens:
                 if token not in UNK_filtered_freq:
                     token = '<UNK>'
                 if random.random() < keep_prob[token]:
@@ -164,6 +145,7 @@ def main(
                 sent.subsampled_tokens = None
             if conserve_RAM:
                 del sent.normalized_tokens
+                del sent.underscored_tokens
         # End looping sentences
         doc.sentences = [
             sent for sent in doc.sentences
@@ -230,11 +212,10 @@ def main(
 if __name__ == '__main__':
     main(
         in_dir=Path('../../data/interim/news/validation'),
-        out_dir=Path('../../data/processed/news/validation'),
-        min_frequency=15,
+        out_dir=Path('../../data/ready/validation half'),
+        min_frequency=30,
         min_sent_len=5,
         max_sent_len=20,
-        num_corpus_chunks=100,
         subsample_heuristic='paper',
         subsample_threshold=1e-5,
         conserve_RAM=True)

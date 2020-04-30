@@ -1,4 +1,3 @@
-import re
 import pickle
 import random
 from pathlib import Path
@@ -13,40 +12,26 @@ random.seed(42)
 def main(
         in_dir: Path,
         out_dir: Path,
-        num_corpus_chunks: int,
         min_frequency: int,
         min_sent_len: int,
         max_sent_len: int,
         conserve_RAM: bool = False
         ) -> None:
-    corpus: List[LabeledDoc] = []
-    for part_index in tqdm(range(num_corpus_chunks), desc='Loading cache'):
-        with open(in_dir / f'tokenized_{part_index}.pickle', 'rb') as in_file:
-            corpus += pickle.load(in_file)
-
     Path.mkdir(out_dir, parents=True, exist_ok=True)
     preview = open(out_dir / f'preview.txt', 'w')
     print(f'Min word frequency = {min_frequency}', file=preview)
     print(f'Min sentence length = {min_sent_len}', file=preview)
     print(f'Max sentence length = {max_sent_len}', file=preview)
 
-    # Lowercase, discard punctuations, replace numbers
-    number = re.compile(r'\d')
-    starts_with_letter = re.compile(r"^\w")
+    corpus: List[LabeledDoc] = []
+    print('Loading multi-word expression underscored pickle...')
+    with open(in_dir / f'MWE_underscored.pickle', 'rb') as in_file:
+        corpus += pickle.load(in_file)
+
     norm_freq: Counter[str] = Counter()
-    for doc in tqdm(corpus, desc='Normalize tokens'):
+    for doc in tqdm(corpus, desc='Counting UNKs'):
         for sent in doc.sentences:
-            for token in sent.underscored_tokens:
-                if not starts_with_letter.search(token):
-                    continue
-                if number.search(token):
-                    norm_token = '<NUM>'
-                else:
-                    norm_token = token.lower()
-                sent.normalized_tokens.append(norm_token)
-                norm_freq[norm_token] += 1
-            if conserve_RAM:
-                del sent.tokens
+            norm_freq.update(sent.underscored_tokens)
     print(f'Noramlized vocabulary size = {len(norm_freq):,}', file=preview)
     print(f'Number of words = {sum(freq for freq in norm_freq.values()):,}',
           file=preview)
@@ -65,7 +50,7 @@ def main(
         for sent in doc.sentences:
             sent.subsampled_tokens = [
                 token if token in UNK_filtered_freq else '<UNK>'
-                for token in sent.normalized_tokens]
+                for token in sent.underscored_tokens]
             if len(sent.subsampled_tokens) >= min_sent_len:
                 if len(sent.subsampled_tokens) <= max_sent_len:
                     final_freq.update(sent.subsampled_tokens)
@@ -76,6 +61,7 @@ def main(
                 sent.subsampled_tokens = None
             if conserve_RAM:
                 del sent.normalized_tokens
+                del sent.underscored_tokens
         # End looping sentences
         doc.sentences = [
             sent for sent in doc.sentences
@@ -89,7 +75,7 @@ def main(
           file=preview)
 
     # random.shuffle(corpus)
-    with open(out_dir / 'train.txt', 'w') as train_file:
+    with open(out_dir / 'plain.txt', 'w') as train_file:
         for doc in tqdm(corpus, desc=f'Writing to {out_dir}'):
             for sent in doc.sentences:
                 print(' '.join(sent.subsampled_tokens), file=train_file)
@@ -116,8 +102,7 @@ def main(
 if __name__ == '__main__':
     main(
         in_dir=Path('../../data/interim/news/validation'),
-        out_dir=Path('../../data/processed/news/plain_validation'),
-        min_frequency=15,
+        out_dir=Path('../../data/ready/validation/plain'),
+        min_frequency=30,
         min_sent_len=5,
-        max_sent_len=20,
-        num_corpus_chunks=100)
+        max_sent_len=20)
