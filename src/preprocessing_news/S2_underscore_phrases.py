@@ -56,8 +56,8 @@ def main(
             UNK_filtered_freq[key] = val
         else:
             UNK_filtered_freq['<UNK>'] += val
-    print(f'Number of noramlized unigrams = {len(UNK_filtered_freq):,}')
-    print(f'Number of noramlized unigrams = {len(UNK_filtered_freq):,}', file=preview)
+    print(f'Number of filtered unigrams = {len(UNK_filtered_freq):,}')
+    print(f'Number of filtered unigrams = {len(UNK_filtered_freq):,}', file=preview)
 
 
     special_tokens = {'<UNK>', '<NUM>', "n't", "n’t"}
@@ -77,27 +77,26 @@ def main(
             bigram_str = ' '.join(bigram)
             bigram_file.write(f'{absolute_freq:.0f}\t{bigram_str}\n')
 
-    print('Finding trigrams...')
-    trigram_finder = TrigramCollocationFinder.from_words(all_norm_tokens)
-    if conserve_RAM:
-        del all_norm_tokens
-    trigram_finder.apply_freq_filter(min_frequency)
-    trigram_finder.apply_word_filter(lambda word: word in stop_words)
-    # trigram_finder.apply_ngram_filter(
-    #     lambda w1, w2, w3: (w1 in stop_words) or (w3 in stop_words) or (w2 in special_tokens))
-    trigrams = trigram_finder.score_ngrams(TrigramAssocMeasures().raw_freq)
+    # print('Finding trigrams...')
+    # trigram_finder = TrigramCollocationFinder.from_words(all_norm_tokens)
+    # trigram_finder.apply_freq_filter(min_frequency)
+    # trigram_finder.apply_word_filter(lambda word: word in stop_words)
+    # # trigram_finder.apply_ngram_filter(
+    # #     lambda w1, w2, w3: (w1 in stop_words) or (w3 in stop_words) or (w2 in special_tokens))
+    # trigrams = trigram_finder.score_ngrams(TrigramAssocMeasures().raw_freq)
+    # print(f'Number of filtered trigrams = {len(trigrams):,}')
+    # print(f'Number of filtered trigrams = {len(trigrams):,}', file=preview)
+    # with open(out_dir / 'trigrams.txt', 'w') as trigram_file:
+    #     for trigram, relative_freq in trigrams:
+    #         absolute_freq = relative_freq * num_tokens
+    #         trigram_str = ' '.join(trigram)
+    #         trigram_file.write(f'{absolute_freq:.0f}\t{trigram_str}\n')
     del all_norm_tokens
-    print(f'Number of filtered trigrams = {len(trigrams):,}')
-    print(f'Number of filtered trigrams = {len(trigrams):,}', file=preview)
-    with open(out_dir / 'trigrams.txt', 'w') as trigram_file:
-        for trigram, relative_freq in trigrams:
-            absolute_freq = relative_freq * num_tokens
-            trigram_str = ' '.join(trigram)
-            trigram_file.write(f'{absolute_freq:.0f}\t{trigram_str}\n')
 
     # Multi-Word Expression tokenize to underscored
-    underscorer = MWETokenizer(
-        [tri for tri, _ in trigrams] + [bi for bi, _ in bigrams])
+    underscorer = MWETokenizer([bi for bi, _ in bigrams])  # maybe add affordable care act
+    # underscorer = MWETokenizer(
+    #     [tri for tri, _ in trigrams] + [bi for bi, _ in bigrams])
     vocab: Counter[str] = Counter()
     for doc in tqdm(corpus, desc='Underscoring multi-phrase expressions'):
         for sent in doc.sentences:
@@ -121,5 +120,5 @@ if __name__ == '__main__':
         # in_dir=Path('../../data/interim/news/train'),
         # out_dir=Path('../../data/interim/news/train'),
         min_frequency=30,
-        num_corpus_chunks=50,
+        num_corpus_chunks=100,
         conserve_RAM=False)

@@ -144,6 +144,7 @@ def main(
             else:  # discard short sentences
                 sent.subsampled_tokens = None
             if conserve_RAM:
+                del sent.tokens
                 del sent.normalized_tokens
                 del sent.underscored_tokens
         # End looping sentences
@@ -211,8 +212,10 @@ def main(
 
 if __name__ == '__main__':
     main(
+        # in_dir=Path('../../data/interim/news/train'),
+        # out_dir=Path('../../data/ready/train'),
         in_dir=Path('../../data/interim/news/validation'),
-        out_dir=Path('../../data/ready/validation half'),
+        out_dir=Path('../../data/ready/validation'),
         min_frequency=30,
         min_sent_len=5,
         max_sent_len=20,

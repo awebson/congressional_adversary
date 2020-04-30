@@ -2,6 +2,7 @@ import argparse
 import pickle
 import random
 import os
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Set, Tuple, List, Dict, Iterable, Optional
 
@@ -505,10 +506,14 @@ class DecomposerExperiment(Experiment):
     def train(self) -> None:
         config = self.config
         model = self.model
-        # For debugging
-        self.save_everything(
-            os.path.join(self.config.output_dir, f'init.pt'))
+        # # For debugging
+        # self.save_everything(
+        #     os.path.join(self.config.output_dir, f'init.pt'))
         # raise SystemExit
+        if config.auto_save_intra_epoch:
+            save_per_batch = len(self.dataloader) // config.auto_save_intra_epoch
+        else:
+            save_per_batch = None
 
         if not config.print_stats:
             epoch_pbar = tqdm(range(1, config.num_epochs + 1), desc=config.output_dir)
@@ -567,6 +572,9 @@ class DecomposerExperiment(Experiment):
                         'Intrinsic Evaluation/Chauvinist Cono Divergence': model.homogeneity(model.chauvinist_ids),
                         # 'Recomposer/nonpolitical_word_sim_cf_pretrained': recomp_check}
                     })
+                if save_per_batch and batch_index % save_per_batch == 0:
+                    self.save_everything(self.config.output_dir / f'epoch{epoch_index}.pt')
+
                 self.tb_global_step += 1
             # End Batches
             self.print_timestamp(epoch_index)
@@ -590,8 +598,10 @@ class DecomposerExperiment(Experiment):
 @dataclass
 class DecomposerConfig():
     # Essential
-    input_dir: str = '../data/ready/validation half'
-    output_dir: str = '../results/news/validation'
+    # input_dir: str = '../data/ready/train half'
+    # output_dir: str = '../results/news/train'
+    input_dir: Path = Path('../data/ready/validation')
+    output_dir: Path = Path('../results/news/validation')
     device: torch.device = torch.device('cuda')
     debug_subset_corpus: Optional[int] = None
     # dev_holdout: int = 5_000
@@ -612,13 +622,13 @@ class DecomposerConfig():
     # decoder_update_cycle: int = 1  # per batch
 
     # pretrained_embedding: Optional[str] = None
-    pretrained_embedding: Optional[str] = '../data/pretrained_word2vec/news_validation.txt'
+    pretrained_embedding: Optional[Path] = Path('../data/pretrained_word2vec/news_validation.txt')
     freeze_embedding: bool = False  # NOTE
     skip_gram_window_radius: int = 5
     num_negative_samples: int = 10
     optimizer: torch.optim.Optimizer = torch.optim.Adam
     # optimizer: torch.optim.Optimizer = torch.optim.SGD
-    learning_rate: float = 1e-4
+    learning_rate: float = 1e-3
     # momentum: float = 0.5
     # lr_scheduler: torch.optim.lr_scheduler._LRScheduler
     # num_prediction_classes: int = 5
@@ -635,14 +645,15 @@ class DecomposerConfig():
     clear_tensorboard_log_in_output_dir: bool = True
     delete_all_exisiting_files_in_output_dir: bool = False
     auto_save_per_epoch: Optional[int] = 1
+    auto_save_intra_epoch: Optional[int] = 10
     auto_save_if_interrupted: bool = False
 
     def __post_init__(self) -> None:
         parser = argparse.ArgumentParser()
         parser.add_argument(
-            '-i', '--input-dir', action='store', type=str)
+            '-i', '--input-dir', action='store', type=Path)
         parser.add_argument(
-            '-o', '--output-dir', action='store', type=str)
+            '-o', '--output-dir', action='store', type=Path)
         parser.add_argument(
             '-gpu', '--device', action='store', type=str)
 
@@ -660,7 +671,7 @@ class DecomposerConfig():
         parser.add_argument(
             '-ep', '--num-epochs', action='store', type=int)
         parser.add_argument(
-            '-pe', '--pretrained-embedding', action='store', type=str)
+            '-pe', '--pretrained-embedding', action='store', type=Path)
         parser.parse_args(namespace=self)
 
         self.numericalize_cono: Dict[str, int] = {

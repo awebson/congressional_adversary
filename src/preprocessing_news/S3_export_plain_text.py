@@ -75,10 +75,18 @@ def main(
           file=preview)
 
     # random.shuffle(corpus)
-    with open(out_dir / 'plain.txt', 'w') as train_file:
+    # Print one sentence per line
+    with open(out_dir / 'train.txt', 'w') as train_file:
         for doc in tqdm(corpus, desc=f'Writing to {out_dir}'):
             for sent in doc.sentences:
                 print(' '.join(sent.subsampled_tokens), file=train_file)
+    # Print one document per line
+    # with open(out_dir / 'train.txt', 'w') as train_file:
+    #     for doc in tqdm(corpus, desc=f'Writing to {out_dir}'):
+    #         for sent in doc.sentences:
+    #             print(' '.join(sent.subsampled_tokens), end=' ', file=train_file)
+    #         train_file.write('\n')
+
 
     # Print out vocabulary & some random sentences for sanity check
     docs = random.sample(corpus, 100)
@@ -101,8 +109,10 @@ def main(
 
 if __name__ == '__main__':
     main(
+        # in_dir=Path('../../data/interim/news/train'),
+        # out_dir=Path('../../data/ready/train plain'),
         in_dir=Path('../../data/interim/news/validation'),
-        out_dir=Path('../../data/ready/validation/plain'),
+        out_dir=Path('../../data/ready/validation plain'),
         min_frequency=30,
         min_sent_len=5,
         max_sent_len=20)
