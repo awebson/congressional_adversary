@@ -1,5 +1,4 @@
-import os
-import pprint
+from pathlib import Path
 from abc import ABC, abstractmethod
 from datetime import datetime
 from dataclasses import dataclass, asdict
@@ -14,12 +13,12 @@ from tqdm import tqdm
 @dataclass
 class ExperimentConfig():
 
-    input_dir: str
-    output_dir: str
+    input_dir: Path
+    output_dir: Path
     num_epochs: int
     device: torch.device
 
-    reload_path: Optional[str]
+    reload_path: Optional[Path]
     clear_tensorboard_log_in_output_dir: bool
     delete_all_exisiting_files_in_output_dir: bool
     auto_save_per_epoch: Optional[int]
@@ -33,36 +32,40 @@ class Experiment(ABC):
         self.custom_stats_format = None
         self.config = config
         self.device = config.device
+        try:
+            from rich.traceback import install
+            install()
+        except ImportError:
+            print('Note: Rich text traceback avaliable by pip install rich')
 
     def __enter__(self) -> 'Experiment':
         config = self.config
-        if not os.path.exists(config.output_dir):
-            os.makedirs(config.output_dir)
+        if not Path.exists(config.output_dir):
+            Path.mkdir(config.output_dir, parents=True)
             print(f'Created new directory {config.output_dir} as output_dir.')
         else:
             print(f'output_dir = {config.output_dir}')
             if config.delete_all_exisiting_files_in_output_dir:
                 import shutil
                 shutil.rmtree(config.output_dir)
-                os.makedirs(config.output_dir)
+                Path.mkdir(config.output_dir, parents=True)
                 print('config.delete_all_exisiting_files_in_output_dir = True')
             elif config.clear_tensorboard_log_in_output_dir:
                 import shutil
-                stuff = os.listdir(config.output_dir)
-                for filename in stuff:
-                    if filename.startswith('TB '):
-                        tb_log_dir = os.path.join(config.output_dir, filename)
+                for file in config.output_dir.iterdir():
+                    if file.name.startswith('TB '):
+                        tb_log_dir = config.output_dir / file.name
                         shutil.rmtree(tb_log_dir)
-                        print(f'Deleted {filename} in output_dir')
+                        print(f'Deleted {file.name} in output_dir')
         timestamp = datetime.now().strftime("%m-%d %H-%M-%S")
-        log_dir = os.path.join(config.output_dir, f'TB {timestamp}')
+        log_dir = config.output_dir / f'TB {timestamp}'
         self.tensorboard = SummaryWriter(log_dir=log_dir)
 
         # config_dict = asdict(self.config)
         # config_dict['_model'] = str(self.model)
         # self.tensorboard.add_text(
         #     'config', pprint.pformat(config_dict), global_step=0)
-        preview_path = os.path.join(config.output_dir, 'config.txt')
+        preview_path = config.output_dir / 'config.txt'
         with open(preview_path, 'w') as preview_file:
             # pprint.pprint(config_dict, preview_file)
             if hasattr(self, 'model'):
@@ -76,8 +79,7 @@ class Experiment(ABC):
         if exception_type is not None:
             print(f'Experiment interrupted.')
             if self.config.auto_save_if_interrupted:
-                self.save_everything(
-                    os.path.join(self.config.output_dir, f'interrupted.pt'))
+                self.save_everything(self.config.output_dir / f'interrupted.pt')
         else:
             print('\n✅ Training Complete')
         self.tensorboard.close()
@@ -87,8 +89,7 @@ class Experiment(ABC):
             interim_save = epoch_index % self.config.auto_save_per_epoch == 0
         final_save = epoch_index == self.config.num_epochs
         if interim_save or final_save:
-            self.save_everything(
-                os.path.join(self.config.output_dir, f'epoch{epoch_index}.pt'))
+            self.save_everything(self.config.output_dir / f'epoch{epoch_index}.pt')
 
     @no_type_check
     def save_state_dict(self, save_path: str) -> None:
@@ -205,6 +206,7 @@ class Experiment(ABC):
     def load_txt_embedding(
             in_path: str,
             word_to_id: Dict[str, int],
+            special_tokens: Optional[List[str]] = None,
             verbose: bool = True
             ) -> torch.Tensor:
         """
@@ -241,9 +243,9 @@ class Experiment(ABC):
             except KeyError:
                 out_of_vocabulary.add(word)
         if out_of_vocabulary:
-            print('The following words in the training corpus are out of '
+            print('\nThe following words in the training corpus are out of '
                   'the vocabulary of the given pretrained embedding: ')
-            print(out_of_vocabulary)
+            print(out_of_vocabulary, end='\n\n')
         return nn.Embedding.from_pretrained(torch.tensor(embedding))
         # Unsafe
         # if word_to_id is None:

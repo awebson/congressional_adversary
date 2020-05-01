@@ -1,7 +1,6 @@
 import argparse
 import pickle
 import random
-import os
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Set, Tuple, List, Dict, Iterable, Optional
@@ -357,7 +356,7 @@ class LabeledDocuments(torch.utils.data.IterableDataset):
         self.window_radius = config.skip_gram_window_radius
         self.numericalize_cono = config.numericalize_cono
 
-        corpus_path = os.path.join(config.input_dir, 'train.pickle')
+        corpus_path = config.input_dir / 'train.pickle'
         print(f'Loading {corpus_path}', flush=True)
         with open(corpus_path, 'rb') as corpus_file:
             preprocessed = pickle.load(corpus_file)
@@ -507,8 +506,7 @@ class DecomposerExperiment(Experiment):
         config = self.config
         model = self.model
         # # For debugging
-        # self.save_everything(
-        #     os.path.join(self.config.output_dir, f'init.pt'))
+        # self.save_everything(self.config.output_dir / f'init.pt')
         # raise SystemExit
         if config.auto_save_intra_epoch:
             save_per_batch = len(self.dataloader) // config.auto_save_intra_epoch
@@ -598,8 +596,8 @@ class DecomposerExperiment(Experiment):
 @dataclass
 class DecomposerConfig():
     # Essential
-    # input_dir: str = '../data/ready/train half'
-    # output_dir: str = '../results/news/train'
+    # input_dir: Path = Path('../data/ready/train half')
+    # output_dir: Path = Path('../results/news/train')
     input_dir: Path = Path('../data/ready/validation')
     output_dir: Path = Path('../results/news/validation')
     device: torch.device = torch.device('cuda')
@@ -628,7 +626,7 @@ class DecomposerConfig():
     num_negative_samples: int = 10
     optimizer: torch.optim.Optimizer = torch.optim.Adam
     # optimizer: torch.optim.Optimizer = torch.optim.SGD
-    learning_rate: float = 1e-3
+    learning_rate: float = 1e-4
     # momentum: float = 0.5
     # lr_scheduler: torch.optim.lr_scheduler._LRScheduler
     # num_prediction_classes: int = 5
