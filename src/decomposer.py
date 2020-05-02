@@ -613,7 +613,7 @@ class DecomposerConfig():
 
     architecture: str = 'L4'
     dropout_p: float = 0
-    batch_size: int = 128
+    batch_size: int = 1024
     embed_size: int = 300
     num_epochs: int = 15
     # encoder_update_cycle: int = 1  # per batch
