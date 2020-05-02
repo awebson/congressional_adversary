@@ -12,18 +12,17 @@ from preprocessing_news.S1_tokenize import Sentence, LabeledDoc
 random.seed(42)
 
 def build_vocabulary(
-        frequency: Counter
+        frequency: Counter,
+        # special_tokens: Optional[List[str]] = None
         ) -> Tuple[
         Dict[str, int],
         Dict[int, str]]:
     word_to_id: Dict[str, int] = {}
-    id_to_word: Dict[int, str] = {}
     word_to_id['<PAD>'] = 0
-    word_to_id['<UNK>'] = 1
-    id_to_word[0] = '<PAD>'
-    id_to_word[1] = '<UNK>'
-
-    next_vocab_id = 2
+    word_to_id['<CLS>'] = 1
+    word_to_id['<UNK>'] = 2
+    id_to_word = {val: key for key, val in word_to_id.items()}
+    next_vocab_id = len(word_to_id)
     for word, freq in frequency.items():
         if word not in word_to_id:
             word_to_id[word] = next_vocab_id
@@ -120,7 +119,10 @@ def main(
         'right': 4}
     # cono_grounding: DefaultDict[str, List[int]] = DefaultDict(
     #     lambda: [0, 0, 0, 0, 0])  # unfortunately unpicklable
-    cono_grounding: Dict[str, List] = {'<PAD>': [0, 0, 0, 0, 0]}
+    cono_grounding: Dict[str, List] = {  # HACK
+        '<PAD>': [0, 0, 0, 0, 0],
+        '<CLS>': [0, 0, 0, 0, 0]
+    }
     # Subsampling & filter by mix/max sentence length
     keep_prob = subsampling(UNK_filtered_freq, subsample_heuristic, subsample_threshold)
     final_freq: Counter[str] = Counter()
@@ -215,7 +217,7 @@ if __name__ == '__main__':
         # in_dir=Path('../../data/interim/news/train'),
         # out_dir=Path('../../data/ready/train'),
         in_dir=Path('../../data/interim/news/validation'),
-        out_dir=Path('../../data/ready/validation'),
+        out_dir=Path('../../data/ready/validation_transformer'),
         min_frequency=30,
         min_sent_len=5,
         max_sent_len=20,
