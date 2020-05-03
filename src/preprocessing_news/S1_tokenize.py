@@ -93,11 +93,11 @@ def main() -> None:
     in_dir = Path.home() / 'Research/hyperpartisan_news'
     out_dir = Path('../../data/interim/news/train')
     Path.mkdir(out_dir, parents=True, exist_ok=True)
-    # metadata = in_dir / 'ground-truth-training-bypublisher-20181122.xml'
-    # corpus = in_dir / 'articles-training-bypublisher-20181122.xml'
-    dev_corpus = in_dir / 'articles-validation-bypublisher-20181122.xml'
-    dev_metadata = in_dir / 'ground-truth-validation-bypublisher-20181122.xml'
-    data = parse_xml(dev_corpus, dev_metadata)
+    corpus = in_dir / 'articles-training-bypublisher-20181122.xml'
+    metadata = in_dir / 'ground-truth-training-bypublisher-20181122.xml'
+    # dev_corpus = in_dir / 'articles-validation-bypublisher-20181122.xml'
+    # dev_metadata = in_dir / 'ground-truth-validation-bypublisher-20181122.xml'
+    data = parse_xml(corpus, metadata)
 
     processor = stanza.Pipeline(
         lang='en', processors='tokenize', tokenize_batch_size=4096)

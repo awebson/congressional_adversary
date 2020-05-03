@@ -3,24 +3,55 @@ import math
 import random
 import pickle
 from pathlib import Path
+from dataclasses import dataclass
 from typing import Tuple, List, Dict, DefaultDict, Counter, Optional
 
+import numpy as np
 from tqdm import tqdm
 
 from preprocessing_news.S1_tokenize import Sentence, LabeledDoc
 
 random.seed(42)
 
+
+@dataclass
+class GroundedWord():
+    word: str
+    id: int
+    cono_freq: np.ndarray
+    cono_ratio: np.ndarray
+    cono_PMI: np.ndarray
+
+#     def __post_init__(self) -> None:
+#         self.word_id: int = WTI[self.word]
+#         metadata = sub_PE_GD[self.word]
+#         self.freq: int = metadata['freq']
+#         self.R_ratio: float = metadata['R_ratio']
+#         self.majority_deno: int = metadata['majority_deno']
+
+#         self.PE_neighbors = self.neighbors(PE)
+
+#     def deno_ground(self, embed, top_k=10):
+#         self.neighbors: List[str] = nearest_neighbors()
+
+    def __str__(self) -> str:
+        return (
+            f'{self.cono_freq}\t'
+            f'{np.around(self.cono_ratio, 4)}\t'
+            f'{np.around(self.cono_PMI, 4)}')
+
+
 def build_vocabulary(
         frequency: Counter,
-        # special_tokens: Optional[List[str]] = None
+        # special_tokens: Optional[Tuple[str]] = None
         ) -> Tuple[
         Dict[str, int],
         Dict[int, str]]:
     word_to_id: Dict[str, int] = {}
-    word_to_id['<PAD>'] = 0
-    word_to_id['<CLS>'] = 1
-    word_to_id['<UNK>'] = 2
+    word_to_id['[PAD]'] = 0
+    word_to_id['[UNK]'] = 1
+    word_to_id['[CLS]'] = 2
+    word_to_id['[SEP]'] = 3
     id_to_word = {val: key for key, val in word_to_id.items()}
     next_vocab_id = len(word_to_id)
     for word, freq in frequency.items():
@@ -97,9 +128,9 @@ def main(
     for doc in tqdm(corpus, desc='Counting UNKs'):
         for sent in doc.sentences:
             norm_freq.update(sent.underscored_tokens)
+    cumulative_freq = sum(freq for freq in norm_freq.values())
     print(f'Noramlized vocabulary size = {len(norm_freq):,}', file=preview)
-    print(f'Number of words = {sum(freq for freq in norm_freq.values()):,}',
-          file=preview)
+    print(f'Number of words = {cumulative_freq:,}', file=preview)
 
     # Filter counter with MIN_FREQ and count UNK
     UNK_filtered_freq: Counter[str] = Counter()
@@ -109,6 +140,8 @@ def main(
         else:
             UNK_filtered_freq['<UNK>'] += val
     print(f'Filtered vocabulary size = {len(UNK_filtered_freq):,}', file=preview)
+    assert sum(freq for freq in norm_freq.values()) == cumulative_freq
+
 
     # Count connotation grounding prior to subsampling trick
     numericalize_cono = {
@@ -117,26 +150,22 @@ def main(
         'least': 2,
         'right-center': 3,
         'right': 4}
-    # cono_grounding: DefaultDict[str, List[int]] = DefaultDict(
-    #     lambda: [0, 0, 0, 0, 0])  # unfortunately unpicklable
-    cono_grounding: Dict[str, List] = {  # HACK
-        '<PAD>': [0, 0, 0, 0, 0],
-        '<CLS>': [0, 0, 0, 0, 0]
-    }
+    cono_freq: DefaultDict[str, List] = DefaultDict(lambda: [0, 0, 0, 0, 0])
+    party_cumulative: Counter[int] = Counter()
     # Subsampling & filter by mix/max sentence length
     keep_prob = subsampling(UNK_filtered_freq, subsample_heuristic, subsample_threshold)
     final_freq: Counter[str] = Counter()
-    for doc in tqdm(corpus, desc='Ground connotation & subsample frequent words'):
+    for doc in tqdm(corpus, desc='Subsampling frequent words'):
         for sent in doc.sentences:
             for token in sent.underscored_tokens:
                 if token not in UNK_filtered_freq:
                     token = '<UNK>'
                 if random.random() < keep_prob[token]:
                     sent.subsampled_tokens.append(token)
-                if token not in cono_grounding:
-                    cono_grounding[token] = [0, 0, 0, 0, 0]
-                cono_grounding[token][numericalize_cono[doc.party]] += 1
+                cono_freq[token][numericalize_cono[doc.party]] += 1
+                party_cumulative[numericalize_cono[doc.party]] += 1
             # End looping tokens
+
             if len(sent.subsampled_tokens) >= min_sent_len:
                 if len(sent.subsampled_tokens) <= max_sent_len:
                     final_freq.update(sent.subsampled_tokens)
@@ -150,16 +179,17 @@ def main(
                 del sent.normalized_tokens
                 del sent.underscored_tokens
         # End looping sentences
-        doc.sentences = [
+
+        doc.sentences = [  # Filter out empty sentences
             sent for sent in doc.sentences
             if sent.subsampled_tokens is not None]
     # End looping documents
-    corpus = [doc for doc in corpus if len(doc.sentences) > 0]
-
     print(f'Final vocabulary size = {len(final_freq):,}', file=preview)
     print(f'Subsampled number of words = '
-          f'{sum(freq for freq in final_freq.values()):,}',
-          file=preview)
+          f'{sum(freq for freq in final_freq.values()):,}', file=preview)
+
+    # Filter out empty documents
+    corpus = [doc for doc in corpus if len(doc.sentences) > 0]
 
     # Numericalize corpus by word_ids
     word_to_id, id_to_word = build_vocabulary(final_freq)
@@ -169,6 +199,20 @@ def main(
                 word_to_id[token] for token in sent.subsampled_tokens]
             if conserve_RAM:
                 del sent.subsampled_tokens
+
+    # Compute PMI
+    def prob(count: int) -> float:
+        return count / cumulative_freq  # presampled frequency
+
+    ground: Dict[str, GroundedWord] = {}
+    for word in tqdm(word_to_id.keys(), desc='Computing PMIs (-∞ are okay)'):
+        cono = np.array(cono_freq[word])
+        cono_ratio = cono / np.sum(cono)
+        PMI = np.log2([  # can be -inf if freq = 0
+            prob(cono[party_id])
+            / (prob(norm_freq[word]) * prob(party_cumulative[party_id]))
+            for party_id in range(len(numericalize_cono))])
+        ground[word] = GroundedWord(word, word_to_id[word], cono, cono_ratio, PMI)
 
     # Helper for negative sampling
     cumulative_freq = sum(freq ** 0.75 for freq in final_freq.values())
@@ -184,7 +228,7 @@ def main(
     cucumbers = {
         'word_to_id': word_to_id,
         'id_to_word': id_to_word,
-        'cono_grounding': cono_grounding,
+        'ground': ground,
         'negative_sampling_probs': negative_sampling_probs,
         'documents': corpus}
     print(f'Writing to {out_dir}')
@@ -206,8 +250,7 @@ def main(
             # print(vars(doc), end='\n\n', file=preview)
     preview.write('\n\nword\tsubsampled_freq\tconnotation\tword_id\n')
     for key, val in final_freq.most_common():
-        print(f'{val:,}:\t{key}\t{cono_grounding[key]}\t{word_to_id[key]}',
-              file=preview)
+        print(f'{val:,}:\t{key}\t{ground[key]}', file=preview)
     preview.close()
     print('All set!')
 
@@ -217,7 +260,7 @@ if __name__ == '__main__':
         # in_dir=Path('../../data/interim/news/train'),
         # out_dir=Path('../../data/ready/train'),
         in_dir=Path('../../data/interim/news/validation'),
-        out_dir=Path('../../data/ready/validation_transformer'),
+        out_dir=Path('../../data/ready/validation'),
         min_frequency=30,
         min_sent_len=5,
         max_sent_len=20,

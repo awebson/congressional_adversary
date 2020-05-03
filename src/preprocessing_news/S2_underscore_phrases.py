@@ -68,7 +68,7 @@ def main(
     stop_words = set(stopwords.words('english')).union(special_tokens)
     bigram_finder.apply_word_filter(lambda word: word in stop_words)
     bigrams = bigram_finder.score_ngrams(BigramAssocMeasures().raw_freq)
-    # bigrams_pmi = bigram_finder.score_ngrams(BigramAssocMeasures().pmi)
+    # bigrams = bigram_finder.score_ngrams(BigramAssocMeasures().pmi)
     print(f'Number of filtered bigrams = {len(bigrams):,}')
     print(f'Number of filtered bigrams = {len(bigrams):,}', file=preview)
     with open(out_dir / 'bigrams.txt', 'w') as bigram_file:
@@ -76,6 +76,7 @@ def main(
             absolute_freq = relative_freq * num_tokens
             bigram_str = ' '.join(bigram)
             bigram_file.write(f'{absolute_freq:.0f}\t{bigram_str}\n')
+            # bigram_file.write(f'{relative_freq:.0f}\t{bigram_str}\n')
 
     # print('Finding trigrams...')
     # trigram_finder = TrigramCollocationFinder.from_words(all_norm_tokens)
