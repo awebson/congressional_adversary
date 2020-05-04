@@ -1,32 +1,12 @@
 import xml.etree.ElementTree as ET
 import pickle
 from pathlib import Path
-from dataclasses import dataclass, field
-from typing import Set, List, Iterable, Optional
+from typing import Set, List, Iterable
 
 import stanza
 from tqdm import tqdm
 
-
-@dataclass
-class Sentence():
-    tokens: List[str]
-    normalized_tokens: List[str] = field(default_factory=list)
-    underscored_tokens: List[str] = field(default_factory=list)
-    subsampled_tokens: List[str] = field(default_factory=list)
-    numerical_tokens: List[int] = field(default_factory=list)
-
-
-@dataclass
-class LabeledDoc():
-    uid: str
-    title: str
-    url: str
-    party: str  # left, left-center, least, right-center, right
-    partisan: bool
-    text: str
-    date: Optional[str] = None
-    sentences: Optional[List[Sentence]] = None
+from data import LabeledDoc, Sentence
 
 
 def parse_xml(

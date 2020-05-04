@@ -22,8 +22,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
 BASE_DIR = Path.home() / 'Research/congressional_adversary/results'
-# PE = torch.load(BASE_DIR / 'news/validation/pretrained/init.pt')['model']
-PE = torch.load(BASE_DIR / 'news/validation_transformer/pretrained/init.pt')['model']
+PE = torch.load(BASE_DIR / 'news/validation/pretrained/init.pt')['model']
+# PE = torch.load(BASE_DIR / 'news/validation_transformer/pretrained/init.pt')['model']
 WTI = PE.word_to_id
 ITW = PE.id_to_word
 grounding = PE.cono_grounding
@@ -54,24 +54,24 @@ print(f'Vocab size = {len(WTI):,}')
 # del sub_PE
 
 
-@dataclass
-class GroundedWord():
-    word: str
+# @dataclass
+# class GroundedWord():
+#     word: str
 
-#     def __post_init__(self) -> None:
-#         self.word_id: int = WTI[self.word]
-#         metadata = sub_PE_GD[self.word]
-#         self.freq: int = metadata['freq']
-#         self.R_ratio: float = metadata['R_ratio']
-#         self.majority_deno: int = metadata['majority_deno']
+# #     def __post_init__(self) -> None:
+# #         self.word_id: int = WTI[self.word]
+# #         metadata = sub_PE_GD[self.word]
+# #         self.freq: int = metadata['freq']
+# #         self.R_ratio: float = metadata['R_ratio']
+# #         self.majority_deno: int = metadata['majority_deno']
 
-#         self.PE_neighbors = self.neighbors(PE)
+# #         self.PE_neighbors = self.neighbors(PE)
 
-#     def deno_ground(self, embed, top_k=10):
-#         self.neighbors: List[str] = nearest_neighbors()
+# #     def deno_ground(self, embed, top_k=10):
+# #         self.neighbors: List[str] = nearest_neighbors()
 
-    def __str__(self) -> str:
-        return str(vars(self))
+#     def __str__(self) -> str:
+#         return str(vars(self))
 
 
 def get_embed(model: Decomposer) -> np.ndarray:

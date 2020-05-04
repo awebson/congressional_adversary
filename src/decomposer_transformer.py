@@ -168,6 +168,7 @@ class Decomposer(nn.Module):
             self,
             seq_word_ids: Matrix,  # shape: (max_seq_len, batch_size)
             ) -> Vector:
+        # TODO mask <PAD>??
         CLS_tokens = torch.full(
             (1, seq_word_ids.shape[1]), self.word_to_id['<CLS>'],
             dtype=torch.int64, device=self.device)

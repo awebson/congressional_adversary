@@ -5,7 +5,7 @@ from typing import Tuple, List, Dict, Counter, Optional
 
 from tqdm import tqdm
 
-from preprocessing_news.S1_tokenize import Sentence, LabeledDoc
+from data import Sentence, LabeledDoc
 
 random.seed(42)
 

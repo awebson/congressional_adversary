@@ -9,36 +9,9 @@ from typing import Tuple, List, Dict, DefaultDict, Counter, Optional
 import numpy as np
 from tqdm import tqdm
 
-from preprocessing_news.S1_tokenize import Sentence, LabeledDoc
+from data import Sentence, LabeledDoc, GroundedWord
 
 random.seed(42)
-
-
-@dataclass
-class GroundedWord():
-    word: str
-    id: int
-    cono_freq: np.ndarray
-    cono_ratio: np.ndarray
-    cono_PMI: np.ndarray
-
-#     def __post_init__(self) -> None:
-#         self.word_id: int = WTI[self.word]
-#         metadata = sub_PE_GD[self.word]
-#         self.freq: int = metadata['freq']
-#         self.R_ratio: float = metadata['R_ratio']
-#         self.majority_deno: int = metadata['majority_deno']
-
-#         self.PE_neighbors = self.neighbors(PE)
-
-#     def deno_ground(self, embed, top_k=10):
-#         self.neighbors: List[str] = nearest_neighbors()
-
-    def __str__(self) -> str:
-        return (
-            f'{self.cono_freq}\t'
-            f'{np.around(self.cono_ratio, 4)}\t'
-            f'{np.around(self.cono_PMI, 4)}')
 
 
 def build_vocabulary(

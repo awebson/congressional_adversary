@@ -27,7 +27,8 @@ args = parser.parse_args()
 #         embed = D_embed
 # id_to_word = PE.id_to_word
 
-args.in_file = '../../results/SGNS deno/pretrained super large/init.pt'
+args.in_file = '../results/news/validation/-3c BS1024/epoch15.pt'
+args.out_file = '../results/exported_embeddings/denotation_e15.txt'
 
 import torch
 model = torch.load(Path(args.in_file), map_location='cpu')['model']

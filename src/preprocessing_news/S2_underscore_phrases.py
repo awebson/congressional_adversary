@@ -5,11 +5,11 @@ from typing import Set, Tuple, List, Dict, Counter, Iterable, Optional
 
 from nltk.tokenize import MWETokenizer
 from nltk.collocations import BigramCollocationFinder, BigramAssocMeasures
-from nltk.collocations import TrigramCollocationFinder, TrigramAssocMeasures
+# from nltk.collocations import TrigramCollocationFinder, TrigramAssocMeasures
 from nltk.corpus import stopwords
 from tqdm import tqdm
 
-from preprocessing_news.S1_tokenize import Sentence, LabeledDoc
+from data import Sentence, LabeledDoc
 
 
 def main(
@@ -116,10 +116,10 @@ def main(
 
 if __name__ == '__main__':
     main(
-        in_dir=Path('../../data/interim/news/validation'),
-        out_dir=Path('../../data/interim/news/validation'),
-        # in_dir=Path('../../data/interim/news/train'),
-        # out_dir=Path('../../data/interim/news/train'),
+        # in_dir=Path('../../data/interim/news/validation'),
+        # out_dir=Path('../../data/interim/news/validation'),
+        in_dir=Path('../../data/interim/news/train'),
+        out_dir=Path('../../data/interim/news/train'),
         min_frequency=30,
         num_corpus_chunks=100,
         conserve_RAM=False)

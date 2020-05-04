@@ -22,6 +22,7 @@ from sklearn.metrics import homogeneity_score
 from utils.experiment import Experiment
 from utils.improvised_typing import Scalar, Vector, Matrix, R3Tensor
 from preprocessing_news.S1_tokenize import Sentence, LabeledDoc
+from preprocessing_news.S4_export_train_data import GroundedWord
 
 random.seed(42)
 torch.manual_seed(42)
@@ -41,7 +42,7 @@ class Decomposer(nn.Module):
         self.gamma = config.gamma
         self.beta = config.beta
         self.init_embedding(config, data.word_to_id)
-        self.init_grounding(config, data.cono_grounding)
+        self.init_grounding(config, data.ground)
 
         # Dennotation Loss: Skip-Gram Negative Sampling
         # self.deno_decoder = nn.Linear(sent_repr_size, num_deno_classes)
@@ -69,32 +70,53 @@ class Decomposer(nn.Module):
     def init_grounding(
             self,
             config: 'DecomposerConfig',
-            cono_grounding: Dict[str, List[int]],
+            ground: Dict[str, GroundedWord],
             ) -> None:
         # Connotation grounding
         id_to_cono = [
-            cono_grounding[self.id_to_word[wid]]
+            ground[self.id_to_word[wid]].cono_PMI
             for wid in range(self.embedding.num_embeddings)]
         self.cono_grounding = torch.tensor(
             id_to_cono, dtype=torch.float32, device=config.device)
 
         # Zero out low frequency words
-        party_grounding = self.cono_grounding.clone()
-        combined_freq = party_grounding.sum(dim=1)
-        assert party_grounding is not self.cono_grounding
-        party_grounding[combined_freq < 100] = torch.zeros(5, device=config.device)
-        partisan_ratios = F.normalize(party_grounding, p=1)
-        num_samples = 200
-        _, self.socialist_ids = partisan_ratios[:, 0].topk(num_samples)
-        _, self.liberal_ids = partisan_ratios[:, 1].topk(num_samples)
-        _, self.neutral_ids = partisan_ratios[:, 2].topk(num_samples)
-        _, self.conservative_ids = partisan_ratios[:, 3].topk(num_samples)
-        _, self.chauvinist_ids = partisan_ratios[:, 4].topk(num_samples)
-        # for i in self.socialist_ids:  # For debugging
-        #     print(self.id_to_word[i.item()], self.cono_grounding[i], partisan_ratios[i])
+        id_to_freq = [
+            ground[self.id_to_word[wid]].cono_freq
+            for wid in range(self.embedding.num_embeddings)]
+        combined_freq = torch.tensor(id_to_freq, dtype=torch.int64, device=config.device).sum(dim=1)
 
-        # import IPython
-        # IPython.embed()
+        party_grounding = self.cono_grounding.clone()
+        party_grounding[combined_freq < 100] = torch.zeros(5, device=config.device)
+        # partisan_ratios = F.normalize(party_grounding, p=1)
+        num_samples = 100
+        _, self.socialist_ids = party_grounding[:, 0].topk(num_samples)
+        _, self.liberal_ids = party_grounding[:, 1].topk(num_samples)
+        _, self.neutral_ids = party_grounding[:, 2].topk(num_samples)
+        _, self.conservative_ids = party_grounding[:, 3].topk(num_samples)
+        _, self.chauvinist_ids = party_grounding[:, 4].topk(num_samples)
+        print('Left:')
+        for i in self.socialist_ids:
+            print(self.id_to_word[i.item()], id_to_freq[i], party_grounding[i])
+
+        print('\n\nCenter-Left:')
+        for i in self.liberal_ids:
+            print(self.id_to_word[i.item()], id_to_freq[i], party_grounding[i])
+
+        print('\n\nNeutral:')
+        for i in self.neutral_ids:
+            print(self.id_to_word[i.item()], id_to_freq[i], party_grounding[i])
+
+        print('\n\nCenter-Right:')
+        for i in self.conservative_ids:
+            print(self.id_to_word[i.item()], id_to_freq[i], party_grounding[i])
+
+        print('\n\nRight:')
+        for i in self.chauvinist_ids:  # For debugging
+            print(self.id_to_word[i.item()], id_to_freq[i], party_grounding[i])
+
+        raise SystemExit
+        import IPython
+        IPython.embed()
 
         # # Initailize denotation grounding
         # all_vocab_ids = torch.arange(self.embedding.num_embeddings)
@@ -362,7 +384,7 @@ class LabeledDocuments(torch.utils.data.IterableDataset):
             preprocessed = pickle.load(corpus_file)
         self.word_to_id: Dict[str, int] = preprocessed['word_to_id']
         self.id_to_word: Dict[int, str] = preprocessed['id_to_word']
-        self.cono_grounding: Dict[str, List[int]] = preprocessed['cono_grounding']
+        self.ground: Dict[str, GroundedWord] = preprocessed['ground']
         self.documents: List[LabeledDoc] = preprocessed['documents']
         self.negative_sampling_probs: Vector = torch.tensor(
             preprocessed['negative_sampling_probs'])
