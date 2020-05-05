@@ -21,8 +21,7 @@ from sklearn.metrics import homogeneity_score
 
 from utils.experiment import Experiment
 from utils.improvised_typing import Scalar, Vector, Matrix, R3Tensor
-from preprocessing_news.S1_tokenize import Sentence, LabeledDoc
-from preprocessing_news.S4_export_train_data import GroundedWord
+from data import Sentence, LabeledDoc, GroundedWord
 
 random.seed(42)
 torch.manual_seed(42)
@@ -86,37 +85,53 @@ class Decomposer(nn.Module):
         combined_freq = torch.tensor(id_to_freq, dtype=torch.int64, device=config.device).sum(dim=1)
 
         party_grounding = self.cono_grounding.clone()
-        party_grounding[combined_freq < 100] = torch.zeros(5, device=config.device)
+        party_grounding[combined_freq < 3000] = torch.zeros(5, device=config.device)
         # partisan_ratios = F.normalize(party_grounding, p=1)
-        num_samples = 100
-        _, self.socialist_ids = party_grounding[:, 0].topk(num_samples)
-        _, self.liberal_ids = party_grounding[:, 1].topk(num_samples)
-        _, self.neutral_ids = party_grounding[:, 2].topk(num_samples)
-        _, self.conservative_ids = party_grounding[:, 3].topk(num_samples)
-        _, self.chauvinist_ids = party_grounding[:, 4].topk(num_samples)
-        print('Left:')
-        for i in self.socialist_ids:
-            print(self.id_to_word[i.item()], id_to_freq[i], party_grounding[i])
-
-        print('\n\nCenter-Left:')
+        num_samples = 300
+        # 3 bins
+        # exclude the top PMI which is always UNK
+        _, self.liberal_ids = party_grounding[0:, 0].topk(num_samples)
+        _, self.neutral_ids = party_grounding[0:, 1].topk(num_samples)
+        _, self.conservative_ids = party_grounding[0:, 2].topk(num_samples)
+        print('Liberal:')
         for i in self.liberal_ids:
             print(self.id_to_word[i.item()], id_to_freq[i], party_grounding[i])
-
         print('\n\nNeutral:')
         for i in self.neutral_ids:
             print(self.id_to_word[i.item()], id_to_freq[i], party_grounding[i])
-
-        print('\n\nCenter-Right:')
-        for i in self.conservative_ids:
+        print('\n\nConservative:')
+        for i in self.conservative_ids:  # For debugging
             print(self.id_to_word[i.item()], id_to_freq[i], party_grounding[i])
 
-        print('\n\nRight:')
-        for i in self.chauvinist_ids:  # For debugging
-            print(self.id_to_word[i.item()], id_to_freq[i], party_grounding[i])
+        # 5 bins
+        # _, self.socialist_ids = party_grounding[:, 0].topk(num_samples)
+        # _, self.liberal_ids = party_grounding[:, 1].topk(num_samples)
+        # _, self.neutral_ids = party_grounding[:, 2].topk(num_samples)
+        # _, self.conservative_ids = party_grounding[:, 3].topk(num_samples)
+        # _, self.chauvinist_ids = party_grounding[:, 4].topk(num_samples)
+        # print('Left:')
+        # for i in self.socialist_ids:
+        #     print(self.id_to_word[i.item()], id_to_freq[i], party_grounding[i])
+
+        # print('\n\nCenter-Left:')
+        # for i in self.liberal_ids:
+        #     print(self.id_to_word[i.item()], id_to_freq[i], party_grounding[i])
+
+        # print('\n\nNeutral:')
+        # for i in self.neutral_ids:
+        #     print(self.id_to_word[i.item()], id_to_freq[i], party_grounding[i])
+
+        # print('\n\nCenter-Right:')
+        # for i in self.conservative_ids:
+        #     print(self.id_to_word[i.item()], id_to_freq[i], party_grounding[i])
+
+        # print('\n\nRight:')
+        # for i in self.chauvinist_ids:  # For debugging
+        #     print(self.id_to_word[i.item()], id_to_freq[i], party_grounding[i])
 
         raise SystemExit
-        import IPython
-        IPython.embed()
+        # import IPython
+        # IPython.embed()
 
         # # Initailize denotation grounding
         # all_vocab_ids = torch.arange(self.embedding.num_embeddings)
@@ -135,7 +150,7 @@ class Decomposer(nn.Module):
             recompose: bool = False
             ) -> Scalar:
         word_vecs: R3Tensor = self.embedding(seq_word_ids)
-        seq_repr: Matrix = torch.mean(word_vecs, dim=1)
+        seq_repr: Matrix = torch.mean(word_vecs, dim=1)  # TODO mask out <PAD>
 
         deno_loss = self.skip_gram_loss(center_word_ids, true_context_ids)
 
@@ -620,7 +635,7 @@ class DecomposerConfig():
     # Essential
     # input_dir: Path = Path('../data/ready/train half')
     # output_dir: Path = Path('../results/news/train')
-    input_dir: Path = Path('../data/ready/validation')
+    input_dir: Path = Path('../data/ready/validation 3bins')
     output_dir: Path = Path('../results/news/validation')
     device: torch.device = torch.device('cuda')
     debug_subset_corpus: Optional[int] = None
@@ -665,7 +680,7 @@ class DecomposerConfig():
     clear_tensorboard_log_in_output_dir: bool = True
     delete_all_exisiting_files_in_output_dir: bool = False
     auto_save_per_epoch: Optional[int] = 1
-    auto_save_intra_epoch: Optional[int] = 10
+    auto_save_intra_epoch: Optional[int] = None
     auto_save_if_interrupted: bool = False
 
     def __post_init__(self) -> None:

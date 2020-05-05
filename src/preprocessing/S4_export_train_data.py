@@ -117,12 +117,19 @@ def main(
 
 
     # Count connotation grounding prior to subsampling trick
+    # numericalize_cono = {
+    #     'left': 0,
+    #     'left-center': 1,
+    #     'least': 2,
+    #     'right-center': 3,
+    #     'right': 4}
+    # NOTE
     numericalize_cono = {
         'left': 0,
-        'left-center': 1,
-        'least': 2,
-        'right-center': 3,
-        'right': 4}
+        'left-center': 0,
+        'least': 1,
+        'right-center': 2,
+        'right': 2}
     cono_freq: DefaultDict[str, List] = DefaultDict(lambda: [0, 0, 0, 0, 0])
     party_cumulative: Counter[int] = Counter()
     # Subsampling & filter by mix/max sentence length
@@ -233,7 +240,7 @@ if __name__ == '__main__':
         # in_dir=Path('../../data/interim/news/train'),
         # out_dir=Path('../../data/ready/train'),
         in_dir=Path('../../data/interim/news/validation'),
-        out_dir=Path('../../data/ready/validation'),
+        out_dir=Path('../../data/ready/validation 3bins'),
         min_frequency=30,
         min_sent_len=5,
         max_sent_len=20,

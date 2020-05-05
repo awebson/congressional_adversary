@@ -76,7 +76,7 @@ def main(
             absolute_freq = relative_freq * num_tokens
             bigram_str = ' '.join(bigram)
             bigram_file.write(f'{absolute_freq:.0f}\t{bigram_str}\n')
-            # bigram_file.write(f'{relative_freq:.0f}\t{bigram_str}\n')
+            bigram_file.write(f'{relative_freq:.0f}\t{bigram_str}\n')
 
     # print('Finding trigrams...')
     # trigram_finder = TrigramCollocationFinder.from_words(all_norm_tokens)
@@ -116,10 +116,10 @@ def main(
 
 if __name__ == '__main__':
     main(
-        # in_dir=Path('../../data/interim/news/validation'),
-        # out_dir=Path('../../data/interim/news/validation'),
-        in_dir=Path('../../data/interim/news/train'),
-        out_dir=Path('../../data/interim/news/train'),
+        in_dir=Path('../../data/interim/news/validation'),
+        out_dir=Path('../../data/interim/news/validation'),
+        # in_dir=Path('../../data/interim/news/train'),
+        # out_dir=Path('../../data/interim/news/train_pmi'),
         min_frequency=30,
         num_corpus_chunks=100,
         conserve_RAM=False)
