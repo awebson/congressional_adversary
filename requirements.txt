@@ -4,7 +4,6 @@ sklearn
 matplotlib
 seaborn
 torch
-tensorboard
 nltk
 jupyter
 mypy
@@ -12,8 +11,7 @@ flake8
 pytest
 tqdm
 editdistance
-# pytorch-categorical
-# tb-nightly
-# future  # for TensorBoard
-# pillow  # for TensorBoard
+tensorboard
+future  # for TensorBoard
+pillow  # for TensorBoard
 # tensorflow
