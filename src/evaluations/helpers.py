@@ -20,10 +20,10 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 # PE = torch.load(pretrained_path)['model']
 # PE_embed = PE.embedding.weight.detach().cpu().numpy()
 
-
 BASE_DIR = Path.home() / 'Research/congressional_adversary/results'
-PE = torch.load(BASE_DIR / 'news/validation/pretrained/init.pt')['model']
-# PE = torch.load(BASE_DIR / 'news/validation_transformer/pretrained/init.pt')['model']
+base_path = BASE_DIR / 'news/validation/pretrained/init.pt'
+print(f'Loading vocabulary from {base_path}')
+PE = torch.load(base_path)['model']
 WTI = PE.word_to_id
 ITW = PE.id_to_word
 grounding = PE.cono_grounding

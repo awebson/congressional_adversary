@@ -123,14 +123,14 @@ def main(
     #     'least': 2,
     #     'right-center': 3,
     #     'right': 4}
-    # NOTE
+    # NOTE TODO pickle this too
     numericalize_cono = {
         'left': 0,
         'left-center': 0,
         'least': 1,
         'right-center': 2,
         'right': 2}
-    cono_freq: DefaultDict[str, List] = DefaultDict(lambda: [0, 0, 0, 0, 0])
+    cono_freq: DefaultDict[str, List] = DefaultDict(lambda: [0, 0, 0])
     party_cumulative: Counter[int] = Counter()
     # Subsampling & filter by mix/max sentence length
     keep_prob = subsampling(UNK_filtered_freq, subsample_heuristic, subsample_threshold)
@@ -185,13 +185,14 @@ def main(
         return count / cumulative_freq  # presampled frequency
 
     ground: Dict[str, GroundedWord] = {}
+    cono_labels = set(numericalize_cono.values())
     for word in tqdm(word_to_id.keys(), desc='Computing PMIs (-∞ are okay)'):
         cono = np.array(cono_freq[word])
         cono_ratio = cono / np.sum(cono)
         PMI = np.log2([  # can be -inf if freq = 0
             prob(cono[party_id])
             / (prob(norm_freq[word]) * prob(party_cumulative[party_id]))
-            for party_id in range(len(numericalize_cono))])
+            for party_id in cono_labels])
         ground[word] = GroundedWord(word, word_to_id[word], cono, cono_ratio, PMI)
 
     # Helper for negative sampling
