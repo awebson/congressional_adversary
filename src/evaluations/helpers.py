@@ -21,7 +21,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 # PE_embed = PE.embedding.weight.detach().cpu().numpy()
 
 BASE_DIR = Path.home() / 'Research/congressional_adversary/results'
-base_path = BASE_DIR / 'news/validation/pretrained/init.pt'
+# base_path = BASE_DIR / 'news/validation/pretrained/init.pt'
+base_path = BASE_DIR / '3bins/pretrained/init.pt'
 print(f'Loading vocabulary from {base_path}')
 PE = torch.load(base_path)['model']
 WTI = PE.word_to_id
@@ -109,7 +110,7 @@ def load_decomposers_en_masse(
         for pattern in patterns:
             checkpoints += list(in_dir.glob(pattern))
     if len(checkpoints) == 0:
-        raise FileNotFoundError('No model with path pattern found at in_dir?')
+        raise FileNotFoundError(f'No model with path pattern found at {in_dirs}?')
 
     models = {
         # 'pretrained superset': load(BASE_DIR / 'bill topic/pretrained superset/init.pt'),

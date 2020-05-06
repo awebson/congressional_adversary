@@ -37,7 +37,6 @@ class Decomposer(nn.Module):
         self.gamma = config.gamma
         self.beta = config.beta
         self.init_embedding(config, data.word_to_id)
-        self.init_grounding(config, data.ground)
 
         # Dennotation Loss: Skip-Gram Negative Sampling
         # self.deno_decoder = nn.Linear(sent_repr_size, num_deno_classes)
@@ -47,6 +46,7 @@ class Decomposer(nn.Module):
 
         self.device = config.device
         self.to(self.device)
+        self.init_grounding(config, data.ground)
 
     def init_embedding(
             self,
@@ -76,7 +76,8 @@ class Decomposer(nn.Module):
             ground[self.id_to_word[wid]].cono_PMI
             for wid in range(self.embedding.num_embeddings)]
         self.cono_grounding = torch.tensor(
-            id_to_cono, dtype=torch.float32, device=config.device)
+            id_to_cono, dtype=torch.float32, device=config.device).clamp(min=0)
+        _, self.discrete_cono = self.cono_grounding.topk(1)
 
         # Zero out low frequency words
         id_to_freq = [
@@ -94,6 +95,11 @@ class Decomposer(nn.Module):
         _, self.liberal_ids = party_grounding[1:, 0].topk(num_samples)
         _, self.neutral_ids = party_grounding[1:, 1].topk(num_samples)
         _, self.conservative_ids = party_grounding[1:, 2].topk(num_samples)
+
+        # + random samples
+        # cherry
+
+
         # print('Liberal:')
         # for i in self.liberal_ids:
         #     print(self.id_to_word[i.item()], id_to_freq[i], party_grounding[i])
@@ -103,44 +109,34 @@ class Decomposer(nn.Module):
         # print('\n\nConservative:')
         # for i in self.conservative_ids:  # For debugging
         #     print(self.id_to_word[i.item()], id_to_freq[i], party_grounding[i])
-
-        # 5 bins
-        # _, self.socialist_ids = party_grounding[:, 0].topk(num_samples)
-        # _, self.liberal_ids = party_grounding[:, 1].topk(num_samples)
-        # _, self.neutral_ids = party_grounding[:, 2].topk(num_samples)
-        # _, self.conservative_ids = party_grounding[:, 3].topk(num_samples)
-        # _, self.chauvinist_ids = party_grounding[:, 4].topk(num_samples)
-        # print('Left:')
-        # for i in self.socialist_ids:
-        #     print(self.id_to_word[i.item()], id_to_freq[i], party_grounding[i])
-
-        # print('\n\nCenter-Left:')
-        # for i in self.liberal_ids:
-        #     print(self.id_to_word[i.item()], id_to_freq[i], party_grounding[i])
-
-        # print('\n\nNeutral:')
-        # for i in self.neutral_ids:
-        #     print(self.id_to_word[i.item()], id_to_freq[i], party_grounding[i])
-
-        # print('\n\nCenter-Right:')
-        # for i in self.conservative_ids:
-        #     print(self.id_to_word[i.item()], id_to_freq[i], party_grounding[i])
-
-        # print('\n\nRight:')
-        # for i in self.chauvinist_ids:  # For debugging
-        #     print(self.id_to_word[i.item()], id_to_freq[i], party_grounding[i])
-
         # raise SystemExit
         # import IPython
         # IPython.embed()
 
-        # # Initailize denotation grounding
-        # all_vocab_ids = torch.arange(self.embedding.num_embeddings)
-        # deno_ground_neighbor_cos_sim, neighbor_ids = self.nearest_neighbors(
-        #     all_vocab_ids, top_k=10, verbose=True)  # assume pretrained used here
-        # F.cross_entropy(deno_ground_neighbor_cos_sim, decomposed_neighbor_cos_sim)
-        # self.deno_grounding: Dict[str, Set[int]] = {
-        #     word: {neighbor_ids}}
+        # Initailize denotation grounding
+        def pretrained_neighbors(
+                query_ids: Vector,
+                top_k: int = 10
+                ) -> Dict[int, Set[int]]:
+            deno_grounding: Dict[int, Set[int]] = {}
+            # self.pretrained_embed = self.pretrained_embed.to(config.device)
+            # with torch.no_grad():
+            for qid in query_ids:
+                qv = self.pretrained_embed(qid)
+                qid = qid.item()
+                qw = self.id_to_word[qid]
+                cos_sim = F.cosine_similarity(qv.unsqueeze(0), self.pretrained_embed.weight)
+                cos_sim, neighbor_ids = cos_sim.topk(k=top_k + 5, dim=-1)
+                neighbor_ids = [
+                    nid for nid in neighbor_ids.tolist()
+                    if editdistance.eval(qw, self.id_to_word[nid]) > 3]
+                deno_grounding[qid] = set(neighbor_ids[:top_k])
+            return deno_grounding
+
+        self.deno_grounding: Dict[int, Set[int]] = {}
+        self.deno_grounding.update(pretrained_neighbors(self.liberal_ids))
+        self.deno_grounding.update(pretrained_neighbors(self.neutral_ids))
+        self.deno_grounding.update(pretrained_neighbors(self.conservative_ids))
 
     def forward(
             self,
@@ -282,108 +278,50 @@ class Decomposer(nn.Module):
             self,
             query_ids: Vector,
             top_k: int = 5
-            ) -> Tuple[float, float]:
+            ) -> Tuple[float, float, float]:
         # extra top_k buffer for excluding edit distance neighbors
-        top_neighbor_ids = self.nearest_neighbors(query_ids, top_k + 10)
-        # cluster_ids = []
-        # true_labels = []
-        # naive_homogeneity = []
-
-        cono_heterogeneity = []
-        for query_index, sorted_neighbor_indices in enumerate(top_neighbor_ids):
+        top_neighbor_ids = self.nearest_neighbors(query_ids, top_k + 5)
+        deno_homogeneity = []
+        cono_homogeneity = []
+        cono_homogeneity_discrete = []
+        for query_index, neighbor_ids in enumerate(top_neighbor_ids):
             query_id = query_ids[query_index].item()
             query_word = self.id_to_word[query_id]
-            # cluster_id = query_index
+            neighbor_ids = [
+                nid for nid in neighbor_ids.tolist()
+                if editdistance.eval(query_word, self.id_to_word[nid]) > 3]
+            neighbor_ids = neighbor_ids[:top_k]
 
-            # num_same_label = 0
-            # query_deno_label = self.numericalize_deno[self.deno_grounding[query_word]]
+            if len(neighbor_ids) == 0:
+                print(query_word, [self.id_to_word[i.item()] for i in top_neighbor_ids[query_index]])
+                continue
+
+            query_deno: Set[int] = self.deno_grounding[query_id]
+            overlap = len([nid for nid in neighbor_ids if nid in query_deno])
+            deno_homogeneity.append(overlap / len(neighbor_ids))
 
             query_cono: Vector = self.cono_grounding[query_id]
+            try:
+                neighbor_cono = torch.stack([
+                    self.cono_grounding[nid] for nid in neighbor_ids])
+                diveregence = F.kl_div(
+                    query_cono.unsqueeze(0),
+                    neighbor_cono,
+                    reduction='batchmean').item()
+                if np.isfinite(diveregence):
+                    cono_homogeneity.append(-diveregence)
+            except:
+                pass
 
-            num_neighbors = 0
-            # neighbor_ids = []
-            cono_divergences = []
-            # Loop to exclude edit distsance neighbors
-            for sort_rank, neighbor_id in enumerate(sorted_neighbor_indices):
-                neighbor_id = neighbor_id.item()
-                if num_neighbors == top_k:
-                    break
-                if query_id == neighbor_id:
-                    continue
-                neighbor_word = self.id_to_word[neighbor_id]
-                if editdistance.eval(query_word, neighbor_word) < 3:
-                    continue
-                # neighbor_ids.append(neighbor_id)
-                num_neighbors += 1
+            query_cono_disc = self.discrete_cono[query_id]
+            same_cono = len(
+                [nid for nid in neighbor_ids
+                 if self.discrete_cono[nid] == query_cono_disc])
+            cono_homogeneity_discrete.append(same_cono / len(neighbor_ids))
 
-                neighbor_cono = self.cono_grounding[neighbor_id]
-                cono_divergences.append(F.kl_div(query_cono, neighbor_cono).item())
-
-                # neighbor_deno_label = self.deno_to_id[self.grounding[neighbor_word]['majority_deno']]
-
-                # cluster_ids.append(cluster_id)
-                # true_labels.append(neighbor_label)
-
-                # if neighbor_label == query_label:
-                #     num_same_label += 1
-            # End Looping Nearest Neighbors
-            cono_heterogeneity.append(np.mean(cono_divergences))
-            # neighbor_ids = torch.tensor(neighbor_ids).to(self.device)
-            # neighbor_conos = self.cono_grounding[neighbor_ids]
-            # F.kl_div(reduction='batchmean')
-
-            # naive_homogeneity.append(num_same_label / top_k)
-        return np.mean(cono_heterogeneity)  # completness?, np.mean(naive_homogeneity)
-
-    def NN_cluster_homogeneity(
-            self,
-            query_ids: Vector,
-            eval_deno: bool,
-            top_k: int = 5
-            ) -> Tuple[float, float]:
-        top_neighbor_ids = self.nearest_neighbors(query_ids, top_k)
-        cluster_ids = []
-        true_labels = []
-        naive_homogeneity = []
-        for query_index, sorted_target_indices in enumerate(top_neighbor_ids):
-            query_id = query_ids[query_index].item()
-            query_word = self.id_to_word[query_id]
-            cluster_id = query_index
-
-            num_same_label = 0
-            if eval_deno:
-                query_label = self.deno_to_id[self.grounding[query_word]['majority_deno']]
-            else:
-                query_label = self.discretize_cono(self.grounding[query_word]['R_ratio'])
-
-            num_neighbors = 0
-            for sort_rank, target_id in enumerate(sorted_target_indices):
-                target_id = target_id.item()
-                if num_neighbors == top_k:
-                    break
-                if query_id == target_id:
-                    continue
-                target_word = self.id_to_word[target_id]
-                if editdistance.eval(query_word, target_word) < 3:
-                    continue
-                num_neighbors += 1
-
-                if eval_deno:
-                    neighbor_label = self.deno_to_id[
-                        self.grounding[target_word]['majority_deno']]
-                else:
-                    neighbor_label = self.discretize_cono(
-                        self.grounding[target_word]['R_ratio'])
-                cluster_ids.append(cluster_id)
-                true_labels.append(neighbor_label)
-
-                if neighbor_label == query_label:
-                    num_same_label += 1
-            # End Looping Nearest Neighbors
-            naive_homogeneity.append(num_same_label / top_k)
-
-        homogeneity = homogeneity_score(true_labels, cluster_ids)
-        return homogeneity  # completness?, np.mean(naive_homogeneity)
+        # import IPython
+        # IPython.embed()
+        return np.mean(deno_homogeneity), np.mean(cono_homogeneity), np.mean(cono_homogeneity_discrete)
 
 
 class LabeledDocuments(torch.utils.data.IterableDataset):
@@ -517,6 +455,7 @@ class DecomposerExperiment(Experiment):
         # # For debugging
         # self.save_everything(self.config.output_dir / f'init.pt')
         # raise SystemExit
+
         # if config.auto_save_intra_epoch:
         #     save_per_batch = len(self.dataloader) // config.auto_save_intra_epoch
         # else:
@@ -541,20 +480,17 @@ class DecomposerExperiment(Experiment):
                 context_word_ids = batch[2].to(self.device)
                 cono_labels = batch[3].to(self.device)
 
-                self.model.zero_grad()
-                L_decomp, l_deno, l_cono = self.model(
+                model.zero_grad()
+                L_decomp, l_deno, l_cono = model(
                     center_word_ids, context_word_ids, seq_word_ids, cono_labels)
-                # l_deno.backward(retain_graph=True)
-                # nn.utils.clip_grad_norm_(self.deno_params, grad_clip)
-                # self.deno_optimizer.step()
-
-                # self.model.zero_grad()
-                l_cono.backward(retain_graph=True)
+                L_decomp.backward()
+                # l_cono.backward(retain_graph=True)
                 nn.utils.clip_grad_norm_(self.cono_params, config.clip_grad_norm)
                 self.cono_optimizer.step()
 
-                self.model.zero_grad()
-                L_decomp.backward()
+                # model.zero_grad()
+                # L_decomp, l_deno, l_cono = model(
+                #     center_word_ids, context_word_ids, seq_word_ids, cono_labels)
                 nn.utils.clip_grad_norm_(self.decomposer_params, config.clip_grad_norm)
                 self.decomposer_optimizer.step()
 
@@ -569,7 +505,7 @@ class DecomposerExperiment(Experiment):
                     }
                     self.update_tensorboard(stats)
                 if batch_index % config.eval_dev_set == 0:
-                    self.eval_dev_set()
+                    self.validation()
                 # if config.print_stats and batch_index % config.print_stats == 0:
                 #     self.print_stats(epoch_index, batch_index, stats)
                 # if save_per_batch and batch_index % save_per_batch == 0:
@@ -581,34 +517,33 @@ class DecomposerExperiment(Experiment):
             self.auto_save(epoch_index)
         # End Epochs
 
-    def eval_dev_set(self) -> None:
+    def validation(self) -> None:
         model = self.model
         # deno_accuracy, cono_accuracy = model.accuracy(
         #     self.data.dev_seq.to(self.device),
         #     self.data.dev_deno_labels.to(self.device),
         #     self.data.dev_cono_labels.to(self.device))
 
-        # Discrete Metrics
-        # D_h = model.homemade_homogeneity_discrete(model.Dem_ids)
-        # R_hd = model.homemade_homogeneity_discrete(model.GOP_ids)
-        # N_hd = model.homemade_homogeneity_discrete(model.neutral_ids)
-
-        # Continuous Metrics
+        DH_lib, CH_lib, CHD_lib = model.homogeneity(model.liberal_ids)
+        DH_neu, CH_neu, CHD_neu = model.homogeneity(model.neutral_ids)
+        DH_con, CH_con, CHD_con = model.homogeneity(model.conservative_ids)
 
         self.update_tensorboard({
-            'Denotation Decomposer/nonpolitical_word_sim_cf_pretrained':
+            'Denotation Homogeneity/liberal': DH_lib,
+            'Denotation Homogeneity/conservative': DH_con,
+            'Denotation Homogeneity/neutral': DH_neu,
+            'Connotation Homogeneity/liberal': CH_lib,
+            'Connotation Homogeneity/conservative': CH_con,
+            'Connotation Homogeneity/neutral': CH_neu,
+            'Connotation Homogeneity Discrete/liberal': CHD_lib,
+            'Connotation Homogeneity Discrete/conservative': CHD_con,
+            'Connotation Homogeneity Discrete/neutral': CHD_neu,
+
+
+            'Word Similarities/nonpolitical_cf_pretrained':
                 word_sim.mean_delta(model.embedding.weight, model.pretrained_embed.weight, model.id_to_word),
-            'Denotation Decomposer/cosine_sim_cf_pretrained':
+            'Word Similarities/cosine_sim_cf_pretrained':
                 F.cosine_similarity(model.embedding.weight, model.pretrained_embed.weight).mean(),
-            # 'Denotation Decomposer/accuracy_dev_deno': deno_accuracy,
-            # 'Connotation Decomposer/nonpolitical_word_sim_cf_pretrained': cono_check,
-            # 'Denotation Decomposer/accuracy_dev_cono': cono_accuracy,
-            # 'Intrinsic Evaluation/Socialist Cono Diveregence': model.homogeneity(model.socialist_ids),
-            'Intrinsic Evaluation/Liberal Cono Diveregence': model.homogeneity(model.liberal_ids),
-            'Intrinsic Evaluation/Neutral Cono Divergence': model.homogeneity(model.neutral_ids),
-            'Intrinsic Evaluation/Conservative Cono Divergence': model.homogeneity(model.conservative_ids),
-            # 'Intrinsic Evaluation/Chauvinist Cono Divergence': model.homogeneity(model.chauvinist_ids),
-            # 'Recomposer/nonpolitical_word_sim_cf_pretrained': recomp_check}
         })
 
 
