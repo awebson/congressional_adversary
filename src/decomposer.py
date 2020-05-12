@@ -35,7 +35,7 @@ class Decomposer(nn.Module):
         self.id_to_word = data.id_to_word
         self.delta = config.delta
         self.gamma = config.gamma
-        self.beta = config.beta
+        self.max_adversary_loss = config.max_adversary_loss
         self.init_embedding(config, data.word_to_id)
 
         # Dennotation Loss: Skip-Gram Negative Sampling
@@ -99,7 +99,6 @@ class Decomposer(nn.Module):
         # + random samples
         # cherry
 
-
         # print('Liberal:')
         # for i in self.liberal_ids:
         #     print(self.id_to_word[i.item()], id_to_freq[i], party_grounding[i])
@@ -154,7 +153,13 @@ class Decomposer(nn.Module):
         cono_logits = self.cono_decoder(seq_repr)
         cono_loss = F.cross_entropy(cono_logits, cono_labels)
 
+        if self.max_adversary_loss:
+            if self.gamma < 0:  # remove connotation
+                cono_loss = torch.clamp(cono_loss, max=self.max_adversary_loss)
+            else:  # remove denotation
+                deno_loss = torch.clamp(deno_loss, max=self.max_adversary_loss)
         decomposer_loss = self.delta * deno_loss + self.gamma * cono_loss
+
         if recompose:
             return decomposer_loss, deno_loss, cono_loss, word_vecs
         else:
@@ -293,7 +298,7 @@ class Decomposer(nn.Module):
             neighbor_ids = neighbor_ids[:top_k]
 
             if len(neighbor_ids) == 0:
-                print(query_word, [self.id_to_word[i.item()] for i in top_neighbor_ids[query_index]])
+                # print(query_word, [self.id_to_word[i.item()] for i in top_neighbor_ids[query_index]])
                 continue
 
             query_deno: Set[int] = self.deno_grounding[query_id]
@@ -342,7 +347,9 @@ class LabeledDocuments(torch.utils.data.IterableDataset):
         self.documents: List[LabeledDoc] = preprocessed['documents']
         self.negative_sampling_probs: Vector = torch.tensor(
             preprocessed['negative_sampling_probs'])
-        self.estimated_num_batches = (
+        assert preprocessed['numericalize_cono'] == config.numericalize_cono
+
+        self.estimated_len = (
             sum([len(sent.numerical_tokens)
                  for doc in self.documents
                  for sent in doc.sentences])
@@ -353,8 +360,8 @@ class LabeledDocuments(torch.utils.data.IterableDataset):
         self.worker_start: Optional[int] = None
         self.worker_end: Optional[int] = None
 
-    def __len__(self) -> int:
-        return self.estimated_num_batches
+    # def __len__(self) -> int:  # print warnings when estimates are off
+    #     return self.estimated_len
 
     def __iter__(self) -> Iterable[Tuple]:
         """
@@ -471,7 +478,7 @@ class DecomposerExperiment(Experiment):
             else:
                 batches = tqdm(
                     enumerate(self.dataloader),
-                    total=len(self.dataloader),
+                    total=self.data.estimated_len,
                     mininterval=config.progress_bar_refresh_rate,
                     desc='Batches')
             for batch_index, batch in batches:
@@ -553,7 +560,7 @@ class DecomposerConfig():
     # input_dir: Path = Path('../data/ready/train half')
     # output_dir: Path = Path('../results/news/train')
     input_dir: Path = Path('../data/ready/validation 3bins')
-    output_dir: Path = Path('../results/news/validation')
+    output_dir: Path = Path('../results/debug')
     device: torch.device = torch.device('cuda')
     debug_subset_corpus: Optional[int] = None
     # dev_holdout: int = 5_000
@@ -564,6 +571,8 @@ class DecomposerConfig():
     decomposed_size: int = 300
     delta: float = 1  # denotation classifier weight 𝛿
     gamma: float = 1  # connotation classifier weight 𝛾
+
+    max_adversary_loss: Optional[float] = 10
 
     architecture: str = 'L4'
     dropout_p: float = 0
@@ -584,7 +593,7 @@ class DecomposerConfig():
     # momentum: float = 0.5
     # lr_scheduler: torch.optim.lr_scheduler._LRScheduler
     # num_prediction_classes: int = 5
-    clip_grad_norm: float = 10.0
+    clip_grad_norm: float = 5.0
 
     # Housekeeping
     export_error_analysis: Optional[int] = 1  # per epoch

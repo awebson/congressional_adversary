@@ -40,6 +40,8 @@ class Experiment(ABC):
 
     def __enter__(self) -> 'Experiment':
         config = self.config
+        if not isinstance(config.output_dir, Path):
+            raise TypeError('config.output_dir must be a pathlib.Path')
         if not Path.exists(config.output_dir):
             Path.mkdir(config.output_dir, parents=True)
             print(f'Created new directory {config.output_dir} as output_dir.')
@@ -223,7 +225,8 @@ class Experiment(ABC):
         with open(in_path) as file:
             PE_vocab_size, embed_size = file.readline().split()
             embed_size = int(embed_size)
-            print(f'Pretrained vocab size = {PE_vocab_size}, embed dim = {embed_size}')
+            print(f'Pretrained vocab size = {int(PE_vocab_size):,}, '
+                  f'embed dim = {embed_size}')
             for line in file:
                 line = line.split()  # type: ignore
                 word = line[0]

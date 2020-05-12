@@ -209,6 +209,7 @@ def main(
     cucumbers = {
         'word_to_id': word_to_id,
         'id_to_word': id_to_word,
+        'numericalize_cono': numericalize_cono,
         'ground': ground,
         'negative_sampling_probs': negative_sampling_probs,
         'documents': corpus}
@@ -238,10 +239,8 @@ def main(
 
 if __name__ == '__main__':
     main(
-        # in_dir=Path('../../data/interim/news/train'),
-        # out_dir=Path('../../data/ready/train'),
-        in_dir=Path('../../data/interim/news/validation'),
-        out_dir=Path('../../data/ready/validation 3bins'),
+        in_dir=Path('../../data/interim/news'),
+        out_dir=Path('../../data/ready/3bin'),
         min_frequency=30,
         min_sent_len=5,
         max_sent_len=20,

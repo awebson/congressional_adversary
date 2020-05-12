@@ -32,12 +32,12 @@ grounding = PE.cono_grounding
 
 def GD(query: str) -> None:
     freq = grounding[WTI[query]]
-    ratio = torch.nn.functional.normalize(freq, dim=0, p=1)
+    # ratio = torch.nn.functional.normalize(freq, dim=0, p=1)
 
     print(query, end='\t')
-    for r in ratio.tolist():
-        print(round(r, 4), end=', ')
-    print(end='\t')
+    # for r in ratio.tolist():
+    #     print(round(r, 4), end=', ')
+    # print(end='\t')
 
     for f in freq.tolist():
         print(int(f), end=', ')
@@ -82,6 +82,7 @@ def get_embed(model: Decomposer) -> np.ndarray:
 def load(
         path: Path,
         match_vocab: bool = False,
+        recomposer: bool = False,
         device: str = 'cpu'
         ) -> np.ndarray:
     model = torch.load(path, map_location=device)['model']
@@ -94,12 +95,17 @@ def load(
             raise RuntimeError
         else:
             return None
-    return get_embed(model)
+
+    if recomposer:
+        return get_embed(model.deno_decomposer), get_embed(model.cono_decomposer)
+    else:
+        return get_embed(model)
 
 
-def load_decomposers_en_masse(
+def load_en_masse(
         in_dirs: Union[Path, List[Path]],
-        patterns: Union[str, List[str]]
+        patterns: Union[str, List[str]],
+        recomposer: bool = False
         ) -> Tuple[Dict[str, np.ndarray], ...]:
     if not isinstance(in_dirs, List):
         in_dirs = [in_dirs, ]
@@ -112,19 +118,29 @@ def load_decomposers_en_masse(
     if len(checkpoints) == 0:
         raise FileNotFoundError(f'No model with path pattern found at {in_dirs}?')
 
-    models = {
-        # 'pretrained superset': load(BASE_DIR / 'bill topic/pretrained superset/init.pt'),
-        # 'pretrained subset': load(BASE_DIR / 'bill topic/pretrained subset/init.pt')
-    }
+    if recomposer:
+        D_models = {}
+        C_models = {}
+    else:
+        models = {}
     for path in tqdm(checkpoints):
         tqdm.write(f'Loading {path}')
-        embed = load(path)
-        if embed is None:
-            continue
+        # embed = load(path)
+        # if embed is None:  # ??
+        #     continue
+
         # name = path.parent.name
         name = path.parent.name + '/' + path.name
-        models[name] = embed
-    return models
+
+        if recomposer:
+            D_models[name], C_models[name] = load(path, recomposer=True)
+        else:
+            models[name] = load(path)
+
+    if recomposer:
+        return D_models, C_models
+    else:
+        return models
 
 
 def vec(query: str, embed: np.ndarray) -> np.ndarray:

@@ -109,10 +109,8 @@ def main(
 
 if __name__ == '__main__':
     main(
-        # in_dir=Path('../../data/interim/news/train'),
-        # out_dir=Path('../../data/ready/train plain'),
-        in_dir=Path('../../data/interim/news/validation'),
-        out_dir=Path('../../data/ready/validation plain'),
+        in_dir=Path('../../data/interim/news'),
+        out_dir=Path('../../data/ready/plain'),
         min_frequency=30,
         min_sent_len=5,
         max_sent_len=20)

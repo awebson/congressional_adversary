@@ -27,12 +27,13 @@ def main(
         with open(in_dir / f'tokenized_{part_index}.pickle', 'rb') as in_file:
             corpus += pickle.load(in_file)
 
-    # Lowercase, discard punctuations, replace numbers
+    # Lowercase, discard punctuations, replace numbers, deduplicate
     number = re.compile(r'\d')
     starts_with_letter = re.compile(r"^\w")
     select_punctuations = re.compile(r"[@#&:]|.com")
     norm_freq: Counter[str] = Counter()
-    all_norm_tokens: List[str] = []
+    existed: Set[Tuple[str, ...]] = set()
+    duplicates = 0
     for doc in tqdm(corpus, desc='Normalizing tokens'):
         for sent in doc.sentences:
             for token in sent.tokens:
@@ -48,7 +49,18 @@ def main(
                 norm_freq[norm_token] += 1
             if conserve_RAM:
                 del sent.tokens
-            all_norm_tokens += sent.normalized_tokens
+            # all_norm_tokens += sent.normalized_tokens
+            hashable = tuple(sent.normalized_tokens)
+            if hashable not in existed:
+                existed.add(hashable)
+            else:
+                duplicates += 1
+
+        doc.sentences = [  # Filter out duplicate sentences
+            sent for sent in doc.sentences
+            if tuple(sent.tokens) not in existed]
+    print(f'Number of duplicate sentences = {duplicates:,}')
+
 
     UNK_filtered_freq: Counter[str] = Counter()
     for key, val in norm_freq.items():
@@ -59,6 +71,12 @@ def main(
     print(f'Number of filtered unigrams = {len(UNK_filtered_freq):,}')
     print(f'Number of filtered unigrams = {len(UNK_filtered_freq):,}', file=preview)
 
+
+    all_norm_tokens: List[str] = [
+        nt
+        for doc in corpus
+        for sent in doc.sentences
+        for nt in sent.normalized_tokens]
 
     special_tokens = {'<UNK>', '<NUM>', "n't", "n’t"}
     print('Finding bigrams...')
@@ -75,8 +93,8 @@ def main(
         for bigram, relative_freq in bigrams:
             absolute_freq = relative_freq * num_tokens
             bigram_str = ' '.join(bigram)
+            # bigram_file.write(f'{relative_freq:.4f}\t{bigram_str}\n')  # for PMI
             bigram_file.write(f'{absolute_freq:.0f}\t{bigram_str}\n')
-            bigram_file.write(f'{relative_freq:.0f}\t{bigram_str}\n')
 
     # print('Finding trigrams...')
     # trigram_finder = TrigramCollocationFinder.from_words(all_norm_tokens)
@@ -105,6 +123,7 @@ def main(
             vocab.update(sent.underscored_tokens)
             if conserve_RAM:
                 del sent.normalized_tokens
+    print('Pickling...')
     with open(out_dir / 'MWE_underscored.pickle', 'wb') as out_file:
         pickle.dump(corpus, out_file)
 
@@ -116,10 +135,8 @@ def main(
 
 if __name__ == '__main__':
     main(
-        in_dir=Path('../../data/interim/news/validation'),
-        out_dir=Path('../../data/interim/news/validation'),
-        # in_dir=Path('../../data/interim/news/train'),
-        # out_dir=Path('../../data/interim/news/train_pmi'),
+        in_dir=Path('../../data/interim/stanza/validation'),
+        out_dir=Path('../../data/interim/news/'),
         min_frequency=30,
         num_corpus_chunks=100,
         conserve_RAM=False)
