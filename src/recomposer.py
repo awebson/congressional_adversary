@@ -328,7 +328,7 @@ class RecomposerExperiment(Experiment):
 @dataclass
 class RecomposerConfig():
     # Essential
-    input_dir: Path = Path('../data/ready/validation 3bins')
+    input_dir: Path = Path('../data/ready/3bin')
     output_dir: Path = Path('../results/debug')
     device: torch.device = torch.device('cuda')
     debug_subset_corpus: Optional[int] = None
@@ -363,7 +363,7 @@ class RecomposerConfig():
     encoder_update_cycle: int = 1  # per batch
     decoder_update_cycle: int = 1  # per batch
 
-    pretrained_embedding: Optional[Path] = Path('../data/pretrained_word2vec/news_validation.txt')
+    pretrained_embedding: Optional[Path] = Path('../data/pretrained_word2vec/partisan_news.txt')
     freeze_embedding: bool = False  # NOTE
     skip_gram_window_radius: int = 5
     num_negative_samples: int = 10

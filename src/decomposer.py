@@ -72,45 +72,63 @@ class Decomposer(nn.Module):
             ground: Dict[str, GroundedWord],
             ) -> None:
         # Connotation grounding
-        id_to_cono = [
-            ground[self.id_to_word[wid]].cono_PMI
-            for wid in range(self.embedding.num_embeddings)]
+        id_to_cono = []
+        id_to_freq = []
+        is_unigram = []
+        # Itereate in order of word ids
+        for wid in range(self.embedding.num_embeddings):
+            word = ground[self.id_to_word[wid]]
+            id_to_cono.append(word.cono_PMI)
+            id_to_freq.append(word.cono_freq)
+            if '_' in word.word:
+                is_unigram.append(False)
+            else:
+                is_unigram.append(True)
+
+        combined_freq = torch.tensor(
+            id_to_freq, dtype=torch.int64, device=config.device).sum(dim=1)
         self.cono_grounding = torch.tensor(
             id_to_cono, dtype=torch.float32, device=config.device).clamp(min=0)
         _, self.discrete_cono = self.cono_grounding.topk(1)
 
-        # Zero out low frequency words
-        id_to_freq = [
-            ground[self.id_to_word[wid]].cono_freq
-            for wid in range(self.embedding.num_embeddings)]
-        combined_freq = torch.tensor(
-            id_to_freq, dtype=torch.int64, device=config.device).sum(dim=1)
+        gd = self.cono_grounding.clone()  # making a copy to be safe
+        # gd = F.normalize(gd, p=1)  # for freq ratio, not for PMI
 
-        party_grounding = self.cono_grounding.clone()
-        party_grounding[combined_freq < 1000] = torch.zeros(3, device=config.device)
-        # party_grounding = F.normalize(party_grounding, p=1)
+        # Zero out low frequency words
+        gd[combined_freq < 1000] = torch.zeros(3, device=config.device)
+        gd[is_unigram] = torch.zeros(3, device=config.device)
+
         num_samples = 300
         # 3 bins
         # exclude the top PMI which is always UNK
-        _, self.liberal_ids = party_grounding[1:, 0].topk(num_samples)
-        _, self.neutral_ids = party_grounding[1:, 1].topk(num_samples)
-        _, self.conservative_ids = party_grounding[1:, 2].topk(num_samples)
+        _, self.liberal_ids = gd[:, 0].topk(num_samples)
+        _, self.neutral_ids = gd[:, 1].topk(num_samples)
+        _, self.conservative_ids = gd[:, 2].topk(num_samples)
 
-        # + random samples
-        # cherry
+        # # # 5 bins
+        # _, self.socialist_ids = gd[:, 0].topk(num_samples)
+        # _, self.liberal_ids = gd[:, 1].topk(num_samples)
+        # _, self.neutral_ids = gd[:, 2].topk(num_samples)
+        # _, self.conservative_ids = gd[:, 3].topk(num_samples)
+        # _, self.chauvinist_ids = gd[:, 4].topk(num_samples)
 
-        # print('Liberal:')
+        # # For debugging
+        # # print('Socialist:')
+        # # for i in self.socialist_ids:
+        # #     print(ground[self.id_to_word[i.item()]])
+        # print('\n\nLiberal:')
         # for i in self.liberal_ids:
-        #     print(self.id_to_word[i.item()], id_to_freq[i], party_grounding[i])
+        #     print(ground[self.id_to_word[i.item()]])
         # print('\n\nNeutral:')
         # for i in self.neutral_ids:
-        #     print(self.id_to_word[i.item()], id_to_freq[i], party_grounding[i])
+        #     print(ground[self.id_to_word[i.item()]])
         # print('\n\nConservative:')
-        # for i in self.conservative_ids:  # For debugging
-        #     print(self.id_to_word[i.item()], id_to_freq[i], party_grounding[i])
+        # for i in self.conservative_ids:
+        #     print(ground[self.id_to_word[i.item()]])
+        # # print('\n\nChauvinist:')
+        # # for i in self.chauvinist_ids:
+        # #     print(ground[self.id_to_word[i.item()]])
         # raise SystemExit
-        # import IPython
-        # IPython.embed()
 
         # Initailize denotation grounding
         def pretrained_neighbors(
@@ -557,9 +575,7 @@ class DecomposerExperiment(Experiment):
 @dataclass
 class DecomposerConfig():
     # Essential
-    # input_dir: Path = Path('../data/ready/train half')
-    # output_dir: Path = Path('../results/news/train')
-    input_dir: Path = Path('../data/ready/validation 3bins')
+    input_dir: Path = Path('../data/ready/3bin')
     output_dir: Path = Path('../results/debug')
     device: torch.device = torch.device('cuda')
     debug_subset_corpus: Optional[int] = None
@@ -583,7 +599,7 @@ class DecomposerConfig():
     # decoder_update_cycle: int = 1  # per batch
 
     # pretrained_embedding: Optional[str] = None
-    pretrained_embedding: Optional[Path] = Path('../data/pretrained_word2vec/news_validation.txt')
+    pretrained_embedding: Optional[Path] = Path('../data/pretrained_word2vec/partisan_news.txt')
     freeze_embedding: bool = False  # NOTE
     skip_gram_window_radius: int = 5
     num_negative_samples: int = 10

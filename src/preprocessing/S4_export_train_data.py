@@ -123,7 +123,8 @@ def main(
     #     'least': 2,
     #     'right-center': 3,
     #     'right': 4}
-    # NOTE TODO pickle this too
+    # cono_freq: DefaultDict[str, List] = DefaultDict(lambda: [0, 0, 0, 0, 0])
+    # NOTE
     numericalize_cono = {
         'left': 0,
         'left-center': 0,

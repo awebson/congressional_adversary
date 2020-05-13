@@ -46,6 +46,7 @@ class GroundedWord():
 
     def __str__(self) -> str:
         return (
+            f'{self.word}\t'
             f'{self.cono_freq}\t'
             f'{np.around(self.cono_ratio, 4)}\t'
             f'{np.around(self.cono_PMI, 4)}')
