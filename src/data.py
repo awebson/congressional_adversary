@@ -50,3 +50,7 @@ class GroundedWord():
             f'{self.cono_freq}\t'
             f'{np.around(self.cono_ratio, 4)}\t'
             f'{np.around(self.cono_PMI, 4)}')
+
+    def init_extra(self) -> None:
+        self.freq = np.sum(self.cono_freq)
+        self.R_ratio = self.cono_freq[2] / (self.cono_freq[0] + self.cono_freq[2])

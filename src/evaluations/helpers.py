@@ -11,48 +11,27 @@ from tqdm.auto import tqdm
 
 from decomposer import Decomposer, DecomposerConfig
 from recomposer import Recomposer, RecomposerConfig
+from data import GroundedWord
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-# pretrained_path = PROJECT_ROOT / 'results/bill topic/pretrained subset/init.pt'
-# # pretrained_path = PROJECT_ROOT / 'results/bill topic/pretrained superset/init.pt'
-# # pretrained_path = PROJECT_ROOT / 'results/SGNS deno/pretrained super large/init.pt'
-# print(f'Loading vocabulary from {pretrained_path}')
-# PE = torch.load(pretrained_path)['model']
-# PE_embed = PE.embedding.weight.detach().cpu().numpy()
-
-BASE_DIR = Path.home() / 'Research/congressional_adversary/results'
+BASE_DIR = Path(__file__).parent.parent.parent / 'results'
+# BASE_DIR = Path.home() / 'Research/congressional_adversary/results'
 # base_path = BASE_DIR / 'news/validation/pretrained/init.pt'
-base_path = BASE_DIR / '3bins/pretrained/init.pt'
+# base_path = BASE_DIR / '3bins/pretrained/init.pt'
+
+base_path = BASE_DIR / 'search/pretrained/init.pt'
 print(f'Loading vocabulary from {base_path}')
 PE = torch.load(base_path)['model']
 WTI = PE.word_to_id
 ITW = PE.id_to_word
-grounding = PE.cono_grounding
-
-
-def GD(query: str) -> None:
-    freq = grounding[WTI[query]]
-    # ratio = torch.nn.functional.normalize(freq, dim=0, p=1)
-
-    print(query, end='\t')
-    # for r in ratio.tolist():
-    #     print(round(r, 4), end=', ')
-    # print(end='\t')
-
-    for f in freq.tolist():
-        print(int(f), end=', ')
-    print()
-
-
-
-PE = PE.embedding.weight.detach().cpu().numpy()
 print(f'Vocab size = {len(WTI):,}')
 
+ground: Dict[str, GroundedWord] = PE.ground
+for gw in ground.values():
+    gw.init_extra()
 
-# sub_PE = torch.load(BASE_DIR / 'bill topic/pretrained subset/init.pt')['model']
-# sub_PE_WID = sub_PE.word_to_id
-# sub_PE_GD = sub_PE.grounding
-# del sub_PE
+PE = PE.pretrained_embed.weight.detach().cpu().numpy()
+
+
 
 
 # @dataclass
@@ -119,10 +98,10 @@ def load_en_masse(
         raise FileNotFoundError(f'No model with path pattern found at {in_dirs}?')
 
     if recomposer:
-        D_models = {}
-        C_models = {}
+        D_models = {'pretrained': PE}
+        C_models = {'pretrained': PE}
     else:
-        models = {}
+        models = {'pretrained': PE}
     for path in tqdm(checkpoints):
         tqdm.write(f'Loading {path}')
         # embed = load(path)
@@ -130,7 +109,7 @@ def load_en_masse(
         #     continue
 
         # name = path.parent.name
-        name = path.parent.name + '/' + path.name
+        name = path.parent.name + ' ' + path.stem
 
         if recomposer:
             D_models[name], C_models[name] = load(path, recomposer=True)

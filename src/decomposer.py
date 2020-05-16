@@ -46,7 +46,8 @@ class Decomposer(nn.Module):
 
         self.device = config.device
         self.to(self.device)
-        self.init_grounding(config, data.ground)
+        self.ground: Dict[str, GroundedWord] = data.ground
+        self.init_grounding()
 
     def init_embedding(
             self,
@@ -66,18 +67,14 @@ class Decomposer(nn.Module):
         self.pretrained_embed = nn.Embedding.from_pretrained(self.embedding.weight)
         self.pretrained_embed.weight.requires_grad = False
 
-    def init_grounding(
-            self,
-            config: 'DecomposerConfig',
-            ground: Dict[str, GroundedWord],
-            ) -> None:
+    def init_grounding(self) -> None:
         # Connotation grounding
         id_to_cono = []
         id_to_freq = []
         is_unigram = []
         # Itereate in order of word ids
         for wid in range(self.embedding.num_embeddings):
-            word = ground[self.id_to_word[wid]]
+            word = self.ground[self.id_to_word[wid]]
             id_to_cono.append(word.cono_PMI)
             id_to_freq.append(word.cono_freq)
             if '_' in word.word:
@@ -86,17 +83,17 @@ class Decomposer(nn.Module):
                 is_unigram.append(True)
 
         combined_freq = torch.tensor(
-            id_to_freq, dtype=torch.int64, device=config.device).sum(dim=1)
+            id_to_freq, dtype=torch.int64, device=self.device).sum(dim=1)
         self.cono_grounding = torch.tensor(
-            id_to_cono, dtype=torch.float32, device=config.device).clamp(min=0)
+            id_to_cono, dtype=torch.float32, device=self.device).clamp(min=0)
         _, self.discrete_cono = self.cono_grounding.topk(1)
 
         gd = self.cono_grounding.clone()  # making a copy to be safe
         # gd = F.normalize(gd, p=1)  # for freq ratio, not for PMI
 
         # Zero out low frequency words
-        gd[combined_freq < 1000] = torch.zeros(3, device=config.device)
-        gd[is_unigram] = torch.zeros(3, device=config.device)
+        gd[combined_freq < 1000] = torch.zeros(3, device=self.device)
+        gd[is_unigram] = torch.zeros(3, device=self.device)
 
         num_samples = 300
         # 3 bins
@@ -136,7 +133,7 @@ class Decomposer(nn.Module):
                 top_k: int = 10
                 ) -> Dict[int, Set[int]]:
             deno_grounding: Dict[int, Set[int]] = {}
-            # self.pretrained_embed = self.pretrained_embed.to(config.device)
+            # self.pretrained_embed = self.pretrained_embed.to(self.device)
             # with torch.no_grad():
             for qid in query_ids:
                 qv = self.pretrained_embed(qid)
