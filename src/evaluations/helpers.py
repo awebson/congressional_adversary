@@ -12,7 +12,7 @@ from decomposer import Decomposer, DecomposerConfig
 from recomposer import Recomposer, RecomposerConfig
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-pretrained_path = PROJECT_ROOT / 'results/pretrained subset/init.pt'
+pretrained_path = PROJECT_ROOT / 'results/congress bill topic/pretrained subset/init.pt'
 print(f'Loading vocabulary from {pretrained_path}')
 PE = torch.load(pretrained_path)['model']
 # PE_embed = PE.embedding.weight.detach().cpu().numpy()
@@ -77,7 +77,6 @@ def load_recomposer(
 def lazy_load_recomposers(
         in_dirs: Union[Path, List[Path]],
         patterns: Union[str, List[str]],
-        get_deno_decomposer: bool,
         device: str = 'cpu'
         ) -> Iterable[Decomposer]:
     if not isinstance(in_dirs, List):
@@ -93,15 +92,16 @@ def lazy_load_recomposers(
             except TypeError:
                 raise FileNotFoundError('No model with path pattern found at in_dir?')
 
-    PE1 = torch.load(
-        '../../results/pretrained superset/init.pt', map_location=device)['model']
-    PE1.name = 'pretrained superset'
-    yield PE1
-    del PE1
+    # PE1 = torch.load(
+    #     '../../results/pretrained superset/init.pt', map_location=device)['model']
+    # PE1.name = 'pretrained superset'
+    # yield PE1
+    # del PE1
     PE2 = torch.load(
-        '../../results/pretrained subset/init.pt', map_location=device)['model']
+        '../../results/congress bill topic/pretrained subset/init.pt',
+        map_location=device)['model']
     PE2.name = 'pretrained subset'
-    yield PE2
+    yield PE2, PE2
     del PE2
 
     serial_number = 0
@@ -111,17 +111,16 @@ def lazy_load_recomposers(
         recomp = cucumbers['model']
         config = cucumbers['config']
 
-        if get_deno_decomposer:
-            decomp = recomp.deno_decomposer
-        else:
-            decomp = recomp.cono_decomposer
+        D_model = recomp.deno_decomposer
+        C_model = recomp.cono_decomposer
 
-        assert decomp.word_to_id == PE.word_to_id
-        decomp.config = config
-        decomp.name = f'M{serial_number}'
-        decomp.stem = path.stem
-        decomp.eval()
-        yield decomp
+        assert D_model.word_to_id == PE.word_to_id
+        D_model.config = config
+        C_model.config = config
+        D_model.name = f'M{serial_number}'
+        D_model.stem = path.stem
+        D_model.eval()
+        yield D_model, C_model
         serial_number += 1
 
 

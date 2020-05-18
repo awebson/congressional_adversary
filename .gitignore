@@ -7,3 +7,4 @@ congressional_env
 hps_*.py
 src/congressional_adversary.egg-info
 src/utils/word_similarity
+/src/evaluations/word_similarity

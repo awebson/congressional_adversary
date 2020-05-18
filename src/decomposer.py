@@ -209,8 +209,8 @@ class Decomposer(nn.Module):
     def NN_cluster_homogeneity(
             self,
             query_ids: Vector,
-            eval_deno: bool,
-            top_k: int = 5
+            probe: str,  # either 'deno' or 'cono'
+            top_k: int = 10
             ) -> Tuple[float, float]:
         top_neighbor_ids = self.nearest_neighbors(query_ids, top_k)
         cluster_ids = []
@@ -222,9 +222,9 @@ class Decomposer(nn.Module):
             cluster_id = query_index
 
             num_same_label = 0
-            if eval_deno:
+            if probe == 'deno':
                 query_label = self.deno_to_id[self.grounding[query_word]['majority_deno']]
-            else:
+            elif probe == 'cono':
                 query_label = self.discretize_cono(self.grounding[query_word]['R_ratio'])
 
             num_neighbors = 0
@@ -239,10 +239,10 @@ class Decomposer(nn.Module):
                     continue
                 num_neighbors += 1
 
-                if eval_deno:
+                if probe == 'deno':
                     neighbor_label = self.deno_to_id[
                         self.grounding[target_word]['majority_deno']]
-                else:
+                elif probe == 'cono':
                     neighbor_label = self.discretize_cono(
                         self.grounding[target_word]['R_ratio'])
                 cluster_ids.append(cluster_id)
@@ -253,8 +253,9 @@ class Decomposer(nn.Module):
             # End Looping Nearest Neighbors
             naive_homogeneity.append(num_same_label / top_k)
 
+        return np.mean(naive_homogeneity)
         homogeneity = homogeneity_score(true_labels, cluster_ids)
-        return homogeneity  # completness?, np.mean(naive_homogeneity)
+        # return homogeneity  # completness?, np.mean(naive_homogeneity)
 
     def homemade_heterogeneity(
             self,
@@ -262,7 +263,8 @@ class Decomposer(nn.Module):
             top_neighbor_ids: List[Vector],
             top_k: int = 10
             ) -> float:
-        homogeneity = []
+        """based on distance between connotation ratios"""
+        heterogeneity = []
         for query_index, sorted_target_indices in enumerate(top_neighbor_ids):
             query_id = query_ids[query_index].item()
             query_word = self.id_to_word[query_id]
@@ -286,9 +288,9 @@ class Decomposer(nn.Module):
                 target_R_ratio = self.grounding[target_words]['R_ratio']
                 # freq_ratio_distances.append((target_R_ratio - query_R_ratio) ** 2)
                 freq_ratio_distances.append(abs(target_R_ratio - query_R_ratio))
-            # homogeneity.append(np.sqrt(np.mean(freq_ratio_distances)))
-            homogeneity.append(np.mean(freq_ratio_distances))
-        return np.mean(homogeneity)
+            # heterogeneity.append(np.sqrt(np.mean(freq_ratio_distances)))
+            heterogeneity.append(np.mean(freq_ratio_distances))
+        return np.mean(heterogeneity)
 
 
 class LabeledSentences(Dataset):
