@@ -5,7 +5,7 @@ from typing import Union, List, Dict, Optional
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-from tqdm import tqdm
+from tqdm.auto import tqdm
 from sklearn.manifold import TSNE
 from sklearn.decomposition import PCA
 
@@ -30,7 +30,7 @@ def plot(
         size=freq, sizes=(200, 1000),
         legend=None, ax=ax)
     for coord, w in zip(coordinates, words):
-        ax.annotate(w.word, coord, fontsize=20)
+        ax.annotate(w.word, coord, fontsize=8)
     with open(path, 'wb') as file:
         fig.savefig(file, dpi=300)
     plt.close(fig)
@@ -54,7 +54,7 @@ def plot_categorical(
         [chartBox.x0, chartBox.y0, chartBox.width * 0.6, chartBox.height])
     ax.legend(loc='upper center', bbox_to_anchor=(1.45, 0.8), ncol=1)
     for coord, w in zip(coordinates, words):
-        ax.annotate(w.word, coord, fontsize=20)
+        ax.annotate(w.word, coord, fontsize=8)
     with open(path, 'wb') as file:
         fig.savefig(file, dpi=300)
     plt.close(fig)

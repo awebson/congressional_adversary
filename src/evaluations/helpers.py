@@ -6,7 +6,7 @@ from typing import Tuple, Union, List, Dict, Iterable
 import numpy as np
 import torch
 from scipy.spatial import distance
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
 from decomposer import Decomposer, DecomposerConfig
 from recomposer import Recomposer, RecomposerConfig
@@ -140,8 +140,8 @@ def load_recomposers_en_masse(
         raise FileNotFoundError('No model with path pattern found at in_dir?')
 
     D_models = {
-        'pretrained superset': load(PROJECT_ROOT / 'results/pretrained superset/init.pt'),
-        'pretrained subset': load(PROJECT_ROOT / 'results/pretrained subset/init.pt')}
+        # 'pretrained superset': load(PROJECT_ROOT / 'results/congress bill topic/pretrained superset/init.pt'),
+        'pretrained subset': load(PROJECT_ROOT / 'results/congress bill topic/pretrained subset/init.pt')}
     C_models = copy(D_models)
     for path in tqdm(checkpoints):
         tqdm.write(f'Loading {path}')
