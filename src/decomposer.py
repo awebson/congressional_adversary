@@ -12,7 +12,7 @@ from tqdm import tqdm
 
 import numpy as np  # for intrinsic eval
 import editdistance  # for excluding trivial nearest neighbors
-# from sklearn.metrics import homogeneity_score
+from sklearn.metrics import homogeneity_score
 
 from data import Sentence, LabeledDoc, GroundedWord
 from evaluations.word_similarity import all_wordsim as word_sim
@@ -294,15 +294,15 @@ class Decomposer(nn.Module):
             else:  # excludes the first neighbor, which is always the query itself
                 return neighbor_ids[:, 1:]
 
-    def homogeneity(
+    def homemade_homogeneity(
             self,
             query_ids: Vector,
-            top_k: int = 5
-            ) -> Tuple[float, float, float]:
+            top_k: int = 10
+            ) -> Tuple[float, float]:
         # extra top_k buffer for excluding edit distance neighbors
         top_neighbor_ids = self.nearest_neighbors(query_ids, top_k + 5)
         deno_homogeneity = []
-        cono_homogeneity = []
+        # cono_homogeneity = []
         cono_homogeneity_discrete = []
         for query_index, neighbor_ids in enumerate(top_neighbor_ids):
             query_id = query_ids[query_index].item()
@@ -320,18 +320,18 @@ class Decomposer(nn.Module):
             overlap = len([nid for nid in neighbor_ids if nid in query_deno])
             deno_homogeneity.append(overlap / len(neighbor_ids))
 
-            query_cono: Vector = self.cono_grounding[query_id]
-            try:
-                neighbor_cono = torch.stack([
-                    self.cono_grounding[nid] for nid in neighbor_ids])
-                diveregence = F.kl_div(
-                    query_cono.unsqueeze(0),
-                    neighbor_cono,
-                    reduction='batchmean').item()
-                if np.isfinite(diveregence):
-                    cono_homogeneity.append(-diveregence)
-            except:
-                pass
+            # query_cono: Vector = self.cono_grounding[query_id]
+            # try:
+            #     neighbor_cono = torch.stack([
+            #         self.cono_grounding[nid] for nid in neighbor_ids])
+            #     diveregence = F.kl_div(
+            #         query_cono.unsqueeze(0),
+            #         neighbor_cono,
+            #         reduction='batchmean').item()
+            #     if np.isfinite(diveregence):
+            #         cono_homogeneity.append(-diveregence)
+            # except:
+            #     pass
 
             query_cono_disc = self.discrete_cono[query_id]
             same_cono = len(
@@ -339,9 +339,38 @@ class Decomposer(nn.Module):
                  if self.discrete_cono[nid] == query_cono_disc])
             cono_homogeneity_discrete.append(same_cono / len(neighbor_ids))
 
-        # import IPython
-        # IPython.embed()
-        return np.mean(deno_homogeneity), np.mean(cono_homogeneity), np.mean(cono_homogeneity_discrete)
+        return np.mean(deno_homogeneity), np.mean(cono_homogeneity_discrete)
+
+    def SciPy_homogeneity(
+            self,
+            query_ids: Vector,
+            top_k: int = 10
+            ) -> Tuple[float, float]:
+        top_neighbor_ids = self.nearest_neighbors(query_ids, top_k)
+        cluster_ids = []
+        true_cono_labels = []
+        deno_homogeneity = []
+        for query_index, neighbor_ids in enumerate(top_neighbor_ids):
+            query_id = query_ids[query_index].item()
+            query_word = self.id_to_word[query_id]
+            neighbor_ids = [
+                nid for nid in neighbor_ids.tolist()
+                if editdistance.eval(query_word, self.id_to_word[nid]) > 3]
+            neighbor_ids = neighbor_ids[:top_k]
+
+            if len(neighbor_ids) == 0:
+                continue
+
+            query_deno: Set[int] = self.deno_grounding[query_id]
+            overlap = len([nid for nid in neighbor_ids if nid in query_deno])
+            deno_homogeneity.append(overlap / len(neighbor_ids))
+
+            cluster_ids += [query_index] * len(neighbor_ids)
+            true_cono_labels += [self.discrete_cono[nid] for nid in neighbor_ids]
+
+        deno_homogeneity = np.mean(deno_homogeneity)
+        cono_homogeneity = homogeneity_score(true_cono_labels, cluster_ids)
+        return deno_homogeneity, cono_homogeneity
 
 
 class LabeledDocuments(torch.utils.data.IterableDataset):

@@ -1,116 +1,171 @@
 import csv
-import pickle
-import warnings
 from pathlib import Path
-from typing import List, Dict
+from typing import Set, Tuple, List, Dict
+
+import numpy as np
 import torch
-from torch.nn.utils import rnn
+from tqdm import tqdm
 
-from decomposer import Decomposer, DecomposerConfig, LabeledSentences
+from decomposer import Decomposer, DecomposerConfig
 from recomposer import Recomposer, RecomposerConfig
-from evaluations.helpers import lazy_load_recomposers, polarized_words
-from evaluations.euphemism import cherry_pairs
-
-warnings.simplefilter('ignore')
-DEVICE = 'cpu'
-EVAL_DENO_SPACE = True
-out_path = '../../analysis/deno_space_3bin_all.tsv'
-# out_path = '../../analysis/cono_space_3bin_all.tsv'
-
-deno_spaces = lazy_load_recomposers(
-    in_dirs=[Path('../../results/recomposer'), Path('../../results/sans recomposer')],
-    patterns=['*/epoch10.pt', '*/epoch25.pt', '*/epoch50.pt', '*/epoch75.pt', '*/epoch100.pt'],
-    get_deno_decomposer=EVAL_DENO_SPACE,
-    device=DEVICE)
-
-# # Debug Path
-# out_path = '../../analysis/debug.tsv'
-# deno_spaces = lazy_load_recomposers(
-#     in_dirs=Path('../../results/sans recomposer'),
-#     patterns='*/epoch50.pt',
-#     get_deno_decomposer=EVAL_DENO_SPACE,
-#     device=DEVICE)
 
 
-polarized_ids = torch.tensor([w.word_id for w in polarized_words], device=DEVICE)
-# crisis_ids = torch.tensor([w.word_id for w in crisis_words], device=DEVICE)
+def evaluate(word_ids, suffix, D_model, C_model) -> Dict[str, float]:
+    row = {}
+    # DS_Hdeno, DS_Hcono = D_model.SciPy_homogeneity(word_ids, top_k=5)  # NOTE
+    DS_Hdeno, DS_Hcono = D_model.homemade_homogeneity(word_ids, top_k=10)
+    row['DS Hdeno'] = DS_Hdeno
+    row['DS Hcono'] = DS_Hcono
+    row['IntraDS Hd - Hc'] = DS_Hdeno - DS_Hcono
 
-from evaluations.helpers import all_words  # random sample!
-all_ids = torch.tensor([w.word_id for w in all_words], device=DEVICE)
+    # CS_Hdeno, CS_Hcono = C_model.SciPy_homogeneity(word_ids, top_k=5)
+    CS_Hdeno, CS_Hcono = C_model.homemade_homogeneity(word_ids, top_k=10)
+    row['CS Hdeno'] = CS_Hdeno
+    row['CS Hcono'] = CS_Hcono
+    row['IntraCS Hc - Hd'] = CS_Hcono - CS_Hdeno
 
-# Load Accuracy Dev Sentences
-corpus_path = '../../data/processed/bill_mentions/topic_deno/train_data.pickle'
-with open(corpus_path, 'rb') as corpus_file:
-    preprocessed = pickle.load(corpus_file)
-    dev_seq = rnn.pad_sequence(
-        [torch.tensor(seq) for seq in preprocessed['dev_sent_word_ids']],
-        batch_first=True).to(DEVICE)
-    dev_deno_labels = torch.tensor(preprocessed['dev_deno_labels'], device=DEVICE)
-    dev_cono_labels = torch.tensor(preprocessed['dev_cono_labels'], device=DEVICE)
-del preprocessed
+    row['Inter DS Hd - CS Hd'] = DS_Hdeno - CS_Hdeno
+    row['Inter CS Hc - DS Hc'] = CS_Hcono - DS_Hcono
 
+    row['main diagnoal trace'] = (DS_Hdeno + CS_Hcono) / 2  # max all preservation
+    row['nondiagnoal entries negative sum'] = (-DS_Hcono - CS_Hdeno) / 2  # min all discarded
+    row['flattened weighted sum'] = row['main diagnoal trace'] + row['nondiagnoal entries negative sum']
 
-# tabulate_cos_sim(luntz, deno_embed, cono_embed)
-def tabulate_cos_sim(
-        row: Dict,
-        pairs: List[Tuple[str, str]],
-        d_embed: np.ndarray,
-        c_embed: np.ndarray
-        ) -> None:
-    print('w1', 'w2', 'pretrained', 'deno', 'cono', 'diff', sep='\t')
-    for q1, q2 in pairs:
-        pretrained_cs = round(cos_sim(q1, q2, PE_embed), 4)
-        deno_cs = round(cos_sim(q1, q2, d_embed), 4)
-        cono_cs = round(cos_sim(q1, q2, c_embed), 4)
-        diff = round(deno_cs - cono_cs, 4)
-        print(q1, q2, pretrained_cs, deno_cs, cono_cs, diff, sep='\t')
+    row['mean IntraS quality'] = (row['IntraDS Hd - Hc'] + row['IntraCS Hc - Hd']) / 2
+    row['mean InterS quality'] = (row['Inter DS Hd - CS Hd'] + row['Inter CS Hc - DS Hc']) / 2
+    return {key + f' ({suffix})': val for key, val in row.items()}
 
 
-table: List[Dict] = []
-for model in deno_spaces:
-    HFreq_Hdeno = model.NN_cluster_homogeneity(crisis_ids, eval_deno=True, top_k=5)
-    HFreq_Hcono = model.NN_cluster_homogeneity(crisis_ids, eval_deno=False, top_k=5)
-    LFreq_Hdeno = model.NN_cluster_homogeneity(all_ids, eval_deno=True, top_k=5)
-    LFreq_Hcono = model.NN_cluster_homogeneity(all_ids, eval_deno=False, top_k=5)
-    deno_accuracy, cono_accuracy = model.accuracy(dev_seq, dev_deno_labels, dev_cono_labels)
+def main() -> None:
+    in_dir = Path('../../results/search')
+    patterns = ['*/epoch*.pt']  # 'duplicate/*/epoch*.pt']
+    out_path = Path('../../analysis/news homemade top 10.tsv')  # NOTE
+    random_path = Path('../../data/ellie/rand_sample.hp.txt')
+    dev_path = Path('../../data/ellie/partisan_sample_val.hp.txt')
+    test_path = Path('../../data/ellie/partisan_sample.hp.txt')
+    device = torch.device('cuda:0')
 
-    if 'pretrained' in model.name:
-        row = {'model_name': model.name}
-    else:
+    # tensorboard = SummaryWriter(log_dir=log_dir)
+    checkpoints: List[Path] = []
+    for pattern in patterns:
+        checkpoints += list(in_dir.glob(pattern))
+    if len(checkpoints) == 0:
+        raise FileNotFoundError(f'No model with path pattern found at {in_dir}?')
+
+    with open(random_path) as file:
+        random_words = [word.strip() for word in file]
+    with open(dev_path) as file:
+        dev_words = [word.strip() for word in file]
+    with open(test_path) as file:
+        test_words = [word.strip() for word in file]
+
+    debug = 0
+    wid = None
+    table: List[Dict] = []
+    for path in tqdm(checkpoints):
+        tqdm.write(f'Loading {path}')
+        payload = torch.load(path, map_location=device)
+        model = payload['model']
+        config = payload['config']
         row = {
-            'model_name': model.name,
-            'epoch': model.stem,
-            r'\delta\sub{D}': model.delta,
-            r'\gamma\sub{D}': model.gamma,
-            r'\frac{delta}{gamma}': model.delta / model.gamma,
-            r'\rho': model.config.recomposer_rho,
-            'dropout': model.config.dropout_p}
+            'path': path.parent.name + '/' + path.name,  # path.parent.name
+            'D_delta': config.deno_delta,
+            'D_gamma': config.deno_gamma,
+            'C_delta': config.cono_delta,
+            'C_gamma': config.cono_gamma,
+            'rho': config.recomposer_rho,
+            'max_adversary_loss': config.max_adversary_loss,
+            'batch size': config.batch_size,
+            'learning rate': config.learning_rate,
+        }
 
-    if EVAL_DENO_SPACE:
-        row['deno dev accuracy'] = deno_accuracy
-        row['cono dev accuracy'] = cono_accuracy
-        row['preserve deno'] = LFreq_Hdeno
-        # row['HFreq preserve deno'] = HFreq_Hdeno
-        row['remove cono'] = LFreq_Hcono
-        # row['HFreq remove cono'] = HFreq_Hcono
-        row['diff'] = LFreq_Hdeno - LFreq_Hcono
-        # row['HFreq diff'] = HFreq_Hdeno - HFreq_Hcono
-    else:  # eval cono space
-        row['deno dev accuracy'] = deno_accuracy
-        row['cono dev accuracy'] = cono_accuracy
-        row['remove deno'] = LFreq_Hdeno
-        # row['HFreq remove deno'] = HFreq_Hdeno
-        row['preserve cono'] = LFreq_Hcono
-        # row['HFreq preserve cono'] = HFreq_Hcono
-        row['diff'] = LFreq_Hcono - LFreq_Hdeno
-        # row['HFreq diff'] = HFreq_Hcono - HFreq_Hdeno
+        D_model = model.deno_decomposer
+        C_model = model.cono_decomposer
 
-    for key, val in row.items():
-        if isinstance(val, float):
-            row[key] = round(val, 4)
+        if wid is not None:
+            assert wid == model.word_to_id == D_model.word_to_id == C_model.word_to_id
+        else:
+            wid = model.word_to_id
+            rand_ids = torch.tensor([wid[word] for word in random_words], device=device)
+            dev_ids = torch.tensor([wid[word] for word in dev_words], device=device)
+            test_ids = torch.tensor([wid[word] for word in test_words], device=device)
+
+            # For OOV
+            # def word_id_tensor(words: List[str]) -> torch.Tensor:
+            #     wids = []
+            #     skipped = []
+            #     for word in words:
+            #         try:
+            #             wids.append(model.word_to_id[word])
+            #         except KeyError:
+            #             skipped.append(word)
+            #             continue
+            #     if skipped:
+            #         print(f'{len(skipped)} OOV: {skipped}')
+            #     return torch.tensor(wids, device=device)
+            # random = word_id_tensor(random)
+            # test = word_id_tensor(test)
+
+            # Initailize denotation grounding
+            def pretrained_neighbors(
+                    query_ids: torch.Tensor,
+                    top_k: int = 10
+                    ) -> Dict[int, Set[int]]:
+                import editdistance
+                import torch.nn.functional as F
+
+                deno_grounding: Dict[int, Set[int]] = {}
+                for qid in query_ids:
+                    qv = D_model.pretrained_embed(qid)
+                    qid = qid.item()
+                    qw = model.id_to_word[qid]
+                    cos_sim = F.cosine_similarity(qv.unsqueeze(0), D_model.pretrained_embed.weight)
+                    cos_sim, neighbor_ids = cos_sim.topk(k=top_k + 5, dim=-1)
+                    neighbor_ids = [
+                        nid for nid in neighbor_ids.tolist()
+                        if editdistance.eval(qw, model.id_to_word[nid]) > 3]
+                    deno_grounding[qid] = set(neighbor_ids[:top_k])
+                return deno_grounding
+
+            rand_deno = pretrained_neighbors(rand_ids)
+            dev_deno = pretrained_neighbors(dev_ids)
+            test_deno = pretrained_neighbors(test_ids)
+
+        # dev_ids = torch.cat([D_model.liberal_ids, D_model.neutral_ids, D_model.conservative_ids])
+
+        D_model.deno_grounding.update(rand_deno)
+        C_model.deno_grounding.update(rand_deno)
+        D_model.deno_grounding.update(dev_deno)
+        C_model.deno_grounding.update(dev_deno)
+        D_model.deno_grounding.update(test_deno)
+        C_model.deno_grounding.update(test_deno)
+
+        row.update(evaluate(dev_ids, 'dev', D_model, C_model))
+        row.update(evaluate(rand_ids, 'random', D_model, C_model))
+        row.update(evaluate(test_ids, 'test', D_model, C_model))
+
+        for key, val in row.items():
+            if isinstance(val, float):
+                row[key] = round(val, 4)
+        table.append(row)
+        # if debug > 2:
+        #     break
+        # debug += 1
+
+    row = {'path': 'pretrained'}
+    D_model.embedding = D_model.pretrained_embed
+    C_model.embedding = C_model.pretrained_embed
+    row.update(evaluate(dev_ids, 'dev', D_model, C_model))
+    row.update(evaluate(rand_ids, 'random', D_model, C_model))
+    row.update(evaluate(test_ids, 'test', D_model, C_model))
+
     table.append(row)
 
-with open(out_path, 'w') as file:
-    writer = csv.DictWriter(file, fieldnames=table[-1].keys(), dialect=csv.excel_tab)
-    writer.writeheader()
-    writer.writerows(table)
+    with open(out_path, 'w') as file:
+        writer = csv.DictWriter(file, fieldnames=table[0].keys(), dialect=csv.excel_tab)
+        writer.writeheader()
+        writer.writerows(table)
+
+
+if __name__ == '__main__':
+    main()
