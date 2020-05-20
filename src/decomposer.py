@@ -190,21 +190,21 @@ class Decomposer(nn.Module):
         else:
             return neighbor_ids
 
-    # @staticmethod
-    # def discretize_cono(skew: float) -> int:
-    #     if skew < 0.5:
-    #         return 0
-    #     else:
-    #         return 1
-
     @staticmethod
     def discretize_cono(skew: float) -> int:
-        if skew < 0.2:
+        if skew < 0.5:
             return 0
-        elif skew < 0.8:
-            return 1
         else:
-            return 2
+            return 1
+
+    # @staticmethod
+    # def discretize_cono(skew: float) -> int:
+    #     if skew < 0.2:
+    #         return 0
+    #     elif skew < 0.8:
+    #         return 1
+    #     else:
+    #         return 2
 
     def NN_cluster_homogeneity(
             self,
@@ -253,44 +253,46 @@ class Decomposer(nn.Module):
             # End Looping Nearest Neighbors
             naive_homogeneity.append(num_same_label / top_k)
 
-        return np.mean(naive_homogeneity)
+        homemade = np.mean(naive_homogeneity)
         homogeneity = homogeneity_score(true_labels, cluster_ids)
-        # return homogeneity  # completness?, np.mean(naive_homogeneity)
+        return homemade
+        # return homogeneity
 
-    def homemade_heterogeneity(
-            self,
-            query_ids: Vector,
-            top_neighbor_ids: List[Vector],
-            top_k: int = 10
-            ) -> float:
-        """based on distance between connotation ratios"""
-        heterogeneity = []
-        for query_index, sorted_target_indices in enumerate(top_neighbor_ids):
-            query_id = query_ids[query_index].item()
-            query_word = self.id_to_word[query_id]
-            num_neighbors = 0
 
-            query_R_ratio = self.grounding[query_word]['R_ratio']
-            freq_ratio_distances = []
-            for sort_rank, target_id in enumerate(sorted_target_indices):
-                target_id = target_id.item()
-                if num_neighbors == top_k:
-                    break
-                if query_id == target_id:
-                    continue
-                # target_id = target_ids[target_index]  # target is always all embed
-                target_words = self.id_to_word[target_id]
-                if editdistance.eval(query_word, target_words) < 3:
-                    continue
-                num_neighbors += 1
+    # def homemade_heterogeneity(
+    #         self,
+    #         query_ids: Vector,
+    #         top_neighbor_ids: List[Vector],
+    #         top_k: int = 10
+    #         ) -> float:
+    #     """based on distance between connotation ratios"""
+    #     heterogeneity = []
+    #     for query_index, sorted_target_indices in enumerate(top_neighbor_ids):
+    #         query_id = query_ids[query_index].item()
+    #         query_word = self.id_to_word[query_id]
+    #         num_neighbors = 0
 
-                # Homemade continuous heterogeneity
-                target_R_ratio = self.grounding[target_words]['R_ratio']
-                # freq_ratio_distances.append((target_R_ratio - query_R_ratio) ** 2)
-                freq_ratio_distances.append(abs(target_R_ratio - query_R_ratio))
-            # heterogeneity.append(np.sqrt(np.mean(freq_ratio_distances)))
-            heterogeneity.append(np.mean(freq_ratio_distances))
-        return np.mean(heterogeneity)
+    #         query_R_ratio = self.grounding[query_word]['R_ratio']
+    #         freq_ratio_distances = []
+    #         for sort_rank, target_id in enumerate(sorted_target_indices):
+    #             target_id = target_id.item()
+    #             if num_neighbors == top_k:
+    #                 break
+    #             if query_id == target_id:
+    #                 continue
+    #             # target_id = target_ids[target_index]  # target is always all embed
+    #             target_words = self.id_to_word[target_id]
+    #             if editdistance.eval(query_word, target_words) < 3:
+    #                 continue
+    #             num_neighbors += 1
+
+    #             # Homemade continuous heterogeneity
+    #             target_R_ratio = self.grounding[target_words]['R_ratio']
+    #             # freq_ratio_distances.append((target_R_ratio - query_R_ratio) ** 2)
+    #             freq_ratio_distances.append(abs(target_R_ratio - query_R_ratio))
+    #         # heterogeneity.append(np.sqrt(np.mean(freq_ratio_distances)))
+    #         heterogeneity.append(np.mean(freq_ratio_distances))
+    #     return np.mean(heterogeneity)
 
 
 class LabeledSentences(Dataset):

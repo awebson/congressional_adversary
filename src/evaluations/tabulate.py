@@ -13,20 +13,29 @@ from evaluations.helpers import lazy_load_recomposers, polarized_words, PE
 
 # warnings.simplefilter('ignore')
 DEVICE = 'cuda:0'
-out_path = '../../analysis/congress.tsv'
+out_path = '../../analysis/congress 2bin homemade top 10.tsv'
 # out_path = '../../analysis/cono_space_3bin_all.tsv'
 
 
 
-polarized_ids = torch.tensor([w.word_id for w in polarized_words], device=DEVICE)
-# crisis_ids = torch.tensor([w.word_id for w in crisis_words], device=DEVICE)
+# polarized_ids = torch.tensor([w.word_id for w in polarized_words], device=DEVICE)
 
-# from evaluations.helpers import all_words  # random sample!
-# all_ids = torch.tensor([w.word_id for w in all_words], device=DEVICE)
+rand_path = Path('../../data/ellie/rand_sample.cr.txt')
+with open(rand_path) as file:
+    rand_words = [word.strip() for word in file if word.strip() in PE.word_to_id]
+print(len(rand_words))
+
+dev_path = Path('../../data/ellie/partisan_sample_val.cr.txt')
+with open(dev_path) as file:
+    dev_words = [word.strip() for word in file]
 
 test_path = Path('../../data/ellie/partisan_sample.cr.txt')
 with open(test_path) as file:
     test_words = [word.strip() for word in file]
+
+
+rand_ids = torch.tensor([PE.word_to_id[w] for w in rand_words], device=DEVICE)
+dev_ids = torch.tensor([PE.word_to_id[w] for w in dev_words], device=DEVICE)
 test_ids = torch.tensor([PE.word_to_id[w] for w in test_words], device=DEVICE)
 
 
@@ -85,9 +94,11 @@ def evaluate(word_ids, suffix, D_model, C_model) -> Dict[str, float]:
     return {key + f' ({suffix})': val for key, val in row.items()}
 
 
+
 generator = lazy_load_recomposers(
     in_dirs=[Path('../../results/congress bill topic/recomposer'),],
-    patterns=['*/epoch10.pt', '*/epoch25.pt', '*/epoch50.pt', '*/epoch75.pt', '*/epoch100.pt'],
+    # patterns=['*/epoch10.pt', '*/epoch20.pt', '*/epoch50.pt', '*/epoch80.pt', '*/epoch100.pt'],
+    patterns=['*/epoch10.pt', '*/epoch50.pt', '*/epoch100.pt'],
     device=DEVICE)
 
 debug = 0
@@ -110,11 +121,12 @@ for D_model, C_model in generator:
             'rho': D_model.config.recomposer_rho,
             'dropout': D_model.config.dropout_p}
 
-    row.update(evaluate(polarized_ids, 'dev', D_model, C_model))
+    row.update(evaluate(dev_ids, 'dev', D_model, C_model))
+    row.update(evaluate(rand_ids, 'random', D_model, C_model))
     row.update(evaluate(test_ids, 'test', D_model, C_model))
-    # for key, val in row.items():
-    #     if isinstance(val, float):
-    #         row[key] = round(val, 4)
+    for key, val in row.items():
+        if isinstance(val, float):
+            row[key] = round(val, 4)
     table.append(row)
 
     # if debug > 5:
