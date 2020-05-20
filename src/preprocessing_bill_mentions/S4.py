@@ -23,10 +23,11 @@ MIN_NUM_MENTIONS = 3
 FIXED_SENT_LEN = 15
 MIN_SENT_LEN = 5
 MIN_WORD_FREQ = 15
-DENO_LABEL = 'topic'
+DENO_LABEL = 'title'
+NUM_CONTEXT_SPEECHES = 3
 MAX_DEV_HOLDOUT = 100  # faux speeches per session
 in_dir = '../../data/interim/bill_mentions/'
-out_dir = '../../data/processed/bill_mentions/topic_deno'
+out_dir = '../../data/processed/bill_mentions/title_deno_context3'
 os.makedirs(out_dir, exist_ok=True)
 print('Minimum number of mentions per bill =', MIN_NUM_MENTIONS)
 
@@ -70,7 +71,7 @@ def process_sentences(session: int) -> Tuple[List[Sentence], List[Sentence]]:
         per_session_mention += 1
         # NOTE hardcoded context_size
         # for i in range(speech_index - 2, speech_index + 8):
-        for i in range(speech_index + 1, speech_index + 6):
+        for i in range(speech_index + 1, speech_index + NUM_CONTEXT_SPEECHES):
             try:
                 speeches[i].bill = speech.bill
             except IndexError:

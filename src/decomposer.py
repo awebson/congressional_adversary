@@ -259,6 +259,8 @@ class Decomposer(nn.Module):
         # return homogeneity
 
 
+
+
     # def homemade_heterogeneity(
     #         self,
     #         query_ids: Vector,
@@ -515,15 +517,16 @@ class DecomposerExperiment(Experiment):
 @dataclass
 class DecomposerConfig():
     # Essential
-    input_dir: str = '../data/processed/bill_mentions/topic_deno'
-    # input_dir: str = '../data/processed/bill_mentions/title_deno'
+    # input_dir: str = '../data/processed/bill_mentions/topic_deno'
+    input_dir: str = '../data/processed/bill_mentions/title_deno_context3'
+    num_deno_classes: int = 1029 # 27, 30
 
     output_dir: str = '../results/debug'
     device: torch.device = torch.device('cuda')
     debug_subset_corpus: Optional[int] = None
     # dev_holdout: int = 5_000
     # test_holdout: int = 10_000
-    num_dataloader_threads: int = 12
+    num_dataloader_threads: int = 0
     pin_memory: bool = True
 
     beta: float = 10
@@ -594,7 +597,7 @@ class DecomposerConfig():
 
         if self.architecture == 'L1':
             self.deno_architecture = nn.Sequential(
-                nn.Linear(300, 41),
+                nn.Linear(300, self.num_deno_classes),
                 nn.SELU())
             self.cono_architecture = nn.Sequential(
                 nn.Linear(300, 2),
@@ -603,7 +606,7 @@ class DecomposerConfig():
             self.deno_architecture = nn.Sequential(
                 nn.Linear(300, 300),
                 nn.SELU(),
-                nn.Linear(300, 41),
+                nn.Linear(300, self.num_deno_classes),
                 nn.SELU())
             self.cono_architecture = nn.Sequential(
                 nn.Linear(300, 300),
@@ -620,7 +623,7 @@ class DecomposerConfig():
                 nn.AlphaDropout(p=self.dropout_p),
                 nn.Linear(300, 300),
                 nn.SELU(),
-                nn.Linear(300, 41),
+                nn.Linear(300, self.num_deno_classes),
                 nn.SELU())
             self.cono_architecture = nn.Sequential(
                 nn.Linear(300, 300),
