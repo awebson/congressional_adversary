@@ -6,40 +6,52 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-from decomposer import Decomposer, DecomposerConfig
-from recomposer import Recomposer, RecomposerConfig
+# from decomposer import Decomposer, DecomposerConfig
+# from recomposer import Recomposer, RecomposerConfig
 
-in_dir = Path('../../results/search')
+from old_congress import Decomposer, DecomposerConfig
+
+# in_dir = Path('../../results/search')
+# patterns = ['*/epoch*.pt']  # 'duplicate/*/epoch*.pt']
+# out_path = Path('../../analysis/news homemade top 10.tsv')
+# random_path = Path('../../data/ellie/rand_sample.hp.txt')
+# dev_path = Path('../../data/ellie/partisan_sample_val.hp.txt')
+# test_path = Path('../../data/ellie/partisan_sample.hp.txt')
+
+in_dir = Path('../../results/sans recomposer')
 patterns = ['*/epoch*.pt']  # 'duplicate/*/epoch*.pt']
-out_path = Path('../../analysis/news homemade top 10.tsv')
-random_path = Path('../../data/ellie/rand_sample.hp.txt')
-dev_path = Path('../../data/ellie/partisan_sample_val.hp.txt')
-test_path = Path('../../data/ellie/partisan_sample.hp.txt')
+# out_path = Path('../../analysis/CR_skip SciPy top 10.tsv')
+out_path = in_dir / 'top 10.tsv'
+random_path = Path('../../data/ellie/rand_sample.cr.txt')
+dev_path = Path('../../data/ellie/partisan_sample_val.cr.txt')
+test_path = Path('../../data/ellie/partisan_sample.cr.txt')
+
 device = torch.device('cuda:0')
 
-def evaluate(word_ids, suffix, D_model, C_model) -> Dict[str, float]:
+def evaluate(word_ids, suffix, model) -> Dict[str, float]:
+    # word_id -> cono_label
+    model.discrete_cono =
+    [for wid in model.id_to_]
+
+
+    model.cono_grounding.topk(1)
+
     row = {}
-    # DS_Hdeno, DS_Hcono = D_model.SciPy_homogeneity(word_ids, top_k=5)  # NOTE
-    DS_Hdeno, DS_Hcono = D_model.homemade_homogeneity(word_ids, top_k=10)
-    row['DS Hdeno'] = DS_Hdeno
-    row['DS Hcono'] = DS_Hcono
-    row['IntraDS Hd - Hc'] = DS_Hdeno - DS_Hcono
+    DS_Hdeno, DS_Hcono = model.SciPy_homogeneity(word_ids, top_k=10)
+    row['SP DS Hdeno'] = DS_Hdeno
+    row['SP DS Hcono'] = DS_Hcono
+    row['SP IntraDS Hd - Hc'] = DS_Hdeno - DS_Hcono
 
-    # CS_Hdeno, CS_Hcono = C_model.SciPy_homogeneity(word_ids, top_k=5)
-    CS_Hdeno, CS_Hcono = C_model.homemade_homogeneity(word_ids, top_k=10)
-    row['CS Hdeno'] = CS_Hdeno
-    row['CS Hcono'] = CS_Hcono
-    row['IntraCS Hc - Hd'] = CS_Hcono - CS_Hdeno
+    DS_Hdeno, DS_Hcono = model.homemade_homogeneity(word_ids, top_k=10)
+    row['SP DS Hdeno'] = DS_Hdeno
+    row['SP DS Hcono'] = DS_Hcono
+    row['SP IntraDS Hd - Hc'] = DS_Hdeno - DS_Hcono
 
-    row['Inter DS Hd - CS Hd'] = DS_Hdeno - CS_Hdeno
-    row['Inter CS Hc - DS Hc'] = CS_Hcono - DS_Hcono
+    DS_Hcono = model.old_SciPy_homogeneity(word_ids, eval_deno=False, top_k=10)
+    row['OSP DS Hcono'] = DS_Hcono
 
-    row['main diagnoal trace'] = (DS_Hdeno + CS_Hcono) / 2  # max all preservation
-    row['nondiagnoal entries negative sum'] = (-DS_Hcono - CS_Hdeno) / 2  # min all discarded
-    row['flattened weighted sum'] = row['main diagnoal trace'] + row['nondiagnoal entries negative sum']
-
-    row['mean IntraS quality'] = (row['IntraDS Hd - Hc'] + row['IntraCS Hc - Hd']) / 2
-    row['mean InterS quality'] = (row['Inter DS Hd - CS Hd'] + row['Inter CS Hc - DS Hc']) / 2
+    DS_Hcono = model.old_homemade_homogeneity(word_ids, eval_deno=False, top_k=10)
+    row['OHM DS Hcono'] = DS_Hcono
     return {key + f' ({suffix})': val for key, val in row.items()}
 
 
@@ -67,21 +79,15 @@ for path in tqdm(checkpoints):
     config = payload['config']
     row = {
         'path': path.parent.name + '/' + path.name,  # path.parent.name
-        'D_delta': config.deno_delta,
-        'D_gamma': config.deno_gamma,
-        'C_delta': config.cono_delta,
-        'C_gamma': config.cono_gamma,
-        'rho': config.recomposer_rho,
+        'delta': config.delta,
+        'gamma': config.gamma,
         'max_adversary_loss': config.max_adversary_loss,
         'batch size': config.batch_size,
         'learning rate': config.learning_rate,
     }
 
-    D_model = model.deno_decomposer
-    C_model = model.cono_decomposer
-
     if wid is not None:
-        assert wid == model.word_to_id == D_model.word_to_id == C_model.word_to_id
+        assert wid == model.word_to_id
     else:
         wid = model.word_to_id
         rand_ids = torch.tensor([wid[word] for word in random_words], device=device)
@@ -114,10 +120,10 @@ for path in tqdm(checkpoints):
 
             deno_grounding: Dict[int, Set[int]] = {}
             for qid in query_ids:
-                qv = D_model.pretrained_embed(qid)
+                qv = model.pretrained_embed(qid)
                 qid = qid.item()
                 qw = model.id_to_word[qid]
-                cos_sim = F.cosine_similarity(qv.unsqueeze(0), D_model.pretrained_embed.weight)
+                cos_sim = F.cosine_similarity(qv.unsqueeze(0), model.pretrained_embed.weight)
                 cos_sim, neighbor_ids = cos_sim.topk(k=top_k + 5, dim=-1)
                 neighbor_ids = [
                     nid for nid in neighbor_ids.tolist()
@@ -128,19 +134,15 @@ for path in tqdm(checkpoints):
         rand_deno = pretrained_neighbors(rand_ids)
         dev_deno = pretrained_neighbors(dev_ids)
         test_deno = pretrained_neighbors(test_ids)
+    # End checking vocabulary equality
 
-    # dev_ids = torch.cat([D_model.liberal_ids, D_model.neutral_ids, D_model.conservative_ids])
+    model.deno_grounding = rand_deno  # NOTE
+    model.deno_grounding.update(dev_deno)
+    model.deno_grounding.update(test_deno)
 
-    D_model.deno_grounding.update(rand_deno)
-    C_model.deno_grounding.update(rand_deno)
-    D_model.deno_grounding.update(dev_deno)
-    C_model.deno_grounding.update(dev_deno)
-    D_model.deno_grounding.update(test_deno)
-    C_model.deno_grounding.update(test_deno)
-
-    row.update(evaluate(dev_ids, 'dev', D_model, C_model))
-    row.update(evaluate(rand_ids, 'random', D_model, C_model))
-    row.update(evaluate(test_ids, 'test', D_model, C_model))
+    row.update(evaluate(dev_ids, 'dev', model))
+    row.update(evaluate(rand_ids, 'random', model))
+    row.update(evaluate(test_ids, 'test', model))
 
     for key, val in row.items():
         if isinstance(val, float):
@@ -151,12 +153,10 @@ for path in tqdm(checkpoints):
     # debug += 1
 
 row = {'path': 'pretrained'}
-D_model.embedding = D_model.pretrained_embed
-C_model.embedding = C_model.pretrained_embed
-row.update(evaluate(dev_ids, 'dev', D_model, C_model))
-row.update(evaluate(rand_ids, 'random', D_model, C_model))
-row.update(evaluate(test_ids, 'test', D_model, C_model))
-
+model.embedding = model.pretrained_embed
+row.update(evaluate(dev_ids, 'dev', model))
+row.update(evaluate(rand_ids, 'random', model))
+row.update(evaluate(test_ids, 'test', model))
 table.append(row)
 
 with open(out_path, 'w') as file:
