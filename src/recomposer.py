@@ -2,7 +2,7 @@ import argparse
 import random
 from copy import copy
 from dataclasses import dataclass
-from typing import Tuple, Optional
+from typing import Tuple, Dict, Optional
 
 import torch
 from torch import nn
@@ -98,7 +98,7 @@ class Recomposer(nn.Module):
             seq_word_ids, deno_labels, cono_labels)
         return D_deno_accuracy, D_cono_accuracy, C_deno_accuracy, C_cono_accuracy
 
-    def NN_cluster_homogeneity(
+    def homemade_homogeneity(
             self,
             query_ids: Vector,
             top_k: int = 5
@@ -109,13 +109,47 @@ class Recomposer(nn.Module):
             query_ids, eval_deno=False, top_k=top_k)
         return D_homogeneity, D_homemade_homogeneity, C_homogeneity, C_homemade_homogeneity
 
+    def tabulate(
+            self,
+            query_ids: Vector,
+            suffix: str,
+            rounding: int = 4
+            ) -> Dict[str, float]:
+        row = {}
+        D_model = self.deno_decomposer
+        C_model = self.cono_decomposer
+        DS_Hdeno, DS_Hcono = D_model.homemade_homogeneity(query_ids, top_k=10)
+        CS_Hdeno, CS_Hcono = C_model.homemade_homogeneity(query_ids, top_k=10)
+
+        row['DS Hdeno'] = DS_Hdeno
+        row['DS Hcono'] = DS_Hcono
+        row['IntraDS Hd - Hc'] = DS_Hdeno - DS_Hcono
+
+        row['CS Hdeno'] = CS_Hdeno
+        row['CS Hcono'] = CS_Hcono
+        row['IntraCS Hc - Hd'] = CS_Hcono - CS_Hdeno
+
+        row['main diagnoal trace'] = (DS_Hdeno + CS_Hcono) / 2  # max all preservation
+        row['nondiagnoal entries negative sum'] = (-DS_Hcono - CS_Hdeno) / 2  # min all discarded
+        row['flattened weighted sum'] = row['main diagnoal trace'] + row['nondiagnoal entries negative sum']
+
+        # row['Inter DS Hd - CS Hd'] = DS_Hdeno - CS_Hdeno
+        # row['Inter CS Hc - DS Hc'] = CS_Hcono - DS_Hcono
+        # row['mean IntraS quality'] = (row['IntraDS Hd - Hc'] + row['IntraCS Hc - Hd']) / 2
+        # row['mean InterS quality'] = (row['Inter DS Hd - CS Hd'] + row['Inter CS Hc - DS Hc']) / 2
+        if not suffix:
+            return {key: round(val, rounding) for key, val in row.items()}
+        else:
+            return {key + suffix: round(val, rounding) for key, val in row.items()}
+
+
 
 class RecomposerExperiment(Experiment):
 
     def __init__(self, config: 'RecomposerConfig'):
         super().__init__(config)
         self.data = LabeledSentences(config)
-        self.dataloader = DataLoader(
+        self.dataloader = nn.utils.DataLoader(
             self.data,
             batch_size=config.batch_size,
             shuffle=True,

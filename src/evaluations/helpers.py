@@ -12,7 +12,7 @@ from decomposer import Decomposer, DecomposerConfig
 from recomposer import Recomposer, RecomposerConfig
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-pretrained_path = PROJECT_ROOT / 'results/congress bill topic/pretrained subset/init.pt'
+pretrained_path = PROJECT_ROOT / 'results/CR_topic/pretrained subset/init.pt'
 print(f'Loading vocabulary from {pretrained_path}')
 PE = torch.load(pretrained_path)['model']
 # PE_embed = PE.embedding.weight.detach().cpu().numpy()
@@ -36,15 +36,24 @@ def load(
     return get_embed(model)
 
 
-def load_en_masse(in_dir: str, endswith: str) -> Dict[str, np.ndarray]:
-    import os  # TODO replace with pathlib
+def load_en_masse(
+        in_dirs: List[Path],
+        patterns: List[str],
+        ) -> Dict[str, np.ndarray]:
+    if not isinstance(in_dirs, List):
+        in_dirs = [in_dirs, ]
+    if not isinstance(patterns, List):
+        patterns = [patterns, ]
+    checkpoints: List[Path] = []
+    for in_dir in in_dirs:
+        for pattern in patterns:
+            checkpoints += list(in_dir.glob(pattern))
+    if len(checkpoints) == 0:
+        raise FileNotFoundError('No model with path pattern found at in_dir?')
+
     models = {}
-    for dirpath, _, filenames in os.walk(in_dir):
-        for file in filenames:
-            if file.endswith(endswith):
-                path = os.path.join(dirpath, file)
-                name = path.lstrip(in_dir).replace('/', ' ')
-                models[name] = load(path)
+    for path in tqdm(checkpoints):
+        models[path.stem] = load(path)
     print(*models.keys(), sep='\n')
     return models
 
@@ -98,10 +107,11 @@ def lazy_load_recomposers(
     # yield PE1
     # del PE1
     PE2 = torch.load(
-        '../../results/congress bill topic/pretrained subset/init.pt',
+        '../../results/CR_topic/pretrained subset/init.pt',
         map_location=device)['model']
     PE2.name = 'pretrained subset'
-    yield PE2, PE2
+    # yield PE2, PE2
+    yield PE2
     del PE2
 
     serial_number = 0
@@ -115,12 +125,13 @@ def lazy_load_recomposers(
         C_model = recomp.cono_decomposer
 
         assert D_model.word_to_id == PE.word_to_id
+        recomp.name = f'M{serial_number}'
         D_model.config = config
         C_model.config = config
-        D_model.name = f'M{serial_number}'
         D_model.stem = path.stem
         D_model.eval()
-        yield D_model, C_model
+        # yield D_model, C_model
+        yield recomp
         serial_number += 1
 
 
@@ -141,7 +152,7 @@ def load_recomposers_en_masse(
 
     D_models = {
         # 'pretrained superset': load(PROJECT_ROOT / 'results/congress bill topic/pretrained superset/init.pt'),
-        'pretrained subset': load(PROJECT_ROOT / 'results/congress bill topic/pretrained subset/init.pt')}
+        'pretrained subset': load(PROJECT_ROOT / 'results/CR_topic/pretrained subset/init.pt')}
     C_models = copy(D_models)
     for path in tqdm(checkpoints):
         tqdm.write(f'Loading {path}')
@@ -265,28 +276,28 @@ class GroundedWord():
 # bernie_bros = get_partisan_words(0, 0.2, min_freq)
 
 
-capitalism: List[GroundedWord] = []
-socialism: List[GroundedWord] = []
-all_words: List[GroundedWord] = []
-for word in PE.word_to_id.keys():
-    word = GroundedWord(word)
-    all_words.append(word)
-    if word.R_ratio < 0.2:  # 0.2:
-        socialism.append(word)
-    # elif word.R_ratio < 0.8:
-    #     cono_bins[1].append(word)
-    elif word.R_ratio > 0.8:  # 0.8:
-        capitalism.append(word)
+# capitalism: List[GroundedWord] = []
+# socialism: List[GroundedWord] = []
+# all_words: List[GroundedWord] = []
+# for word in PE.word_to_id.keys():
+#     word = GroundedWord(word)
+#     all_words.append(word)
+#     if word.R_ratio < 0.2:  # 0.2:
+#         socialism.append(word)
+#     # elif word.R_ratio < 0.8:
+#     #     cono_bins[1].append(word)
+#     elif word.R_ratio > 0.8:  # 0.8:
+#         capitalism.append(word)
 
-print(
-    # f'{len(chauvinism)} chauvinists\n'
-    f'{len(capitalism)} capitalists\n'
-    # f'{len(neoliberal_shills)} neoliberal shills\n'
-    f'{len(socialism)} socialists'
-    # f'{len(bernie_bros)} bernie_bros\n'
-)
+# print(
+#     # f'{len(chauvinism)} chauvinists\n'
+#     f'{len(capitalism)} capitalists\n'
+#     # f'{len(neoliberal_shills)} neoliberal shills\n'
+#     f'{len(socialism)} socialists'
+#     # f'{len(bernie_bros)} bernie_bros\n'
+# )
 
-polarized_words = capitalism + socialism
+# polarized_words = capitalism + socialism
 # crisis_words = chauvinism + bernie_bros
 
 # all_words = [GroundedWord(w) for w in PE.word_to_id.keys()]

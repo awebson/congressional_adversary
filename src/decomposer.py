@@ -262,6 +262,22 @@ class Decomposer(nn.Module):
             cono_homogeneity.append(same_cono / len(neighbor_ids))
         return np.mean(deno_homogeneity), np.mean(cono_homogeneity)
 
+    def tabulate(
+            self,
+            query_ids: Vector,
+            suffix: str,
+            rounding: int = 4
+            ) -> Dict[str, float]:
+        row = {}
+        Hdeno, Hcono = self.homemade_homogeneity(query_ids, top_k=10)
+        row['Hdeno'] = Hdeno
+        row['Hcono'] = Hcono
+        row['Intra Hd - Hc'] = Hdeno - Hcono
+        if not suffix:
+            return {key: round(val, rounding) for key, val in row.items()}
+        else:
+            return {key + suffix: round(val, rounding) for key, val in row.items()}
+
 
 class LabeledSentences(Dataset):
 
@@ -401,20 +417,7 @@ class DecomposerExperiment(Experiment):
                 # if config.print_stats and batch_index % config.print_stats == 0:
                 #     self.print_stats(epoch_index, batch_index, stats)
                 if batch_index % config.eval_dev_set == 0:
-                    deno_accuracy, cono_accuracy = self.model.accuracy(
-                        self.data.dev_seq.to(self.device),
-                        self.data.dev_deno_labels.to(self.device),
-                        self.data.dev_cono_labels.to(self.device))
-
-                    Hdeno, Hcono = model.homemade_homogeneity(self.dev_ids)
-                    self.update_tensorboard({
-                        # 'Denotation Decomposer/nonpolitical_word_sim_cf_pretrained': deno_check,
-                        'Decomposer/accuracy_dev_deno': deno_accuracy,
-                        # 'Connotation Decomposer/nonpolitical_word_sim_cf_pretrained': cono_check,
-                        'Decomposer/accuracy_dev_cono': cono_accuracy,
-                        'Decomposer/Topic Homogeneity': Hdeno,
-                        'Decomposer/Party Homogeneity': Hcono,
-                    })
+                    self.validation()
                 self.tb_global_step += 1
             # End Batches
             # self.lr_scheduler.step()
@@ -434,6 +437,21 @@ class DecomposerExperiment(Experiment):
                         self.data.dev_cono_labels.to(self.device),
                         error_analysis_path=analysis_path)
         # End Epochs
+
+    def validation(self) -> None:
+        deno_accuracy, cono_accuracy = self.model.accuracy(
+            self.data.dev_seq.to(self.device),
+            self.data.dev_deno_labels.to(self.device),
+            self.data.dev_cono_labels.to(self.device))
+        Hdeno, Hcono = self.model.homemade_homogeneity(self.dev_ids)
+        self.update_tensorboard({
+            # 'Denotation Decomposer/nonpolitical_word_sim_cf_pretrained': deno_check,
+            'Decomposer/accuracy_dev_deno': deno_accuracy,
+            # 'Connotation Decomposer/nonpolitical_word_sim_cf_pretrained': cono_check,
+            'Decomposer/accuracy_dev_cono': cono_accuracy,
+            'Decomposer/Topic Homogeneity': Hdeno,
+            'Decomposer/Party Homogeneity': Hcono,
+        })
 
 
 @dataclass
