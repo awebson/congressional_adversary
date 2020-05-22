@@ -44,7 +44,7 @@ class Recomposer(nn.Module):
         self.cono_decomposer = Decomposer(cono_config, data)
 
         # Recomposer
-        self.recomposer = nn.Linear(600, 300)
+        # self.recomposer = nn.Linear(600, 300)
         self.rho = config.recomposer_rho
         self.to(self.device)
 
@@ -66,8 +66,8 @@ class Recomposer(nn.Module):
             center_word_ids, context_word_ids,
             seq_word_ids, cono_labels, recompose=True)
 
-        recomposed = self.recomposer(torch.cat((deno_vecs, cono_vecs), dim=-1))
-        # recomposed = deno_vecs + cono_vecs  # cosine similarity ignores magnitude
+        # recomposed = self.recomposer(torch.cat((deno_vecs, cono_vecs), dim=-1))
+        recomposed = deno_vecs + cono_vecs  # cosine similarity ignores magnitude
         pretrained = self.deno_decomposer.pretrained_embed(seq_word_ids)
         L_R = 1 - F.cosine_similarity(recomposed, pretrained, dim=-1).mean()
 
@@ -96,17 +96,6 @@ class Recomposer(nn.Module):
         C_cono_accuracy = self.cono_decomposer.accuracy(
             seq_word_ids, cono_labels)
         return D_cono_accuracy, C_cono_accuracy
-
-    # def NN_cluster_homogeneity(
-    #         self,
-    #         query_ids: Vector,
-    #         top_k: int = 5
-    #         ) -> Tuple[float, ...]:
-    #     D_homogeneity, D_homemade_homogeneity = self.deno_decomposer.NN_cluster_homogeneity(
-    #         query_ids, eval_deno=True, top_k=top_k)
-    #     C_homogeneity, C_homemade_homogeneity = self.cono_decomposer.NN_cluster_homogeneity(
-    #         query_ids, eval_deno=False, top_k=top_k)
-    #     return D_homogeneity, D_homemade_homogeneity, C_homogeneity, C_homemade_homogeneity
 
 
 class RecomposerExperiment(Experiment):
@@ -145,8 +134,8 @@ class RecomposerExperiment(Experiment):
         #     self.model.cono_decomposer.deno_decoder.parameters(),
         #     lr=config.learning_rate)
 
-        self.recomp_params = self.model.recomposer.parameters()
-        self.R_optimizer = config.optimizer(self.recomp_params, lr=config.learning_rate)
+        # self.recomp_params = self.model.recomposer.parameters()
+        # self.R_optimizer = config.optimizer(self.recomp_params, lr=config.learning_rate)
 
         self.to_be_saved = {
             'config': self.config,
@@ -201,9 +190,9 @@ class RecomposerExperiment(Experiment):
                 nn.utils.clip_grad_norm_(self.C_cono_parms, grad_clip)
                 self.C_cono_optimizer.step()
 
-                # Recomposer
-                nn.utils.clip_grad_norm_(self.recomp_params, grad_clip)
-                self.R_optimizer.step()
+                # # Recomposer
+                # nn.utils.clip_grad_norm_(self.recomp_params, grad_clip)
+                # self.R_optimizer.step()
 
                 if batch_index % config.update_tensorboard == 0:
                     D_cono_acc, C_cono_acc = model.accuracy(
@@ -253,76 +242,63 @@ class RecomposerExperiment(Experiment):
         #     self.data.dev_cono_labels.to(self.device))
         model = self.model
         D_model = model.deno_decomposer
-        DH_lib, CH_lib, CHD_lib = D_model.homogeneity(D_model.liberal_ids)
-        DH_neu, CH_neu, CHD_neu = D_model.homogeneity(D_model.neutral_ids)
-        DH_con, CH_con, CHD_con = D_model.homogeneity(D_model.conservative_ids)
+        DS_Hdeno, DS_Hcono = D_model.homemade_homogeneity(D_model.dev_ids)
+        _, DS_Hcono_SP = D_model.SciPy_homogeneity(D_model.dev_ids)
+
         mean_delta, abs_rhos = word_sim.mean_delta(
             D_model.embedding.weight, D_model.pretrained_embed.weight,
             model.id_to_word, reduce=False)
         cos_sim = F.cosine_similarity(
             D_model.embedding.weight, D_model.pretrained_embed.weight).mean()
         self.update_tensorboard({
-            'Denotation Decomposer/Denotation Homogeneity/liberal': DH_lib,
-            'Denotation Decomposer/Denotation Homogeneity/conservative': DH_con,
-            'Denotation Decomposer/Denotation Homogeneity/neutral': DH_neu,
-            'Denotation Decomposer/Connotation Homogeneity/liberal': CH_lib,
-            'Denotation Decomposer/Connotation Homogeneity/conservative': CH_con,
-            'Denotation Decomposer/Connotation Homogeneity/neutral': CH_neu,
-            'Denotation Decomposer/Connotation Homogeneity Discrete/liberal': CHD_lib,
-            'Denotation Decomposer/Connotation Homogeneity Discrete/conservative': CHD_con,
-            'Denotation Decomposer/Connotation Homogeneity Discrete/neutral': CHD_neu,
+            'Denotation Space/Neighbor Overlap': DS_Hdeno,
+            'Denotation Space/Party Homogeneity': DS_Hcono,
+            'Denotation Space/Party Homogeneity SciPy': DS_Hcono_SP,
+            'Denotation Space/Overlap - Party': DS_Hdeno - DS_Hcono,
 
-            'Denotation Decomposer/rho difference cf pretrained': mean_delta,
-            'Denotation Decomposer/MTurk-771': abs_rhos[0],
-            'Denotation Decomposer/cosine cf pretrained': cos_sim
+            'Denotation Space/rho difference cf pretrained': mean_delta,
+            'Denotation Space/MTurk-771': abs_rhos[0],
+            'Denotation Space/cosine cf pretrained': cos_sim
         })
 
         C_model = model.cono_decomposer
-        DH_lib, CH_lib, CHD_lib = C_model.homogeneity(C_model.liberal_ids)
-        DH_neu, CH_neu, CHD_neu = C_model.homogeneity(C_model.neutral_ids)
-        DH_con, CH_con, CHD_con = C_model.homogeneity(C_model.conservative_ids)
+        CS_Hdeno, CS_Hcono = C_model.homemade_homogeneity(C_model.dev_ids)
+        _, CS_Hcono_SP = C_model.SciPy_homogeneity(C_model.dev_ids)
         mean_delta, abs_rhos = word_sim.mean_delta(
             C_model.embedding.weight, C_model.pretrained_embed.weight,
             model.id_to_word, reduce=False)
         cos_sim = F.cosine_similarity(
             C_model.embedding.weight, C_model.pretrained_embed.weight).mean()
         self.update_tensorboard({
-            'Connotation Decomposer/Denotation Homogeneity/liberal': DH_lib,
-            'Connotation Decomposer/Denotation Homogeneity/conservative': DH_con,
-            'Connotation Decomposer/Denotation Homogeneity/neutral': DH_neu,
-            'Connotation Decomposer/Connotation Homogeneity/liberal': CH_lib,
-            'Connotation Decomposer/Connotation Homogeneity/conservative': CH_con,
-            'Connotation Decomposer/Connotation Homogeneity/neutral': CH_neu,
-            'Connotation Decomposer/Connotation Homogeneity Discrete/liberal': CHD_lib,
-            'Connotation Decomposer/Connotation Homogeneity Discrete/conservative': CHD_con,
-            'Connotation Decomposer/Connotation Homogeneity Discrete/neutral': CHD_neu,
+            'Connotation Space/Neighbor Overlap': CS_Hdeno,
+            'Connotation Space/Party Homogeneity': CS_Hcono,
+            'Connotation Space/Party Homogeneity SciPy': CS_Hcono_SP,
+            'Connotation Space/Party - Overlap': CS_Hcono - CS_Hdeno,
 
-            'Connotation Decomposer/rho difference cf pretrained': mean_delta,
-            'Connotation Decomposer/MTurk-771': abs_rhos[0],
-            'Connotation Decomposer/cosine cf pretrained': cos_sim
+            'Connotation Space/rho difference cf pretrained': mean_delta,
+            'Connotation Space/MTurk-771': abs_rhos[0],
+            'Connotation Space/cosine cf pretrained': cos_sim
         })
 
-        # with torch.no_grad():
-        #     # sample = torch.randint(
-        #     #     D_model.embedding.num_embeddings, size=(25_000,), device=self.device)
-        #     sample = torch.arange(D_model.embedding.num_embeddings, device=self.device)
-        #     recomposed = model.recomposer(
-        #         torch.cat((
-        #             D_model.embedding(sample),
-        #             C_model.embedding(sample)),
-        #             dim=-1))
+        with torch.no_grad():
+            # sample = torch.randint(
+            #     D_model.embedding.num_embeddings, size=(25_000,), device=self.device)
+            sample = torch.arange(D_model.embedding.num_embeddings, device=self.device)
+            recomposed = D_model.embedding(sample) + C_model.embedding(sample)
 
-        # mean_delta, abs_rhos = word_sim.mean_delta(
-        #     recomposed,
-        #     D_model.pretrained_embed.weight,
-        #     model.id_to_word,
-        #     reduce=False)
-        # self.update_tensorboard({
-        #     'Word Similarities/rho difference cf pretrained': mean_delta,
-        #     'Word Similarities/MTurk-771': abs_rhos[0],
-        #     'Word Similarities/cosine similarity':
-        #         F.cosine_similarity(recomposed, D_model.pretrained_embed(sample), dim=1).mean()
-        # })
+        mean_delta, abs_rhos = word_sim.mean_delta(
+            recomposed,
+            D_model.pretrained_embed.weight,
+            model.id_to_word,
+            reduce=False)
+        self.update_tensorboard({
+            'Recomposer/mean IntraSpace quality': ((DS_Hdeno - DS_Hcono) + (CS_Hcono - CS_Hdeno)) / 2,
+
+            'Recomposer/rho difference cf pretrained': mean_delta,
+            'Recomposer/MTurk-771': abs_rhos[0],
+            'Recomposer/cosine similarity':
+                F.cosine_similarity(recomposed, D_model.pretrained_embed(sample), dim=1).mean()
+        })
 
 
 @dataclass
@@ -359,7 +335,7 @@ class RecomposerConfig():
     architecture: str = 'L1'
     batch_size: int = 1024
     embed_size: int = 300
-    num_epochs: int = 15
+    num_epochs: int = 10
     encoder_update_cycle: int = 1  # per batch
     decoder_update_cycle: int = 1  # per batch
 

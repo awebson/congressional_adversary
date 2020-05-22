@@ -39,7 +39,7 @@ class Decomposer(nn.Module):
         self.init_embedding(config, data.word_to_id)
 
         # Dennotation Loss: Skip-Gram Negative Sampling
-        # self.deno_decoder = nn.Linear(sent_repr_size, num_deno_classes)
+        # self.cosine_loss = nn.CosineEmbeddingLoss()
 
         # Connotation Loss: Party Classifier
         self.cono_decoder = config.cono_decoder
@@ -152,6 +152,9 @@ class Decomposer(nn.Module):
         self.deno_grounding.update(pretrained_neighbors(self.neutral_ids))
         self.deno_grounding.update(pretrained_neighbors(self.conservative_ids))
 
+        self.dev_ids = torch.cat(
+            [self.liberal_ids, self.neutral_ids, self.conservative_ids])
+
     def forward(
             self,
             center_word_ids: Vector,
@@ -163,6 +166,22 @@ class Decomposer(nn.Module):
         word_vecs: R3Tensor = self.embedding(seq_word_ids)
         seq_repr: Matrix = torch.mean(word_vecs, dim=1)  # TODO mask out <PAD>
 
+        # negative_context_ids = torch.multinomial(
+        #     self.negative_sampling_probs,
+        #     len(true_context_ids),
+        #     replacement=True
+        #     ).to(self.device)
+
+        # center = self.embedding(center_word_ids)
+        # true_context = self.embedding(true_context_ids)
+        # negative_context = self.embedding(negative_context_ids)
+        # # import IPython
+        # # IPython.embed()
+
+        # deno_loss = (
+        #     F.cosine_embedding_loss(center, true_context, torch.ones_like(center_word_ids)) -
+        #     F.cosine_embedding_loss(center, negative_context, torch.zeros_like(center_word_ids))
+        # )
         deno_loss = self.skip_gram_loss(center_word_ids, true_context_ids)
 
         cono_logits = self.cono_decoder(seq_repr)
@@ -195,9 +214,6 @@ class Decomposer(nn.Module):
         center = self.embedding(center_word_ids)
         true_context = self.embedding(true_context_ids)
         negative_context = self.embedding(negative_context_ids)
-        # center = self.deno_decoder(encoded_center)
-        # true_context = self.deno_decoder(encoded_true_context)
-        # negative_context = self.deno_decoder(encoded_negative_context)
 
         # batch_size * embed_size
         objective = torch.sum(  # dot product
@@ -569,32 +585,24 @@ class DecomposerExperiment(Experiment):
         # End Epochs
 
     def validation(self) -> None:
-        model = self.model
-        # deno_accuracy, cono_accuracy = model.accuracy(
-        #     self.data.dev_seq.to(self.device),
-        #     self.data.dev_deno_labels.to(self.device),
-        #     self.data.dev_cono_labels.to(self.device))
+        D_model = self.model
+        DS_Hdeno, DS_Hcono = D_model.homemade_homogeneity(D_model.dev_ids)
+        _, DS_Hcono_SP = D_model.SciPy_homogeneity(D_model.dev_ids)
 
-        DH_lib, CH_lib, CHD_lib = model.homogeneity(model.liberal_ids)
-        DH_neu, CH_neu, CHD_neu = model.homogeneity(model.neutral_ids)
-        DH_con, CH_con, CHD_con = model.homogeneity(model.conservative_ids)
-
+        mean_delta, abs_rhos = word_sim.mean_delta(
+            D_model.embedding.weight, D_model.pretrained_embed.weight,
+            D_model.id_to_word, reduce=False)
+        cos_sim = F.cosine_similarity(
+            D_model.embedding.weight, D_model.pretrained_embed.weight).mean()
         self.update_tensorboard({
-            'Denotation Homogeneity/liberal': DH_lib,
-            'Denotation Homogeneity/conservative': DH_con,
-            'Denotation Homogeneity/neutral': DH_neu,
-            'Connotation Homogeneity/liberal': CH_lib,
-            'Connotation Homogeneity/conservative': CH_con,
-            'Connotation Homogeneity/neutral': CH_neu,
-            'Connotation Homogeneity Discrete/liberal': CHD_lib,
-            'Connotation Homogeneity Discrete/conservative': CHD_con,
-            'Connotation Homogeneity Discrete/neutral': CHD_neu,
+            'Denotation Space/Neighbor Overlap': DS_Hdeno,
+            'Denotation Space/Party Homogeneity': DS_Hcono,
+            'Denotation Space/Party Homogeneity SciPy': DS_Hcono_SP,
+            'Denotation Space/Overlap - Party': DS_Hdeno - DS_Hcono,
 
-
-            'Word Similarities/nonpolitical_cf_pretrained':
-                word_sim.mean_delta(model.embedding.weight, model.pretrained_embed.weight, model.id_to_word),
-            'Word Similarities/cosine_sim_cf_pretrained':
-                F.cosine_similarity(model.embedding.weight, model.pretrained_embed.weight).mean(),
+            'Denotation Space/rho difference cf pretrained': mean_delta,
+            'Denotation Space/MTurk-771': abs_rhos[0],
+            'Denotation Space/cosine cf pretrained': cos_sim
         })
 
 
@@ -614,9 +622,9 @@ class DecomposerConfig():
     delta: float = 1  # denotation classifier weight 𝛿
     gamma: float = 1  # connotation classifier weight 𝛾
 
-    max_adversary_loss: Optional[float] = 10
+    max_adversary_loss: Optional[float] = None
 
-    architecture: str = 'L4'
+    architecture: str = 'L1'
     dropout_p: float = 0
     batch_size: int = 1024
     embed_size: int = 300
