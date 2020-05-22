@@ -35,6 +35,7 @@ class Decomposer(nn.Module):
         self.id_to_word = data.id_to_word
         self.delta = config.delta
         self.gamma = config.gamma
+        self.rho = config.rho
         self.max_adversary_loss = config.max_adversary_loss
         self.init_embedding(config, data.word_to_id)
 
@@ -187,17 +188,20 @@ class Decomposer(nn.Module):
         cono_logits = self.cono_decoder(seq_repr)
         cono_loss = F.cross_entropy(cono_logits, cono_labels)
 
+        overcorrect_loss = 1 - F.cosine_similarity(
+            word_vecs, self.pretrained_embed(seq_word_ids), dim=-1).mean()
+
         if self.max_adversary_loss:
             if self.gamma < 0:  # remove connotation
                 cono_loss = torch.clamp(cono_loss, max=self.max_adversary_loss)
             else:  # remove denotation
                 deno_loss = torch.clamp(deno_loss, max=self.max_adversary_loss)
-        decomposer_loss = self.delta * deno_loss + self.gamma * cono_loss
+        decomposer_loss = self.delta * deno_loss + self.gamma * cono_loss + self.rho * overcorrect_loss
 
         if recompose:
             return decomposer_loss, deno_loss, cono_loss, word_vecs
         else:
-            return decomposer_loss, deno_loss, cono_loss
+            return decomposer_loss, deno_loss, cono_loss, overcorrect_loss
 
     def skip_gram_loss(
             self,
@@ -548,7 +552,7 @@ class DecomposerExperiment(Experiment):
                 cono_labels = batch[3].to(self.device)
 
                 model.zero_grad()
-                L_decomp, l_deno, l_cono = model(
+                L_decomp, l_deno, l_cono, l_overcorrect = model(
                     center_word_ids, context_word_ids, seq_word_ids, cono_labels)
                 L_decomp.backward()
                 # l_cono.backward(retain_graph=True)
@@ -566,6 +570,7 @@ class DecomposerExperiment(Experiment):
                     stats = {
                         'Decomposer/deno_loss': l_deno,
                         'Decomposer/cono_loss': l_cono,
+                        'Decomposer/overcorrect_loss': l_overcorrect,
                         # 'Decomposer/accuracy_train_deno': deno_accuracy,
                         'Decomposer/accuracy_train_cono': cono_accuracy,
                         'Decomposer/combined_loss': L_decomp
@@ -621,14 +626,15 @@ class DecomposerConfig():
     decomposed_size: int = 300
     delta: float = 1  # denotation classifier weight 𝛿
     gamma: float = 1  # connotation classifier weight 𝛾
+    rho: float = 100
 
-    max_adversary_loss: Optional[float] = None
+    max_adversary_loss: Optional[float] = 10
 
-    architecture: str = 'L1'
+    architecture: str = 'L4'
     dropout_p: float = 0
     batch_size: int = 1024
     embed_size: int = 300
-    num_epochs: int = 15
+    num_epochs: int = 10
     # encoder_update_cycle: int = 1  # per batch
     # decoder_update_cycle: int = 1  # per batch
 

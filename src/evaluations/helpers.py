@@ -18,7 +18,7 @@ BASE_DIR = Path(__file__).parent.parent.parent / 'results'
 # base_path = BASE_DIR / 'news/validation/pretrained/init.pt'
 # base_path = BASE_DIR / '3bins/pretrained/init.pt'
 
-base_path = BASE_DIR / 'search/pretrained/init.pt'
+base_path = BASE_DIR / 'PN/linear_recomposer/pretrained/init.pt'
 print(f'Loading vocabulary from {base_path}')
 PE = torch.load(base_path)['model']
 WTI = PE.word_to_id
