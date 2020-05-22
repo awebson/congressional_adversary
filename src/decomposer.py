@@ -2,15 +2,17 @@ import argparse
 import random
 import pickle
 import os
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Tuple, List, Dict, Counter, Optional
 
 import numpy as np
 import torch
 from torch import nn
+from torch.nn import functional as F
 from torch.nn.utils import rnn
 from torch.utils.data import Dataset, DataLoader
-from sklearn.metrics import homogeneity_score
+# from sklearn.metrics import homogeneity_score
 from tqdm import tqdm
 import editdistance  # for excluding trivial nearest neighbors
 
@@ -34,35 +36,24 @@ class Decomposer(nn.Module):
             config: 'DecomposerConfig',
             data: 'LabeledSentences'):
         super().__init__()
-
-        vocab_size = len(data.word_to_id)
-        if config.pretrained_embedding is not None:
-            config.embed_size = data.pretrained_embedding.shape[1]
-            self.embedding = nn.Embedding.from_pretrained(data.pretrained_embedding)
-        else:
-            self.embedding = nn.Embedding(vocab_size, config.embed_size)
-            init_range = 1.0 / config.embed_size
-            nn.init.uniform_(self.embedding.weight.data, -init_range, init_range)
-        self.embedding.weight.requires_grad = not config.freeze_embedding
-
+        self.init_embedding(config, data.word_to_id)
         num_deno_classes = len(data.deno_to_id)
         num_cono_classes = 2
         repr_size = 300
 
         # Dennotation Loss: Skip-Gram Negative Sampling
-        # self.deno_decoder = nn.Linear(repr_size, num_deno_classes)
         self.deno_decoder = config.deno_architecture
         assert self.deno_decoder[0].in_features == repr_size
         assert self.deno_decoder[-2].out_features == num_deno_classes
 
         # Connotation Loss: Party Classifier
-        # self.cono_decoder = nn.Linear(repr_size, num_cono_classes)
         self.cono_decoder = config.cono_architecture
         assert self.cono_decoder[-2].out_features == num_cono_classes
 
         self.delta = config.delta
         self.gamma = config.gamma
-        self.beta = config.beta
+        self.rho = config.rho
+        self.max_adversary_loss = config.max_adversary_loss
         self.device = config.device
         self.to(self.device)
 
@@ -77,6 +68,24 @@ class Decomposer(nn.Module):
         self.id_to_word = data.id_to_word
         self.counts = data.counts  # saved just in case
         self.grounding = data.grounding
+
+    def init_embedding(
+            self,
+            config: 'DecomposerConfig',
+            word_to_id: Dict[str, int]
+            ) -> None:
+        if config.pretrained_embedding is not None:
+            self.embedding = Experiment.load_txt_embedding(
+                config.pretrained_embedding, word_to_id)
+        else:
+            self.embedding = nn.Embedding(len(word_to_id), config.embed_size)
+            init_range = 1.0 / config.embed_size
+            nn.init.uniform_(self.embedding.weight.data, -init_range, init_range)
+        self.embedding.weight.requires_grad = not config.freeze_embedding
+
+        # freeze a copy of the pretrained embedding
+        self.pretrained_embed = nn.Embedding.from_pretrained(self.embedding.weight)
+        self.pretrained_embed.weight.requires_grad = False
 
     def forward(
             self,
@@ -94,13 +103,23 @@ class Decomposer(nn.Module):
         cono_logits = self.cono_decoder(seq_repr)
         cono_loss = nn.functional.cross_entropy(cono_logits, cono_labels)
 
-        decomposer_loss = (self.delta * deno_loss +
-                           self.gamma * cono_loss +
-                           self.beta)
+        overcorrect_loss = 1 - F.cosine_similarity(
+            word_vecs, self.pretrained_embed(seq_word_ids), dim=-1).mean()
+
+        if self.max_adversary_loss:
+            if self.gamma < 0:  # remove connotation
+                cono_loss = torch.clamp(cono_loss, max=self.max_adversary_loss)
+            else:  # remove denotation
+                deno_loss = torch.clamp(deno_loss, max=self.max_adversary_loss)
+        decomposer_loss = (
+            self.delta * deno_loss
+            + self.gamma * cono_loss
+            + self.rho * overcorrect_loss)
+
         if recompose:
             return decomposer_loss, deno_loss, cono_loss, word_vecs
         else:
-            return decomposer_loss, deno_loss, cono_loss
+            return decomposer_loss, deno_loss, cono_loss, overcorrect_loss
 
     def predict(self, seq_word_ids: Vector) -> Vector:
         self.eval()
@@ -171,24 +190,24 @@ class Decomposer(nn.Module):
             query_ids: Vector,
             top_k: int = 10,
             verbose: bool = False,
-            ) -> List[Vector]:
+            ) -> Matrix:
         with torch.no_grad():
             query_vectors = self.embedding(query_ids)
-        try:
-            cos_sim = nn.functional.cosine_similarity(
-                query_vectors.unsqueeze(1),
-                self.embedding.weight.unsqueeze(0),
-                dim=2)
-        except RuntimeError:  # insufficient GPU memory
-            cos_sim = torch.stack([
-                nn.functional.cosine_similarity(
-                    q.unsqueeze(0), self.embedding.weight)
-                for q in query_vectors])
-        cos_sim, neighbor_ids = cos_sim.topk(k=top_k + 10, dim=-1)
-        if verbose:
-            return cos_sim, neighbor_ids
-        else:
-            return neighbor_ids
+            try:
+                cos_sim = F.cosine_similarity(
+                    query_vectors.unsqueeze(1),
+                    self.embedding.weight.unsqueeze(0),
+                    dim=2)
+            except RuntimeError:  # insufficient GPU memory
+                cos_sim = torch.stack([
+                    F.cosine_similarity(qv.unsqueeze(0), self.embedding.weight)
+                    for qv in query_vectors])
+            cos_sim, neighbor_ids = cos_sim.topk(k=top_k, dim=-1)
+            if verbose:
+                return cos_sim[:, 1:], neighbor_ids[:, 1:]
+            else:  # excludes the first neighbor, which is always the query itself
+                return neighbor_ids[:, 1:]
+
 
     @staticmethod
     def discretize_cono(skew: float) -> int:
@@ -206,95 +225,42 @@ class Decomposer(nn.Module):
     #     else:
     #         return 2
 
-    def NN_cluster_homogeneity(
+    def homemade_homogeneity(
             self,
             query_ids: Vector,
-            probe: str,  # either 'deno' or 'cono'
             top_k: int = 10
             ) -> Tuple[float, float]:
-        top_neighbor_ids = self.nearest_neighbors(query_ids, top_k)
-        cluster_ids = []
-        true_labels = []
-        naive_homogeneity = []
-        for query_index, sorted_target_indices in enumerate(top_neighbor_ids):
+        top_neighbor_ids = self.nearest_neighbors(query_ids, top_k + 5)
+        ground = self.grounding
+        deno_homogeneity = []
+        cono_homogeneity = []
+        for query_index, neighbor_ids in enumerate(top_neighbor_ids):
             query_id = query_ids[query_index].item()
             query_word = self.id_to_word[query_id]
-            cluster_id = query_index
 
-            num_same_label = 0
-            if probe == 'deno':
-                query_label = self.deno_to_id[self.grounding[query_word]['majority_deno']]
-            elif probe == 'cono':
-                query_label = self.discretize_cono(self.grounding[query_word]['R_ratio'])
+            neighbor_ids = [
+                nid for nid in neighbor_ids.tolist()
+                if editdistance.eval(query_word, self.id_to_word[nid]) > 3]
+            neighbor_ids = neighbor_ids[:top_k]
+            if len(neighbor_ids) == 0:
+                # print(query_word, [self.id_to_word[i.item()]
+                #                    for i in top_neighbor_ids[query_index]])
+                # raise RuntimeWarning
+                continue
 
-            num_neighbors = 0
-            for sort_rank, target_id in enumerate(sorted_target_indices):
-                target_id = target_id.item()
-                if num_neighbors == top_k:
-                    break
-                if query_id == target_id:
-                    continue
-                target_word = self.id_to_word[target_id]
-                if editdistance.eval(query_word, target_word) < 3:
-                    continue
-                num_neighbors += 1
-
-                if probe == 'deno':
-                    neighbor_label = self.deno_to_id[
-                        self.grounding[target_word]['majority_deno']]
-                elif probe == 'cono':
-                    neighbor_label = self.discretize_cono(
-                        self.grounding[target_word]['R_ratio'])
-                cluster_ids.append(cluster_id)
-                true_labels.append(neighbor_label)
-
-                if neighbor_label == query_label:
-                    num_same_label += 1
-            # End Looping Nearest Neighbors
-            naive_homogeneity.append(num_same_label / top_k)
-
-        homemade = np.mean(naive_homogeneity)
-        homogeneity = homogeneity_score(true_labels, cluster_ids)
-        return homemade
-        # return homogeneity
-
-
-
-
-    # def homemade_heterogeneity(
-    #         self,
-    #         query_ids: Vector,
-    #         top_neighbor_ids: List[Vector],
-    #         top_k: int = 10
-    #         ) -> float:
-    #     """based on distance between connotation ratios"""
-    #     heterogeneity = []
-    #     for query_index, sorted_target_indices in enumerate(top_neighbor_ids):
-    #         query_id = query_ids[query_index].item()
-    #         query_word = self.id_to_word[query_id]
-    #         num_neighbors = 0
-
-    #         query_R_ratio = self.grounding[query_word]['R_ratio']
-    #         freq_ratio_distances = []
-    #         for sort_rank, target_id in enumerate(sorted_target_indices):
-    #             target_id = target_id.item()
-    #             if num_neighbors == top_k:
-    #                 break
-    #             if query_id == target_id:
-    #                 continue
-    #             # target_id = target_ids[target_index]  # target is always all embed
-    #             target_words = self.id_to_word[target_id]
-    #             if editdistance.eval(query_word, target_words) < 3:
-    #                 continue
-    #             num_neighbors += 1
-
-    #             # Homemade continuous heterogeneity
-    #             target_R_ratio = self.grounding[target_words]['R_ratio']
-    #             # freq_ratio_distances.append((target_R_ratio - query_R_ratio) ** 2)
-    #             freq_ratio_distances.append(abs(target_R_ratio - query_R_ratio))
-    #         # heterogeneity.append(np.sqrt(np.mean(freq_ratio_distances)))
-    #         heterogeneity.append(np.mean(freq_ratio_distances))
-    #     return np.mean(heterogeneity)
+            query_deno = ground[query_word]['majority_deno']
+            query_cono = self.discretize_cono(ground[query_word]['R_ratio'])
+            same_deno = 0
+            same_cono = 0
+            for nid in neighbor_ids:
+                neighbor_word = self.id_to_word[nid]
+                if ground[neighbor_word]['majority_deno'] == query_deno:
+                    same_deno += 1
+                if self.discretize_cono(ground[neighbor_word]['R_ratio']) == query_cono:
+                    same_cono += 1
+            deno_homogeneity.append(same_deno / len(neighbor_ids))
+            cono_homogeneity.append(same_cono / len(neighbor_ids))
+        return np.mean(deno_homogeneity), np.mean(cono_homogeneity)
 
 
 class LabeledSentences(Dataset):
@@ -321,23 +287,6 @@ class LabeledSentences(Dataset):
             batch_first=True)
         self.dev_deno_labels = torch.tensor(preprocessed['dev_deno_labels'])
         self.dev_cono_labels = torch.tensor(preprocessed['dev_cono_labels'])
-
-        del preprocessed
-
-        if config.pretrained_embedding is not None:
-            if config.pretrained_embedding.endswith('txt'):
-                self.pretrained_embedding: Matrix = Experiment.load_embedding(
-                    config.pretrained_embedding, self.word_to_id)
-            elif config.pretrained_embedding.endswith('pt'):
-                self.pretrained_embedding = torch.load(
-                    config.pretrained_embedding,
-                    map_location=config.device)['model'].embedding.weight
-            else:
-                raise ValueError('Unknown pretrained embedding format.')
-
-        # if config.debug_subset_corpus:
-        #     self.train_word_ids = self.train_word_ids[:config.debug_subset_corpus]
-        #     self.train_labels = self.train_labels[:config.debug_subset_corpus]
 
     def __len__(self) -> int:
         return len(self.train_seq)
@@ -386,48 +335,20 @@ class DecomposerExperiment(Experiment):
             self.model.embedding.parameters(),
             lr=config.learning_rate)
 
+        dev_path = Path('../data/ellie/partisan_sample_val.cr.txt')
+        with open(dev_path) as file:
+            self.dev_ids = torch.tensor(
+                [self.model.word_to_id[word.strip()] for word in file],
+                device=config.device)
+
         self.to_be_saved = {
             'config': self.config,
             'model': self.model}
-        # self.custom_stats_format = (
-        #     'ℒ = {Decomposer/combined_loss:.3f}\t'
-        #     'd = {Decomposer/deno_loss:.3f}\t'
-        #     'c = {Decomposer/cono_loss:.3f}\t'
-        #     'decomp = {Recomposer/recomp:.3f}\t'
-        #     'cono accuracy = {Evaluation/connotation_accuracy:.2%}'
-        # )
-
-    def _train(
-            self,
-            seq_word_ids: Vector,
-            deno_labels: Vector,
-            cono_labels: Vector,
-            update_encoder: bool = True,
-            update_decoder: bool = True
-            ) -> Tuple[float, float, float]:
-        grad_clip = self.config.clip_grad_norm
-        self.model.zero_grad()
-        L_decomp, l_deno, l_cono = self.model(seq_word_ids, deno_labels, cono_labels)
-
-        if update_decoder:
-            l_deno.backward(retain_graph=True)
-            nn.utils.clip_grad_norm_(self.model.deno_decoder.parameters(), grad_clip)
-            self.deno_optimizer.step()
-
-            self.model.zero_grad()
-            l_cono.backward(retain_graph=update_encoder)
-            nn.utils.clip_grad_norm_(self.model.cono_decoder.parameters(), grad_clip)
-            self.cono_optimizer.step()
-
-        if update_encoder:
-            self.model.zero_grad()
-            L_decomp.backward()
-            nn.utils.clip_grad_norm_(self.model.embedding.parameters(), grad_clip)
-            self.decomposer_optimizer.step()
-        return L_decomp.item(), l_deno.item(), l_cono.item()
 
     def train(self) -> None:
+        model = self.model
         config = self.config
+        grad_clip = config.clip_grad_norm
         # # For debugging
         # self.save_everything(
         #     os.path.join(self.config.output_dir, f'init.pt'))
@@ -450,10 +371,20 @@ class DecomposerExperiment(Experiment):
                 seq_word_ids = batch[0].to(self.device)
                 deno_labels = batch[1].to(self.device)
                 cono_labels = batch[2].to(self.device)
-                L_decomp, l_deno, l_cono = self._train(
-                    seq_word_ids, deno_labels, cono_labels,
-                    update_encoder=batch_index % config.encoder_update_cycle == 0,
-                    update_decoder=batch_index % config.decoder_update_cycle == 0)
+
+                model.zero_grad()
+                L_decomp, l_deno, l_cono, l_overcorrect = self.model(
+                    seq_word_ids, deno_labels, cono_labels)
+
+                L_decomp.backward()
+                nn.utils.clip_grad_norm_(model.deno_decoder.parameters(), grad_clip)
+                self.deno_optimizer.step()
+
+                nn.utils.clip_grad_norm_(model.cono_decoder.parameters(), grad_clip)
+                self.cono_optimizer.step()
+
+                nn.utils.clip_grad_norm_(model.embedding.parameters(), grad_clip)
+                self.decomposer_optimizer.step()
 
                 if batch_index % config.update_tensorboard == 0:
                     deno_accuracy, cono_accuracy = self.model.accuracy(
@@ -461,6 +392,7 @@ class DecomposerExperiment(Experiment):
                     stats = {
                         'Decomposer/deno_loss': l_deno,
                         'Decomposer/cono_loss': l_cono,
+                        'Decomposer/overcorrect_loss': l_overcorrect,
                         'Decomposer/accuracy_train_deno': deno_accuracy,
                         'Decomposer/accuracy_train_cono': cono_accuracy,
                         'Decomposer/combined_loss': L_decomp
@@ -474,24 +406,14 @@ class DecomposerExperiment(Experiment):
                         self.data.dev_deno_labels.to(self.device),
                         self.data.dev_cono_labels.to(self.device))
 
-                    # D_h = self.model.homemade_homogeneity_discrete(self.model.Dem_ids)
-                    # R_hd = self.model.homemade_homogeneity_discrete(self.model.GOP_ids)
-                    # N_hd = self.model.homemade_homogeneity_discrete(self.model.neutral_ids)
-
-                    # D_h = self.model.homemade_heterogeneity(self.model.Dem_ids)
-                    # R_hc = self.model.homemade_heterogeneity(self.model.GOP_ids)
-                    # N_hc = self.model.homemade_heterogeneity(self.model.neutral_ids)
+                    Hdeno, Hcono = model.homemade_homogeneity(self.dev_ids)
                     self.update_tensorboard({
                         # 'Denotation Decomposer/nonpolitical_word_sim_cf_pretrained': deno_check,
-                        'Denotation Decomposer/accuracy_dev_deno': deno_accuracy,
+                        'Decomposer/accuracy_dev_deno': deno_accuracy,
                         # 'Connotation Decomposer/nonpolitical_word_sim_cf_pretrained': cono_check,
-                        'Denotation Decomposer/accuracy_dev_cono': cono_accuracy,
-                        # 'Intrinsic Evaluation/Dem_neighbor_homogenity': D_h,
-                        # 'Intrinsic Evaluation/GOP_neighbor_homogenity': R_hd,
-                        # 'Intrinsic Evaluation/GOP_neighbor_heterogeneity_continous': R_hc,
-                        # 'Intrinsic Evaluation/neutral_neighbor_homogenity': N_hd,
-                        # 'Intrinsic Evaluation/neutral_neighbor_heterogeneity_continous': N_hc,
-                        # 'Recomposer/nonpolitical_word_sim_cf_pretrained': recomp_check}
+                        'Decomposer/accuracy_dev_cono': cono_accuracy,
+                        'Decomposer/Topic Homogeneity': Hdeno,
+                        'Decomposer/Party Homogeneity': Hcono,
                     })
                 self.tb_global_step += 1
             # End Batches
@@ -517,11 +439,12 @@ class DecomposerExperiment(Experiment):
 @dataclass
 class DecomposerConfig():
     # Essential
-    # input_dir: str = '../data/processed/bill_mentions/topic_deno'
-    input_dir: str = '../data/processed/bill_mentions/title_deno_context3'
-    num_deno_classes: int = 1029 # 27, 30
+    input_dir: Path = Path('../data/processed/bill_mentions/topic_deno')
+    num_deno_classes: int = 41
+    # input_dir: str = '../data/processed/bill_mentions/title_deno_context3'
+    # num_deno_classes: int = 1029 # 1027, 1030
 
-    output_dir: str = '../results/debug'
+    output_dir: Path = Path('../results/debug')
     device: torch.device = torch.device('cuda')
     debug_subset_corpus: Optional[int] = None
     # dev_holdout: int = 5_000
@@ -529,12 +452,13 @@ class DecomposerConfig():
     num_dataloader_threads: int = 0
     pin_memory: bool = True
 
-    beta: float = 10
     decomposed_size: int = 300
     delta: float = 1  # denotation classifier weight 𝛿
-    gamma: float = -1  # connotation classifier weight 𝛾
+    gamma: float = 1  # connotation classifier weight 𝛾
+    rho: float = 100  # overcorrection loss
+    max_adversary_loss: Optional[float] = 10
 
-    architecture: str = 'L1'
+    architecture: str = 'L4'
     dropout_p: float = 0
     batch_size: int = 128
     embed_size: int = 300
@@ -542,10 +466,10 @@ class DecomposerConfig():
     encoder_update_cycle: int = 1  # per batch
     decoder_update_cycle: int = 1  # per batch
 
-    # pretrained_embedding: Optional[str] = None
-    # pretrained_embedding: Optional[str] = '../data/pretrained_word2vec/for_real.txt'
-    pretrained_embedding: Optional[str] = '../data/pretrained_word2vec/bill_mentions_HS.txt'
-    freeze_embedding: bool = False  # NOTE
+    # pretrained_embedding: Optional[Path] = None
+    # pretrained_embedding: Optional[Path] = '../data/pretrained_word2vec/for_real.txt'
+    pretrained_embedding: Optional[Path] = Path('../data/pretrained_word2vec/bill_mentions_HS.txt')
+    freeze_embedding: bool = False
     # window_radius: int = 5
     # num_negative_samples: int = 10
     optimizer: torch.optim.Optimizer = torch.optim.Adam
@@ -566,15 +490,15 @@ class DecomposerConfig():
     reload_path: Optional[str] = None
     clear_tensorboard_log_in_output_dir: bool = True
     delete_all_exisiting_files_in_output_dir: bool = False
-    auto_save_per_epoch: Optional[int] = 10
+    auto_save_per_epoch: Optional[int] = 5
     auto_save_if_interrupted: bool = False
 
     def __post_init__(self) -> None:
         parser = argparse.ArgumentParser()
         parser.add_argument(
-            '-i', '--input-dir', action='store', type=str)
+            '-i', '--input-dir', action='store', type=Path)
         parser.add_argument(
-            '-o', '--output-dir', action='store', type=str)
+            '-o', '--output-dir', action='store', type=Path)
         parser.add_argument(
             '-gpu', '--device', action='store', type=str)
 
@@ -592,7 +516,7 @@ class DecomposerConfig():
         parser.add_argument(
             '-ep', '--num-epochs', action='store', type=int)
         parser.add_argument(
-            '-pe', '--pretrained-embedding', action='store', type=str)
+            '-pe', '--pretrained-embedding', action='store', type=Path)
         parser.parse_args(namespace=self)
 
         if self.architecture == 'L1':
