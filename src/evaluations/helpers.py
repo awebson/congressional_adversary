@@ -107,10 +107,9 @@ def lazy_load_recomposers(
     # yield PE1
     # del PE1
     PE2 = torch.load(
-        '../../results/CR_topic/pretrained subset/init.pt',
+        '../../results/CR_topic/pretrained subset/init_recomposer.pt',
         map_location=device)['model']
     PE2.name = 'pretrained subset'
-    # yield PE2, PE2
     yield PE2
     del PE2
 

@@ -1,11 +1,13 @@
 import argparse
 import random
 from copy import copy
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Tuple, Dict, Optional
 
 import torch
 from torch import nn
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from decomposer import Decomposer, DecomposerConfig, LabeledSentences
@@ -23,7 +25,6 @@ class Recomposer(nn.Module):
             config: 'RecomposerConfig',
             data: 'LabeledSentences'):
         super().__init__()
-        self.beta = config.beta
         self.delta = config.deno_delta
         self.gamma = config.deno_gamma
         self.device = config.device
@@ -41,12 +42,7 @@ class Recomposer(nn.Module):
         self.cono_decomposer = Decomposer(cono_config, data)
 
         # Recomposer
-        if config.pretrained_embedding is not None:
-            config.embed_size = data.pretrained_embedding.shape[1]
-            self.pretrained_embed = nn.Embedding.from_pretrained(data.pretrained_embedding)
-            self.pretrained_embed.weight.requires_grad = False
-        else:
-            raise ValueError('The Recomposer requires a pretrained embedding.')
+        self.pretrained_embed = self.deno_decomposer.pretrained_embed
         # self.recomposer = nn.Linear(600, 300)
         self.rho = config.recomposer_rho
         self.to(self.device)
@@ -123,20 +119,19 @@ class Recomposer(nn.Module):
 
         row['DS Hdeno'] = DS_Hdeno
         row['DS Hcono'] = DS_Hcono
-        row['IntraDS Hd - Hc'] = DS_Hdeno - DS_Hcono
-
         row['CS Hdeno'] = CS_Hdeno
         row['CS Hcono'] = CS_Hcono
+        row['IntraDS Hd - Hc'] = DS_Hdeno - DS_Hcono
         row['IntraCS Hc - Hd'] = CS_Hcono - CS_Hdeno
+        row['mean IntraS quality'] = (row['IntraDS Hd - Hc'] + row['IntraCS Hc - Hd']) / 2
 
         row['main diagnoal trace'] = (DS_Hdeno + CS_Hcono) / 2  # max all preservation
         row['nondiagnoal entries negative sum'] = (-DS_Hcono - CS_Hdeno) / 2  # min all discarded
         row['flattened weighted sum'] = row['main diagnoal trace'] + row['nondiagnoal entries negative sum']
 
-        # row['Inter DS Hd - CS Hd'] = DS_Hdeno - CS_Hdeno
-        # row['Inter CS Hc - DS Hc'] = CS_Hcono - DS_Hcono
-        # row['mean IntraS quality'] = (row['IntraDS Hd - Hc'] + row['IntraCS Hc - Hd']) / 2
-        # row['mean InterS quality'] = (row['Inter DS Hd - CS Hd'] + row['Inter CS Hc - DS Hc']) / 2
+        row['Inter DS Hd - CS Hd'] = DS_Hdeno - CS_Hdeno
+        row['Inter CS Hc - DS Hc'] = CS_Hcono - DS_Hcono
+        row['mean InterS quality'] = (row['Inter DS Hd - CS Hd'] + row['Inter CS Hc - DS Hc']) / 2
         if not suffix:
             return {key: round(val, rounding) for key, val in row.items()}
         else:
@@ -149,7 +144,7 @@ class RecomposerExperiment(Experiment):
     def __init__(self, config: 'RecomposerConfig'):
         super().__init__(config)
         self.data = LabeledSentences(config)
-        self.dataloader = nn.utils.DataLoader(
+        self.dataloader = DataLoader(
             self.data,
             batch_size=config.batch_size,
             shuffle=True,
@@ -189,9 +184,9 @@ class RecomposerExperiment(Experiment):
             'config': self.config,
             'model': self.model}
 
-        from evaluations.helpers import polarized_words
-        self.eval_word_ids = torch.tensor(
-            [w.word_id for w in polarized_words], device=self.device)
+        # from evaluations.helpers import polarized_words
+        # self.eval_word_ids = torch.tensor(
+        #     [w.word_id for w in polarized_words], device=self.device)
 
     def _train(
             self,
@@ -248,11 +243,8 @@ class RecomposerExperiment(Experiment):
         config = self.config
         model = self.model
         # For debugging
-        # self.save_everything(
-        #     os.path.join(self.config.output_dir, f'untrained.pt'))
-        # import IPython
-        # IPython.embed()
-        # raise SystemExit
+        self.save_everything(self.config.output_dir / 'init_recomposer.pt')
+        raise SystemExit
         if not config.print_stats:
             epoch_pbar = tqdm(range(1, config.num_epochs + 1), desc=config.output_dir)
         else:
@@ -333,10 +325,10 @@ class RecomposerExperiment(Experiment):
 @dataclass
 class RecomposerConfig():
     # Essential
-    input_dir: str = '../data/processed/bill_mentions/topic_deno'
+    input_dir: Path = Path('../data/processed/bill_mentions/topic_deno')
     # input_dir: str = '../data/processed/bill_mentions/title_deno'
 
-    output_dir: str = '../results/debug'
+    output_dir: Path = Path('../results/debug')
     device: torch.device = torch.device('cuda')
     debug_subset_corpus: Optional[int] = None
     # dev_holdout: int = 5_000
@@ -346,7 +338,8 @@ class RecomposerConfig():
 
     delta: Optional[float] = None  # placeholders, assigned programmatically
     gamma: Optional[float] = None
-    beta: float = 10  # bias term
+    max_adversary_loss: Optional[float] = 10
+
     # Denotation Decomposer
     deno_size: int = 300
     deno_delta: float = 1  # denotation weight 𝛿
@@ -370,7 +363,7 @@ class RecomposerConfig():
 
     # pretrained_embedding: Optional[str] = None
     # pretrained_embedding: Optional[str] = '../data/pretrained_word2vec/for_real.txt'
-    pretrained_embedding: Optional[str] = '../data/pretrained_word2vec/bill_mentions_HS.txt'
+    pretrained_embedding: Optional[Path] = Path('../data/pretrained_word2vec/bill_mentions_HS.txt')
     freeze_embedding: bool = False  # NOTE
     # window_radius: int = 5
     # num_negative_samples: int = 10
@@ -398,9 +391,9 @@ class RecomposerConfig():
     def __post_init__(self) -> None:
         parser = argparse.ArgumentParser()
         parser.add_argument(
-            '-i', '--input-dir', action='store', type=str)
+            '-i', '--input-dir', action='store', type=Path)
         parser.add_argument(
-            '-o', '--output-dir', action='store', type=str)
+            '-o', '--output-dir', action='store', type=Path)
         parser.add_argument(
             '-gpu', '--device', action='store', type=str)
 
@@ -422,7 +415,7 @@ class RecomposerConfig():
         parser.add_argument(
             '-ep', '--num-epochs', action='store', type=int)
         parser.add_argument(
-            '-pe', '--pretrained-embedding', action='store', type=str)
+            '-pe', '--pretrained-embedding', action='store', type=Path)
         parser.parse_args(namespace=self)
 
         if self.architecture == 'L1':

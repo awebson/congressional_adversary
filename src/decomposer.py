@@ -52,7 +52,7 @@ class Decomposer(nn.Module):
 
         self.delta = config.delta
         self.gamma = config.gamma
-        self.rho = config.rho
+        self.rho = getattr(config, 'rho', None)
         self.max_adversary_loss = config.max_adversary_loss
         self.device = config.device
         self.to(self.device)

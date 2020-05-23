@@ -13,24 +13,23 @@ from evaluations.helpers import lazy_load_recomposers, PE
 
 # warnings.simplefilter('ignore')
 DEVICE = 'cuda:0'
-in_dir = Path('../../results/CR_topic/decomposer')
+in_dir = Path('../../results/CR_topic/recomposer')
 generator = lazy_load_recomposers(
     in_dir,
+    patterns=['*/epoch2.pt', '*/epoch4.pt', '*/epoch6.pt', '*/epoch8.pt', '*/epoch10.pt', '*/epoch20.pt', '*/epoch50.pt', '*/epoch74.pt', '*/epoch100.pt'],
     # patterns=['*/epoch10.pt', '*/epoch20.pt', '*/epoch50.pt', '*/epoch80.pt', '*/epoch100.pt'],
-    patterns=['*/epoch10.pt', '*/epoch50.pt', '*/epoch100.pt'],
+    # patterns=['*/epoch10.pt', '*/epoch50.pt', '*/epoch100.pt'],
     device=DEVICE)
-out_path = in_dir / 'analysis.tsv'
+out_path = in_dir / 'summary.tsv'
 
 
 rand_path = Path('../../data/ellie/rand_sample.cr.txt')
 with open(rand_path) as file:
     rand_words = [word.strip() for word in file if word.strip() in PE.word_to_id]
 # print(len(rand_words))
-
 dev_path = Path('../../data/ellie/partisan_sample_val.cr.txt')
 with open(dev_path) as file:
     dev_words = [word.strip() for word in file]
-
 test_path = Path('../../data/ellie/partisan_sample.cr.txt')
 with open(test_path) as file:
     test_words = [word.strip() for word in file]
@@ -53,10 +52,10 @@ for model in generator:
             'epoch': D_model.stem,
             'DS delta': D_model.delta,
             'DS gamma': D_model.gamma,
-            'DS delta/gamma': D_model.delta / D_model.gamma,
+            # 'DS delta/gamma': D_model.delta / D_model.gamma,
             'CS delta': C_model.delta,
             'CS gamma': C_model.gamma,
-            'CS delta/gamma': C_model.delta / C_model.gamma,
+            # 'CS delta/gamma': C_model.delta / C_model.gamma,
             'rho': D_model.config.recomposer_rho,
             'dropout': D_model.config.dropout_p}
 
@@ -68,7 +67,8 @@ for model in generator:
     #     break
     # debug += 1
 
-columns = list(table[1].keys()) + list(table[0].keys())
+columns = table[1].keys()
+# columns = list(table[1].keys()) + list(table[0].keys())
 with open(out_path, 'w') as file:
     writer = csv.DictWriter(file, fieldnames=columns, dialect=csv.excel_tab)
     writer.writeheader()
