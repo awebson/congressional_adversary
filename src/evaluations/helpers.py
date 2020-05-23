@@ -18,9 +18,9 @@ BASE_DIR = Path(__file__).parent.parent.parent / 'results'
 # base_path = BASE_DIR / 'news/validation/pretrained/init.pt'
 # base_path = BASE_DIR / '3bins/pretrained/init.pt'
 
-base_path = BASE_DIR / 'PN/linear_recomposer/pretrained/init.pt'
-print(f'Loading vocabulary from {base_path}')
-PE = torch.load(base_path)['model']
+PE_path = BASE_DIR / 'PN/pretrained/init.pt'
+print(f'Loading vocabulary from {PE_path}')
+PE = torch.load(PE_path)['model']
 WTI = PE.word_to_id
 ITW = PE.id_to_word
 print(f'Vocab size = {len(WTI):,}')
@@ -84,7 +84,7 @@ def load(
 def load_en_masse(
         in_dirs: Union[Path, List[Path]],
         patterns: Union[str, List[str]],
-        recomposer: bool = False
+        recomposer: bool = False,
         ) -> Tuple[Dict[str, np.ndarray], ...]:
     if not isinstance(in_dirs, List):
         in_dirs = [in_dirs, ]
@@ -120,6 +120,37 @@ def load_en_masse(
         return D_models, C_models
     else:
         return models
+
+
+def lazy_load_en_masse(
+        in_dirs: Union[Path, List[Path]],
+        patterns: Union[str, List[str]],
+        device: torch.device
+        ) -> Tuple[Dict[str, np.ndarray], ...]:
+    if not isinstance(in_dirs, List):
+        in_dirs = [in_dirs, ]
+    if not isinstance(patterns, List):
+        patterns = [patterns, ]
+    checkpoints: List[Path] = []
+    for in_dir in in_dirs:
+        for pattern in patterns:
+            checkpoints += list(in_dir.glob(pattern))
+    if len(checkpoints) == 0:
+        raise FileNotFoundError(f'No model with path pattern found at {in_dirs}?')
+
+
+    pretrained = torch.load(
+        '../../results/PN/pretrained/init_recomposer.pt',
+        map_location=device)['model']
+    pretrained.name = 'pretrained'
+    yield pretrained
+    del pretrained
+
+    for path in tqdm(checkpoints):
+        tqdm.write(f'Loading {path}')
+        model = torch.load(path, map_location=device)['model']
+        model.name = path.parent.name + ' ' + path.stem
+        yield model
 
 
 def vec(query: str, embed: np.ndarray) -> np.ndarray:

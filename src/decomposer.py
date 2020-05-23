@@ -35,7 +35,7 @@ class Decomposer(nn.Module):
         self.id_to_word = data.id_to_word
         self.delta = config.delta
         self.gamma = config.gamma
-        self.rho = config.rho
+        self.rho = getattr(config, 'overcorrect_rho', None)
         self.max_adversary_loss = config.max_adversary_loss
         self.init_embedding(config, data.word_to_id)
 
@@ -630,7 +630,7 @@ class DecomposerConfig():
     decomposed_size: int = 300
     delta: float = 1  # denotation classifier weight 𝛿
     gamma: float = 1  # connotation classifier weight 𝛾
-    rho: float = 100
+    overcorrect_rho: float = 100
 
     max_adversary_loss: Optional[float] = 10
 

@@ -3,7 +3,7 @@ import random
 from copy import copy
 from pathlib import Path
 from dataclasses import dataclass
-from typing import Tuple, Optional
+from typing import Tuple, Dict, Optional
 
 import torch
 from torch import nn
@@ -26,7 +26,6 @@ class Recomposer(nn.Module):
             config: 'RecomposerConfig',
             data: 'LabeledDocuments'):
         super().__init__()
-        self.beta = config.beta
         self.delta = config.deno_delta
         self.gamma = config.deno_gamma
         self.device = config.device
@@ -97,6 +96,38 @@ class Recomposer(nn.Module):
             seq_word_ids, cono_labels)
         return D_cono_accuracy, C_cono_accuracy
 
+    def tabulate(
+            self,
+            query_ids: Vector,
+            suffix: str,
+            rounding: int = 4
+            ) -> Dict[str, float]:
+        row = {}
+        D_model = self.deno_decomposer
+        C_model = self.cono_decomposer
+        DS_Hdeno, DS_Hcono = D_model.homemade_homogeneity(query_ids, top_k=10)
+        CS_Hdeno, CS_Hcono = C_model.homemade_homogeneity(query_ids, top_k=10)
+
+        row['DS Hdeno'] = DS_Hdeno
+        row['DS Hcono'] = DS_Hcono
+        row['CS Hdeno'] = CS_Hdeno
+        row['CS Hcono'] = CS_Hcono
+        row['IntraDS Hd - Hc'] = DS_Hdeno - DS_Hcono
+        row['IntraCS Hc - Hd'] = CS_Hcono - CS_Hdeno
+        row['mean IntraS quality'] = (row['IntraDS Hd - Hc'] + row['IntraCS Hc - Hd']) / 2
+
+        row['main diagnoal trace'] = (DS_Hdeno + CS_Hcono) / 2  # max all preservation
+        row['nondiagnoal entries negative sum'] = (-DS_Hcono - CS_Hdeno) / 2  # min all discarded
+        row['flattened weighted sum'] = row['main diagnoal trace'] + row['nondiagnoal entries negative sum']
+
+        row['Inter DS Hd - CS Hd'] = DS_Hdeno - CS_Hdeno
+        row['Inter CS Hc - DS Hc'] = CS_Hcono - DS_Hcono
+        row['mean InterS quality'] = (row['Inter DS Hd - CS Hd'] + row['Inter CS Hc - DS Hc']) / 2
+        if not suffix:
+            return {key: round(val, rounding) for key, val in row.items()}
+        else:
+            return {key + suffix: round(val, rounding) for key, val in row.items()}
+
 
 class RecomposerExperiment(Experiment):
 
@@ -146,9 +177,8 @@ class RecomposerExperiment(Experiment):
         grad_clip = config.clip_grad_norm
         model = self.model
         # For debugging
-        # self.save_everything(
-        #     os.path.join(self.config.output_dir, f'untrained.pt'))
-        # raise SystemExit
+        self.save_everything(self.config.output_dir / 'init_recomposer.pt')
+        raise SystemExit
 
         if not config.print_stats:
             epoch_pbar = tqdm(range(1, config.num_epochs + 1), desc=config.output_dir.name)
@@ -313,9 +343,11 @@ class RecomposerConfig():
     num_dataloader_threads: int = 0
     pin_memory: bool = True
 
-    delta: Optional[float] = None  # placeholders, assigned programmatically
+    # placeholders, assigned programmatically
+    delta: Optional[float] = None
     gamma: Optional[float] = None
-    beta: float = 10  # bias term
+    overcorrect_rho: Optional[float] = None
+
     # Denotation Decomposer
     deno_size: int = 300
     deno_delta: float = 1  # denotation weight 𝛿
