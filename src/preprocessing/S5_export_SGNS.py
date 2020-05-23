@@ -1016,12 +1016,20 @@ def export_labeled_documents(
     random.shuffle(export_docs)
     documents = [doc for _, doc in export_docs]
     labels = [label for label, _ in export_docs]
+
+    grounding: Dict[str, Dict] = {}
+    for word in word_to_id.keys():
+        df = D_raw_freq[word]
+        rf = R_raw_freq[word]
+        grounding[word] = {
+            'D': df,
+            'R': rf,
+            'R_ratio': rf / (df + rf)}
+
     cucumbers = {
         'word_to_id': word_to_id,
         'id_to_word': id_to_word,
-        'D_raw_freq': D_raw_freq,
-        'R_raw_freq': R_raw_freq,
-        'combined_frequency': combined_frequency,
+        'grounding': grounding,
         'negative_sampling_probs': negative_sampling_probs,
         'documents': documents,
         'cono_labels': labels}
@@ -1180,7 +1188,7 @@ def main() -> None:
     #     min_word_freq, min_speech_length)
 
     sessions = range(97, 112)
-    output_dir = f'../../data/processed/labeled_documents/for_real'
+    output_dir = f'../../data/processed/CR_skip'
     subsampling_implementation: Optional[str] = 'paper'
     subsampling_threshold = 1e-5
     underscored_dir = '../../data/interim/underscored_corpora'

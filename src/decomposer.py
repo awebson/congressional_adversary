@@ -196,7 +196,11 @@ class Decomposer(nn.Module):
                 cono_loss = torch.clamp(cono_loss, max=self.max_adversary_loss)
             else:  # remove denotation
                 deno_loss = torch.clamp(deno_loss, max=self.max_adversary_loss)
-        decomposer_loss = self.delta * deno_loss + self.gamma * cono_loss + self.rho * overcorrect_loss
+
+        decomposer_loss = (
+            self.delta * deno_loss
+            + self.gamma * cono_loss
+            + self.rho * overcorrect_loss)
 
         if recompose:
             return decomposer_loss, deno_loss, cono_loss, word_vecs
@@ -600,14 +604,14 @@ class DecomposerExperiment(Experiment):
         cos_sim = F.cosine_similarity(
             D_model.embedding.weight, D_model.pretrained_embed.weight).mean()
         self.update_tensorboard({
-            'Denotation Space/Neighbor Overlap': DS_Hdeno,
-            'Denotation Space/Party Homogeneity': DS_Hcono,
-            'Denotation Space/Party Homogeneity SciPy': DS_Hcono_SP,
-            'Denotation Space/Overlap - Party': DS_Hdeno - DS_Hcono,
+            'Decomposed Space/Neighbor Overlap': DS_Hdeno,
+            'Decomposed Space/Party Homogeneity': DS_Hcono,
+            'Decomposed Space/Party Homogeneity SciPy': DS_Hcono_SP,
+            'Decomposed Space/Overlap - Party': DS_Hdeno - DS_Hcono,
 
-            'Denotation Space/rho difference cf pretrained': mean_delta,
-            'Denotation Space/MTurk-771': abs_rhos[0],
-            'Denotation Space/cosine cf pretrained': cos_sim
+            'Decomposed Space/rho difference cf pretrained': mean_delta,
+            'Decomposed Space/MTurk-771': abs_rhos[0],
+            'Decomposed Space/cosine cf pretrained': cos_sim
         })
 
 
