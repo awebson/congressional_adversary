@@ -7,52 +7,22 @@ import torch
 from tqdm import tqdm
 
 # from decomposer import Decomposer, DecomposerConfig
-# from recomposer import Recomposer, RecomposerConfig
-
-from old_congress import Decomposer, DecomposerConfig
-
-# in_dir = Path('../../results/search')
-# patterns = ['*/epoch*.pt']  # 'duplicate/*/epoch*.pt']
-# out_path = Path('../../analysis/news homemade top 10.tsv')
+# in_dir = Path('../../results/PN/decomposer')
+# patterns = ['*/epoch*.pt']
+# out_path = in_dir / 'summary.tsv'
 # random_path = Path('../../data/ellie/rand_sample.hp.txt')
 # dev_path = Path('../../data/ellie/partisan_sample_val.hp.txt')
 # test_path = Path('../../data/ellie/partisan_sample.hp.txt')
 
-in_dir = Path('../../results/sans recomposer')
-patterns = ['*/epoch*.pt']  # 'duplicate/*/epoch*.pt']
-# out_path = Path('../../analysis/CR_skip SciPy top 10.tsv')
-out_path = in_dir / 'top 10.tsv'
+
+from old_congress import Decomposer, DecomposerConfig
+device = torch.device('cuda:0')
+in_dir = Path('../../results/CR_skip/sans recomposer')
+patterns = ['*/epoch*.pt']
+out_path = in_dir / 'summary.tsv'
 random_path = Path('../../data/ellie/rand_sample.cr.txt')
 dev_path = Path('../../data/ellie/partisan_sample_val.cr.txt')
 test_path = Path('../../data/ellie/partisan_sample.cr.txt')
-
-device = torch.device('cuda:0')
-
-def evaluate(word_ids, suffix, model) -> Dict[str, float]:
-    # word_id -> cono_label
-    model.discrete_cono =
-    [for wid in model.id_to_]
-
-
-    model.cono_grounding.topk(1)
-
-    row = {}
-    DS_Hdeno, DS_Hcono = model.SciPy_homogeneity(word_ids, top_k=10)
-    row['SP DS Hdeno'] = DS_Hdeno
-    row['SP DS Hcono'] = DS_Hcono
-    row['SP IntraDS Hd - Hc'] = DS_Hdeno - DS_Hcono
-
-    DS_Hdeno, DS_Hcono = model.homemade_homogeneity(word_ids, top_k=10)
-    row['SP DS Hdeno'] = DS_Hdeno
-    row['SP DS Hcono'] = DS_Hcono
-    row['SP IntraDS Hd - Hc'] = DS_Hdeno - DS_Hcono
-
-    DS_Hcono = model.old_SciPy_homogeneity(word_ids, eval_deno=False, top_k=10)
-    row['OSP DS Hcono'] = DS_Hcono
-
-    DS_Hcono = model.old_homemade_homogeneity(word_ids, eval_deno=False, top_k=10)
-    row['OHM DS Hcono'] = DS_Hcono
-    return {key + f' ({suffix})': val for key, val in row.items()}
 
 
 # def main() -> None:
@@ -140,23 +110,20 @@ for path in tqdm(checkpoints):
     model.deno_grounding.update(dev_deno)
     model.deno_grounding.update(test_deno)
 
-    row.update(evaluate(dev_ids, 'dev', model))
-    row.update(evaluate(rand_ids, 'random', model))
-    row.update(evaluate(test_ids, 'test', model))
+    row.update(model.tabulate(dev_ids, ' (dev)'))
+    row.update(model.tabulate(rand_ids, ' (random)'))
+    row.update(model.tabulate(test_ids, ' (test)'))
 
-    for key, val in row.items():
-        if isinstance(val, float):
-            row[key] = round(val, 4)
     table.append(row)
-    # if debug > 2:
+    # if debug > 5:
     #     break
     # debug += 1
 
 row = {'path': 'pretrained'}
 model.embedding = model.pretrained_embed
-row.update(evaluate(dev_ids, 'dev', model))
-row.update(evaluate(rand_ids, 'random', model))
-row.update(evaluate(test_ids, 'test', model))
+row.update(model.tabulate(dev_ids, ' (dev)'))
+row.update(model.tabulate(rand_ids, ' (random)'))
+row.update(model.tabulate(test_ids, ' (test)'))
 table.append(row)
 
 with open(out_path, 'w') as file:

@@ -396,6 +396,22 @@ class Decomposer(nn.Module):
         cono_homogeneity = homogeneity_score(true_cono_labels, cluster_ids)
         return deno_homogeneity, cono_homogeneity
 
+    def tabulate(
+            self,
+            query_ids: Vector,
+            suffix: str,
+            rounding: int = 4
+            ) -> Dict[str, float]:
+        row = {}
+        Hdeno, Hcono = self.homemade_homogeneity(query_ids, top_k=10)
+        row['Hdeno'] = Hdeno
+        row['Hcono'] = Hcono
+        row['Intra Hd - Hc'] = Hdeno - Hcono
+        if not suffix:
+            return {key: round(val, rounding) for key, val in row.items()}
+        else:
+            return {key + suffix: round(val, rounding) for key, val in row.items()}
+
 
 class LabeledDocuments(torch.utils.data.IterableDataset):
 
