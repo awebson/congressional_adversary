@@ -35,7 +35,7 @@ class Decomposer(nn.Module):
         self.id_to_word = data.id_to_word
         self.delta = config.delta
         self.gamma = config.gamma
-        self.rho = getattr(config, 'overcorrect_rho', None)
+        self.kappa = config.kappa
         self.max_adversary_loss = config.max_adversary_loss
         self.init_embedding(config, data.word_to_id)
 
@@ -72,36 +72,36 @@ class Decomposer(nn.Module):
         # Connotation grounding
         id_to_cono = []
         id_to_freq = []
-        is_unigram = []
+        # is_unigram = []
         # Itereate in order of word ids
         for wid in range(self.embedding.num_embeddings):
             word = self.ground[self.id_to_word[wid]]
             id_to_cono.append(word.cono_PMI)
             id_to_freq.append(word.cono_freq)
-            if '_' in word.word:
-                is_unigram.append(False)
-            else:
-                is_unigram.append(True)
+            # if '_' in word.word:
+            #     is_unigram.append(False)
+            # else:
+            #     is_unigram.append(True)
 
-        combined_freq = torch.tensor(
-            id_to_freq, dtype=torch.int64, device=self.device).sum(dim=1)
         self.cono_grounding = torch.tensor(
             id_to_cono, dtype=torch.float32, device=self.device).clamp(min=0)
         _, self.discrete_cono = self.cono_grounding.topk(1)
+        # combined_freq = torch.tensor(
+        #     id_to_freq, dtype=torch.int64, device=self.device).sum(dim=1)
 
-        gd = self.cono_grounding.clone()  # making a copy to be safe
-        # gd = F.normalize(gd, p=1)  # for freq ratio, not for PMI
+        # gd = self.cono_grounding.clone()  # making a copy to be safe
+        # # gd = F.normalize(gd, p=1)  # for freq ratio, not for PMI
 
-        # Zero out low frequency words
-        gd[combined_freq < 1000] = torch.zeros(3, device=self.device)
-        gd[is_unigram] = torch.zeros(3, device=self.device)
+        # # Zero out low frequency words
+        # gd[combined_freq < 1000] = torch.zeros(3, device=self.device)
+        # gd[is_unigram] = torch.zeros(3, device=self.device)
 
-        num_samples = 300
-        # 3 bins
-        # exclude the top PMI which is always UNK
-        _, self.liberal_ids = gd[:, 0].topk(num_samples)
-        _, self.neutral_ids = gd[:, 1].topk(num_samples)
-        _, self.conservative_ids = gd[:, 2].topk(num_samples)
+        # num_samples = 300
+        # # 3 bins
+        # # exclude the top PMI which is always UNK
+        # _, self.liberal_ids = gd[:, 0].topk(num_samples)
+        # _, self.neutral_ids = gd[:, 1].topk(num_samples)
+        # _, self.conservative_ids = gd[:, 2].topk(num_samples)
 
         # # # 5 bins
         # _, self.socialist_ids = gd[:, 0].topk(num_samples)
@@ -129,6 +129,11 @@ class Decomposer(nn.Module):
         # raise SystemExit
 
         # Initailize denotation grounding
+        with open('../data/ellie/partisan_sample_val.hp.txt') as file:
+            self.dev_ids = torch.tensor(
+                [self.word_to_id[word.strip()] for word in file],
+                device=self.device)
+
         def pretrained_neighbors(
                 query_ids: Vector,
                 top_k: int = 10
@@ -148,13 +153,12 @@ class Decomposer(nn.Module):
                 deno_grounding[qid] = set(neighbor_ids[:top_k])
             return deno_grounding
 
-        self.deno_grounding: Dict[int, Set[int]] = {}
-        self.deno_grounding.update(pretrained_neighbors(self.liberal_ids))
-        self.deno_grounding.update(pretrained_neighbors(self.neutral_ids))
-        self.deno_grounding.update(pretrained_neighbors(self.conservative_ids))
-
-        self.dev_ids = torch.cat(
-            [self.liberal_ids, self.neutral_ids, self.conservative_ids])
+        self.deno_grounding: Dict[int, Set[int]] = pretrained_neighbors(self.dev_ids)
+        # self.deno_grounding.update(pretrained_neighbors(self.liberal_ids))
+        # self.deno_grounding.update(pretrained_neighbors(self.neutral_ids))
+        # self.deno_grounding.update(pretrained_neighbors(self.conservative_ids))
+        # self.dev_ids = torch.cat(
+        #     [self.liberal_ids, self.neutral_ids, self.conservative_ids])
 
     def forward(
             self,
@@ -191,19 +195,21 @@ class Decomposer(nn.Module):
         overcorrect_loss = 1 - F.cosine_similarity(
             word_vecs, self.pretrained_embed(seq_word_ids), dim=-1).mean()
 
-        if self.max_adversary_loss:
+        if self.max_adversary_loss is not None:
             if self.gamma < 0:  # remove connotation
                 cono_loss = torch.clamp(cono_loss, max=self.max_adversary_loss)
             else:  # remove denotation
                 deno_loss = torch.clamp(deno_loss, max=self.max_adversary_loss)
 
-        decomposer_loss = (
-            self.delta * deno_loss
-            + self.gamma * cono_loss
-            + self.rho * overcorrect_loss)
+        if self.kappa is None:
+            decomposer_loss = self.delta * deno_loss + self.gamma * cono_loss
+            overcorrect_loss = 0
+        else:
+            decomposer_loss = (self.delta * deno_loss + self.gamma * cono_loss
+                               + self.kappa * overcorrect_loss)
 
         if recompose:
-            return decomposer_loss, deno_loss, cono_loss, word_vecs
+            return decomposer_loss, deno_loss, cono_loss, overcorrect_loss, word_vecs
         else:
             return decomposer_loss, deno_loss, cono_loss, overcorrect_loss
 
@@ -642,11 +648,10 @@ class DecomposerConfig():
     # test_holdout: int = 10_000
     num_dataloader_threads: int = 0
 
-    beta: float = 10
     decomposed_size: int = 300
     delta: float = 1  # denotation classifier weight 𝛿
     gamma: float = 1  # connotation classifier weight 𝛾
-    overcorrect_rho: float = 100
+    kappa: Optional[float] = 10
 
     max_adversary_loss: Optional[float] = 10
 
@@ -669,7 +674,7 @@ class DecomposerConfig():
     # momentum: float = 0.5
     # lr_scheduler: torch.optim.lr_scheduler._LRScheduler
     # num_prediction_classes: int = 5
-    clip_grad_norm: float = 5.0
+    clip_grad_norm: float = 10.0
 
     # Housekeeping
     export_error_analysis: Optional[int] = 1  # per epoch

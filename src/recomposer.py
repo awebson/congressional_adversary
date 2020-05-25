@@ -34,17 +34,19 @@ class Recomposer(nn.Module):
         deno_config = copy(config)
         deno_config.delta = config.deno_delta
         deno_config.gamma = config.deno_gamma
+        deno_config.kappa = config.deno_kappa
         self.deno_decomposer = Decomposer(deno_config, data)
 
         # Connotation Decomposer
         cono_config = copy(config)
         cono_config.delta = config.cono_delta
         cono_config.gamma = config.cono_gamma
+        cono_config.kappa = config.cono_kappa
         self.cono_decomposer = Decomposer(cono_config, data)
 
         # Recomposer
         # self.recomposer = nn.Linear(600, 300)
-        self.rho = config.recomposer_rho
+        self.rho = config.rho
         self.to(self.device)
 
         self.word_to_id = data.word_to_id
@@ -58,10 +60,10 @@ class Recomposer(nn.Module):
             seq_word_ids: Matrix,
             cono_labels: Vector,
             ) -> Tuple[Scalar, ...]:
-        L_D, l_Dd, l_Dc, deno_vecs = self.deno_decomposer(
+        L_D, l_Dd, l_Dc, l_DOC, deno_vecs = self.deno_decomposer(
             center_word_ids, context_word_ids,
             seq_word_ids, cono_labels, recompose=True)
-        L_C, l_Cd, l_Cc, cono_vecs = self.cono_decomposer(
+        L_C, l_Cd, l_Cc, l_COC, cono_vecs = self.cono_decomposer(
             center_word_ids, context_word_ids,
             seq_word_ids, cono_labels, recompose=True)
 
@@ -70,11 +72,8 @@ class Recomposer(nn.Module):
         pretrained = self.deno_decomposer.pretrained_embed(seq_word_ids)
         L_R = 1 - F.cosine_similarity(recomposed, pretrained, dim=-1).mean()
 
-        # L_D += self.rho * L_R
-        # L_C += self.rho * L_R
         L_joint = L_D + L_C + self.rho * L_R
-        # return L_D, l_Dd, l_Dc, L_C, l_Cd, l_Cc, L_R
-        return L_D, l_Dd, l_Dc, L_C, l_Cd, l_Cc, L_R, L_joint
+        return L_D, l_Dd, l_Dc, l_DOC, L_C, l_Cd, l_Cc, l_COC, L_R, L_joint
 
     def predict(self, seq_word_ids: Vector) -> Tuple[Vector, ...]:
         self.eval()
@@ -176,9 +175,9 @@ class RecomposerExperiment(Experiment):
         config = self.config
         grad_clip = config.clip_grad_norm
         model = self.model
-        # For debugging
-        self.save_everything(self.config.output_dir / 'init_recomposer.pt')
-        raise SystemExit
+        # # For debugging
+        # self.save_everything(self.config.output_dir / 'init_recomposer.pt')
+        # raise SystemExit
 
         if not config.print_stats:
             epoch_pbar = tqdm(range(1, config.num_epochs + 1), desc=config.output_dir.name)
@@ -201,7 +200,7 @@ class RecomposerExperiment(Experiment):
                 cono_labels = batch[3].to(self.device)
 
                 self.model.zero_grad()
-                L_D, l_Dd, l_Dc, L_C, l_Cd, l_Cc, L_R, L_joint = self.model(
+                L_D, l_Dd, l_Dc, l_DOC, L_C, l_Cd, l_Cc, l_COC, L_R, L_joint = self.model(
                     center_word_ids, context_word_ids,
                     seq_word_ids, cono_labels)
 
@@ -230,16 +229,14 @@ class RecomposerExperiment(Experiment):
                     self.update_tensorboard({
                         'Denotation Decomposer/deno_loss': l_Dd,
                         'Denotation Decomposer/cono_loss': l_Dc,
-                        # 'Denotation Decomposer/accuracy_train_deno': D_deno_acc,
+                        'Denotation Decomposer/overcorrect_loss': l_DOC,
                         'Denotation Decomposer/accuracy_train_cono': D_cono_acc,
 
                         'Connotation Decomposer/deno_loss': l_Cd,
                         'Connotation Decomposer/cono_loss': l_Cc,
-                        # 'Connotation Decomposer/accuracy_train_deno': C_deno_acc,
+                        'Connotation Decomposer/overcorrect_loss': l_COC,
                         'Connotation Decomposer/accuracy_train_cono': C_cono_acc,
 
-                        # 'Combined Losses/Denotation Decomposer': L_D,
-                        # 'Combined Losses/Connotation Decomposer': L_C,
                         'Joint/loss': L_joint,
                         'Joint/Recomposer': L_R
                     })
@@ -346,30 +343,30 @@ class RecomposerConfig():
     # placeholders, assigned programmatically
     delta: Optional[float] = None
     gamma: Optional[float] = None
-    overcorrect_rho: Optional[float] = None
+    kappa: Optional[float] = None
 
     # Denotation Decomposer
     deno_size: int = 300
-    deno_delta: float = 1  # denotation weight 𝛿
-    deno_gamma: float = -0.1  # connotation weight 𝛾
+    deno_delta: float = 0.2  # denotation weight 𝛿
+    deno_gamma: float = -1  # connotation weight 𝛾
+    deno_kappa: Optional[float] = 10
 
     # Conotation Decomposer
     cono_size: int = 300
-    cono_delta: float = -0.001  # denotation weight 𝛿
+    cono_delta: float = -5  # denotation weight 𝛿
     cono_gamma: float = 1  # connotation weight 𝛾
+    cono_kappa: Optional[float] = 10
 
     # Recomposer
-    recomposer_rho: float = 100
-    dropout_p: float = 0
+    rho: float = 10
+    dropout_p: float = 0.1
 
     max_adversary_loss: Optional[float] = 10
 
-    architecture: str = 'L1'
+    architecture: str = 'L4'
     batch_size: int = 1024
     embed_size: int = 300
     num_epochs: int = 10
-    encoder_update_cycle: int = 1  # per batch
-    decoder_update_cycle: int = 1  # per batch
 
     pretrained_embedding: Optional[Path] = Path('../data/pretrained_word2vec/partisan_news.txt')
     freeze_embedding: bool = False  # NOTE
@@ -380,7 +377,7 @@ class RecomposerConfig():
     # momentum: float = 0.5
     # lr_scheduler: torch.optim.lr_scheduler._LRScheduler
     # num_prediction_classes: int = 5
-    clip_grad_norm: float = 5.0
+    clip_grad_norm: float = 10.0
 
     # Housekeeping
     export_error_analysis: Optional[int] = 1  # per epoch
