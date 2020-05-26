@@ -7,8 +7,6 @@ torch
 nltk
 jupyter
 mypy
-flake8
-pytest
 tqdm
 editdistance
 tensorboard
