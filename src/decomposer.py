@@ -192,21 +192,20 @@ class Decomposer(nn.Module):
         cono_logits = self.cono_decoder(seq_repr)
         cono_loss = F.cross_entropy(cono_logits, cono_labels)
 
-        overcorrect_loss = 1 - F.cosine_similarity(
-            word_vecs, self.pretrained_embed(seq_word_ids), dim=-1).mean()
-
-        if self.max_adversary_loss is not None:
+        if self.max_adversary_loss:
             if self.gamma < 0:  # remove connotation
                 cono_loss = torch.clamp(cono_loss, max=self.max_adversary_loss)
             else:  # remove denotation
                 deno_loss = torch.clamp(deno_loss, max=self.max_adversary_loss)
 
-        if self.kappa is None:
-            decomposer_loss = self.delta * deno_loss + self.gamma * cono_loss
-            overcorrect_loss = 0
-        else:
+        if self.kappa:
+            overcorrect_loss = 1 - F.cosine_similarity(
+                word_vecs, self.pretrained_embed(seq_word_ids), dim=-1).mean()
             decomposer_loss = (self.delta * deno_loss + self.gamma * cono_loss
                                + self.kappa * overcorrect_loss)
+        else:
+            overcorrect_loss = 0
+            decomposer_loss = self.delta * deno_loss + self.gamma * cono_loss
 
         if recompose:
             return decomposer_loss, deno_loss, cono_loss, overcorrect_loss, word_vecs

@@ -35,6 +35,7 @@ class Recomposer(nn.Module):
         deno_config.delta = config.deno_delta
         deno_config.gamma = config.deno_gamma
         deno_config.kappa = config.deno_kappa
+        deno_config.max_adversary_loss = config.deno_max_adversary_loss
         self.deno_decomposer = Decomposer(deno_config, data)
 
         # Connotation Decomposer
@@ -42,6 +43,7 @@ class Recomposer(nn.Module):
         cono_config.delta = config.cono_delta
         cono_config.gamma = config.cono_gamma
         cono_config.kappa = config.cono_kappa
+        cono_config.max_adversary_loss = config.cono_max_adversary_loss
         self.cono_decomposer = Decomposer(cono_config, data)
 
         # Recomposer
@@ -148,18 +150,22 @@ class RecomposerExperiment(Experiment):
         #     if param.requires_grad:
         #         print(name)  # param.data)
 
-        self.D_decomp_params = self.model.deno_decomposer.embedding.parameters()
-        self.D_decomp_optimizer = config.optimizer(self.D_decomp_params, lr=config.learning_rate)
-        self.D_cono_params = self.model.deno_decomposer.cono_decoder.parameters()
-        self.D_cono_optimizer = config.optimizer(self.D_cono_params, lr=config.learning_rate)
+        # self.D_decomp_params = self.model.deno_decomposer.embedding.parameters()
+        self.D_decomp_optimizer = config.optimizer(
+            self.model.deno_decomposer.embedding.parameters(), lr=config.learning_rate)
+        # self.D_cono_params = self.model.deno_decomposer.cono_decoder.parameters()
+        self.D_cono_optimizer = config.optimizer(
+            self.model.deno_decomposer.cono_decoder.parameters(), lr=config.learning_rate)
         # self.D_deno_optimizer = config.optimizer(
         #     self.model.deno_decomposer.deno_decoder.parameters(),
         #     lr=config.learning_rate)
 
-        self.C_decomp_params = self.model.cono_decomposer.embedding.parameters()
-        self.C_decomp_optimizer = config.optimizer(self.C_decomp_params, lr=config.learning_rate)
-        self.C_cono_parms = self.model.cono_decomposer.cono_decoder.parameters()
-        self.C_cono_optimizer = config.optimizer(self.C_cono_parms, lr=config.learning_rate)
+        # self.C_decomp_params = self.model.cono_decomposer.embedding.parameters()
+        self.C_decomp_optimizer = config.optimizer(
+            self.model.cono_decomposer.embedding.parameters(), lr=config.learning_rate)
+        # self.C_cono_parms = self.model.cono_decomposer.cono_decoder.parameters()
+        self.C_cono_optimizer = config.optimizer(
+            self.model.cono_decomposer.cono_decoder.parameters(), lr=config.learning_rate)
         # self.C_deno_optimizer = config.optimizer(
         #     self.model.cono_decomposer.deno_decoder.parameters(),
         #     lr=config.learning_rate)
@@ -206,17 +212,17 @@ class RecomposerExperiment(Experiment):
 
                 # Denotation Decomposer
                 L_joint.backward()
-                nn.utils.clip_grad_norm_(self.D_decomp_params, grad_clip)
+                nn.utils.clip_grad_norm_(model.deno_decomposer.embedding.parameters(), grad_clip)
                 self.D_decomp_optimizer.step()
 
-                nn.utils.clip_grad_norm_(self.D_cono_params, grad_clip)
+                nn.utils.clip_grad_norm_(model.deno_decomposer.cono_decoder.parameters(), grad_clip)
                 self.D_cono_optimizer.step()
 
                 # Connotation Decomposer
-                nn.utils.clip_grad_norm_(self.C_decomp_params, grad_clip)
+                nn.utils.clip_grad_norm_(model.cono_decomposer.embedding.parameters(), grad_clip)
                 self.C_decomp_optimizer.step()
 
-                nn.utils.clip_grad_norm_(self.C_cono_parms, grad_clip)
+                nn.utils.clip_grad_norm_(model.cono_decomposer.cono_decoder.parameters(), grad_clip)
                 self.C_cono_optimizer.step()
 
                 # # Recomposer
@@ -344,24 +350,25 @@ class RecomposerConfig():
     delta: Optional[float] = None
     gamma: Optional[float] = None
     kappa: Optional[float] = None
+    max_adversary_loss: Optional[float] = None
 
     # Denotation Decomposer
     deno_size: int = 300
     deno_delta: float = 0.2  # denotation weight 𝛿
     deno_gamma: float = -1  # connotation weight 𝛾
-    deno_kappa: Optional[float] = 10
+    deno_kappa: float = 10  # set to 0 to disable
+    deno_max_adversary_loss: float = 10  # set to 0 to disable
 
     # Conotation Decomposer
     cono_size: int = 300
-    cono_delta: float = -5  # denotation weight 𝛿
+    cono_delta: float = -0.2  # denotation weight 𝛿
     cono_gamma: float = 1  # connotation weight 𝛾
-    cono_kappa: Optional[float] = 10
+    cono_kappa: float = 10
+    cono_max_adversary_loss: float = 10
 
     # Recomposer
     rho: float = 10
     dropout_p: float = 0.1
-
-    max_adversary_loss: Optional[float] = 10
 
     architecture: str = 'L4'
     batch_size: int = 1024
@@ -383,7 +390,7 @@ class RecomposerConfig():
     export_error_analysis: Optional[int] = 1  # per epoch
     update_tensorboard: int = 1000  # per batch
     print_stats: Optional[int] = 10_000  # per batch
-    eval_dev_set: int = 10_000  # per batch  # NOTE
+    eval_dev_set: int = 100_000  # per batch  # NOTE
     progress_bar_refresh_rate: int = 5  # per second
     suppress_stdout: bool = False  # during hyperparameter tuning
     reload_path: Optional[str] = None
@@ -402,24 +409,31 @@ class RecomposerConfig():
             '-gpu', '--device', action='store', type=str)
 
         parser.add_argument(
-            '-a', '--architecture', action='store', type=str)
-        parser.add_argument(
             '-dd', '--deno-delta', action='store', type=float)
         parser.add_argument(
             '-dg', '--deno-gamma', action='store', type=float)
         parser.add_argument(
+            '-dk', '--deno-kappa', action='store', type=float)
+        parser.add_argument(
+            '-dmal', '--deno-max-adversary-loss', action='store', type=float)
+
+        parser.add_argument(
             '-cd', '--cono-delta', action='store', type=float)
         parser.add_argument(
             '-cg', '--cono-gamma', action='store', type=float)
+        parser.add_argument(
+            '-ck', '--cono-kappa', action='store', type=float)
+        parser.add_argument(
+            '-cmal', '--cono-max-adversary-loss', action='store', type=float)
 
+        parser.add_argument(
+            '-a', '--architecture', action='store', type=str)
         parser.add_argument(
             '-lr', '--learning-rate', action='store', type=float)
         parser.add_argument(
             '-bs', '--batch-size', action='store', type=int)
         parser.add_argument(
             '-ep', '--num-epochs', action='store', type=int)
-        parser.add_argument(
-            '-pe', '--pretrained-embedding', action='store', type=Path)
         parser.parse_args(namespace=self)
 
         self.numericalize_cono = {

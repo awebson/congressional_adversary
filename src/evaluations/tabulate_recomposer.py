@@ -10,15 +10,15 @@ from evaluations.helpers import lazy_load_en_masse, PE, WTI
 
 # warnings.simplefilter('ignore')
 DEVICE = 'cuda:0'
-in_dir = Path('../../results/PN/EWS_recomposer')
+in_dir = Path('../../results/PN/EWS_recomposer/no overcorrect NUB')
 checkpoints = lazy_load_en_masse(
     in_dir,
     # patterns=['*/epoch2.pt', '*/epoch4.pt', '*/epoch6.pt', '*/epoch8.pt', '*/epoch10.pt', '*/epoch20.pt', '*/epoch50.pt', '*/epoch74.pt', '*/epoch100.pt'],
     # patterns=['*/epoch10.pt', '*/epoch20.pt', '*/epoch50.pt', '*/epoch80.pt', '*/epoch100.pt'],
-    patterns=['*/epoch*.pt', ],
+    patterns=['epoch*.pt', ],
     device=DEVICE
 )
-out_path = in_dir / 'analysis.tsv'
+out_path = in_dir / 'summary.tsv'
 
 # rand_path = Path('../../data/ellie/rand_sample.cr.txt')
 # with open(rand_path) as file:
