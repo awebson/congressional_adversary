@@ -89,9 +89,9 @@ class Experiment(ABC):
     def auto_save(self, epoch_index: int) -> None:
         if self.config.auto_save_per_epoch:
             interim_save = epoch_index % self.config.auto_save_per_epoch == 0
-        final_save = epoch_index == self.config.num_epochs
-        if interim_save or final_save:
-            self.save_everything(self.config.output_dir / f'epoch{epoch_index}.pt')
+            final_save = epoch_index == self.config.num_epochs
+            if interim_save or final_save:
+                self.save_everything(self.config.output_dir / f'epoch{epoch_index}.pt')
 
     @no_type_check
     def save_state_dict(self, save_path: str) -> None:
