@@ -9,8 +9,8 @@ from evaluations.helpers import lazy_load_en_masse, PE, WTI
 # from evaluations.euphemism import cherry_pairs
 
 # warnings.simplefilter('ignore')
-DEVICE = 'cuda:0'
-in_dir = Path('../../results/PN/EWS_recomposer/no overcorrect NUB')
+DEVICE = 'cuda:1'
+in_dir = Path('../../results/PN/EWS_recomposer/GM0')
 checkpoints = lazy_load_en_masse(
     in_dir,
     # patterns=['*/epoch2.pt', '*/epoch4.pt', '*/epoch6.pt', '*/epoch8.pt', '*/epoch10.pt', '*/epoch20.pt', '*/epoch50.pt', '*/epoch74.pt', '*/epoch100.pt'],
