@@ -58,10 +58,10 @@ class Recomposer(nn.Module):
             seq_word_ids: Matrix,
             cono_labels: Vector,
             ) -> Tuple[Scalar, ...]:
-        L_D, l_Dd, l_Dc, deno_vecs = self.deno_decomposer(
+        L_D, l_Dd, l_Dcp, l_Dca, deno_vecs = self.deno_decomposer(
             center_word_ids, context_word_ids,
             seq_word_ids, cono_labels, recompose=True)
-        L_C, l_Cd, l_Cc, cono_vecs = self.cono_decomposer(
+        L_C, l_Cd, l_Ccp, l_Cca, cono_vecs = self.cono_decomposer(
             center_word_ids, context_word_ids,
             seq_word_ids, cono_labels, recompose=True)
 
@@ -71,7 +71,7 @@ class Recomposer(nn.Module):
         L_R = 1 - F.cosine_similarity(recomposed, pretrained, dim=-1).mean()
 
         L_joint = L_D + L_C + self.rho * L_R
-        return L_D, l_Dd, l_Dc, L_C, l_Cd, l_Cc, L_R, L_joint
+        return L_D, l_Dd, l_Dcp, l_Dca, L_C, l_Cd, l_Ccp, l_Cca, L_R, L_joint
 
     def predict(self, seq_word_ids: Vector) -> Tuple[Vector, ...]:
         self.eval()
@@ -201,25 +201,36 @@ class RecomposerExperiment(Experiment):
                 context_word_ids = batch[2].to(self.device)
                 cono_labels = batch[3].to(self.device)
 
-                self.model.zero_grad()
-                L_D, l_Dd, l_Dc, L_C, l_Cd, l_Cc, L_R, L_joint = self.model(
-                    center_word_ids, context_word_ids,
-                    seq_word_ids, cono_labels)
+                with torch.autograd.set_detect_anomaly(True):
+                    self.model.zero_grad()
+                    L_D, l_Dd, l_Dcp, l_Dca, L_C, l_Cd, l_Ccp, l_Cca, L_R, L_joint = self.model(
+                        center_word_ids, context_word_ids,
+                        seq_word_ids, cono_labels)
 
-                # Denotation Decomposer
-                L_joint.backward()
-                nn.utils.clip_grad_norm_(model.deno_decomposer.embedding.parameters(), grad_clip)
-                self.D_decomp_optimizer.step()
+                    # Denotation Decomposer
+                    L_joint.backward()
+                    nn.utils.clip_grad_norm_(model.deno_decomposer.embedding.parameters(), grad_clip)
+                    self.D_decomp_optimizer.step()
 
-                nn.utils.clip_grad_norm_(model.deno_decomposer.cono_decoder.parameters(), grad_clip)
-                self.D_cono_optimizer.step()
+                    # Connotation Decomposer
+                    nn.utils.clip_grad_norm_(model.cono_decomposer.embedding.parameters(), grad_clip)
+                    self.C_decomp_optimizer.step()
 
-                # Connotation Decomposer
-                nn.utils.clip_grad_norm_(model.cono_decomposer.embedding.parameters(), grad_clip)
-                self.C_decomp_optimizer.step()
+                    self.model.zero_grad()
+                    L_D, l_Dd, l_Dcp, l_Dca, L_C, l_Cd, l_Ccp, l_Cca, L_R, L_joint = self.model(
+                        center_word_ids, context_word_ids,
+                        seq_word_ids, cono_labels)
+                    l_Dcp.backward()
+                    nn.utils.clip_grad_norm_(model.deno_decomposer.cono_decoder.parameters(), grad_clip)
+                    self.D_cono_optimizer.step()
 
-                nn.utils.clip_grad_norm_(model.cono_decomposer.cono_decoder.parameters(), grad_clip)
-                self.C_cono_optimizer.step()
+                    self.model.zero_grad()
+                    L_D, l_Dd, l_Dcp, l_Dca, L_C, l_Cd, l_Ccp, l_Cca, L_R, L_joint = self.model(
+                        center_word_ids, context_word_ids,
+                        seq_word_ids, cono_labels)
+                    l_Ccp.backward()
+                    nn.utils.clip_grad_norm_(model.cono_decomposer.cono_decoder.parameters(), grad_clip)
+                    self.C_cono_optimizer.step()
 
                 # # Recomposer
                 # nn.utils.clip_grad_norm_(self.recomp_params, grad_clip)
@@ -230,19 +241,20 @@ class RecomposerExperiment(Experiment):
                         seq_word_ids, cono_labels)
                     self.update_tensorboard({
                         'Denotation Decomposer/deno_loss': l_Dd,
-                        'Denotation Decomposer/cono_loss': l_Dc,
+                        'Denotation Decomposer/cono_loss_proper': l_Dcp,
+                        'Denotation Decomposer/cono_loss_adversary': l_Dca,
                         'Denotation Decomposer/combined_loss': L_D,
                         'Denotation Decomposer/accuracy_train_cono': D_cono_acc,
 
                         'Connotation Decomposer/deno_loss': l_Cd,
-                        'Connotation Decomposer/cono_loss': l_Cc,
+                        'Connotation Decomposer/cono_loss_proper': l_Ccp,
                         'Connotation Decomposer/combined_loss': L_C,
                         'Connotation Decomposer/accuracy_train_cono': C_cono_acc,
 
                         'Joint/loss': L_joint,
                         'Joint/Recomposer': L_R
                     })
-                if batch_index % config.eval_dev_set == 0:
+                if batch_index % config.eval_dev_set == 0:  # NOTE
                     self.validation()
 
                 self.tb_global_step += 1
@@ -404,6 +416,8 @@ class RecomposerConfig():
             '-bs', '--batch-size', action='store', type=int)
         parser.add_argument(
             '-ep', '--num-epochs', action='store', type=int)
+        parser.add_argument(
+            '-sv', '--auto-save-per-epoch', action='store', type=int)
         parser.parse_args(namespace=self)
 
         self.numericalize_cono = {
