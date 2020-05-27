@@ -35,8 +35,6 @@ class Decomposer(nn.Module):
         self.id_to_word = data.id_to_word
         self.delta = config.delta
         self.gamma = config.gamma
-        self.kappa = config.kappa
-        self.max_adversary_loss = config.max_adversary_loss
         self.init_embedding(config, data.word_to_id)
 
         # Dennotation Loss: Skip-Gram Negative Sampling
@@ -168,81 +166,35 @@ class Decomposer(nn.Module):
             cono_labels: Vector,
             recompose: bool = False
             ) -> Scalar:
-        word_vecs: R3Tensor = self.embedding(seq_word_ids)
-        seq_repr: Matrix = torch.mean(word_vecs, dim=1)  # TODO mask out <PAD>
-
-        # negative_context_ids = torch.multinomial(
-        #     self.negative_sampling_probs,
-        #     len(true_context_ids),
-        #     replacement=True
-        #     ).to(self.device)
-
-        # center = self.embedding(center_word_ids)
-        # true_context = self.embedding(true_context_ids)
-        # negative_context = self.embedding(negative_context_ids)
-        # # import IPython
-        # # IPython.embed()
-
-        # deno_loss = (
-        #     F.cosine_embedding_loss(center, true_context, torch.ones_like(center_word_ids)) -
-        #     F.cosine_embedding_loss(center, negative_context, torch.zeros_like(center_word_ids))
-        # )
-        deno_loss = self.skip_gram_loss(center_word_ids, true_context_ids)
-
-        cono_logits = self.cono_decoder(seq_repr)
-        cono_loss = F.cross_entropy(cono_logits, cono_labels)
-
-        if self.max_adversary_loss:
-            if self.gamma < 0:  # remove connotation
-                cono_loss = torch.clamp(cono_loss, max=self.max_adversary_loss)
-            else:  # remove denotation
-                deno_loss = torch.clamp(deno_loss, max=self.max_adversary_loss)
-
-        if self.kappa:
-            overcorrect_loss = 1 - F.cosine_similarity(
-                word_vecs, self.pretrained_embed(seq_word_ids), dim=-1).mean()
-            decomposer_loss = (self.delta * deno_loss + self.gamma * cono_loss
-                               + self.kappa * overcorrect_loss)
-        else:
-            overcorrect_loss = 0
-            decomposer_loss = self.delta * deno_loss + self.gamma * cono_loss
-
-        if recompose:
-            return decomposer_loss, deno_loss, cono_loss, overcorrect_loss, word_vecs
-        else:
-            return decomposer_loss, deno_loss, cono_loss, overcorrect_loss
-
-    def skip_gram_loss(
-            self,
-            center_word_ids: Vector,
-            true_context_ids: Vector
-            ) -> Scalar:
-        """Faster but less readable."""
+        # Denotation Probe
         negative_context_ids = torch.multinomial(
             self.negative_sampling_probs,
-            len(true_context_ids) * self.num_negative_samples,
+            len(true_context_ids),
             replacement=True
-        ).view(len(true_context_ids), self.num_negative_samples).to(self.device)
-
+            ).to(self.device)
         center = self.embedding(center_word_ids)
         true_context = self.embedding(true_context_ids)
         negative_context = self.embedding(negative_context_ids)
 
-        # batch_size * embed_size
-        objective = torch.sum(  # dot product
-            torch.mul(center, true_context),  # Hadamard product
-            dim=1)  # be -> b
-        objective = F.logsigmoid(objective)
+        true_context_loss = F.cosine_embedding_loss(
+            center, true_context, torch.ones_like(center_word_ids), margin=0.25)
+        negative_context_loss = F.cosine_embedding_loss(
+            center, negative_context, torch.zeros_like(center_word_ids), margin=0.25)
+        deno_loss = true_context_loss - negative_context_loss
 
-        # batch_size * num_negative_samples * embed_size
-        # negative_context: bne
-        # center: be -> be1
-        negative_objective = torch.bmm(  # bne, be1 -> bn1
-            negative_context, center.unsqueeze(2)
-            ).squeeze()  # bn1 -> bn
-        negative_objective = F.logsigmoid(-negative_objective)
-        negative_objective = torch.sum(negative_objective, dim=1)  # bn -> b
-        return -torch.mean(objective + negative_objective)
+        # Connotation Probe
+        seq_word_vecs: R3Tensor = self.embedding(seq_word_ids)
+        seq_repr: Matrix = torch.mean(seq_word_vecs, dim=1)  # TODO mask out <PAD>
+        cono_logits = self.cono_decoder(seq_repr)
+        cono_loss = F.cross_entropy(cono_logits, cono_labels)
+
+        decomposer_loss = (self.delta * torch.sigmoid(deno_loss)
+                           + self.gamma * torch.sigmoid(cono_loss) + 1)
+
+        if recompose:
+            return decomposer_loss, deno_loss, cono_loss, seq_word_vecs
+        else:
+            return decomposer_loss, deno_loss, cono_loss
 
     def predict(self, seq_word_ids: Vector) -> Vector:
         self.eval()

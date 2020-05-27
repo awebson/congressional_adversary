@@ -34,16 +34,12 @@ class Recomposer(nn.Module):
         deno_config = copy(config)
         deno_config.delta = config.deno_delta
         deno_config.gamma = config.deno_gamma
-        deno_config.kappa = config.deno_kappa
-        deno_config.max_adversary_loss = config.deno_max_adversary_loss
         self.deno_decomposer = Decomposer(deno_config, data)
 
         # Connotation Decomposer
         cono_config = copy(config)
         cono_config.delta = config.cono_delta
         cono_config.gamma = config.cono_gamma
-        cono_config.kappa = config.cono_kappa
-        cono_config.max_adversary_loss = config.cono_max_adversary_loss
         self.cono_decomposer = Decomposer(cono_config, data)
 
         # Recomposer
@@ -62,10 +58,10 @@ class Recomposer(nn.Module):
             seq_word_ids: Matrix,
             cono_labels: Vector,
             ) -> Tuple[Scalar, ...]:
-        L_D, l_Dd, l_Dc, l_DOC, deno_vecs = self.deno_decomposer(
+        L_D, l_Dd, l_Dc, deno_vecs = self.deno_decomposer(
             center_word_ids, context_word_ids,
             seq_word_ids, cono_labels, recompose=True)
-        L_C, l_Cd, l_Cc, l_COC, cono_vecs = self.cono_decomposer(
+        L_C, l_Cd, l_Cc, cono_vecs = self.cono_decomposer(
             center_word_ids, context_word_ids,
             seq_word_ids, cono_labels, recompose=True)
 
@@ -75,7 +71,7 @@ class Recomposer(nn.Module):
         L_R = 1 - F.cosine_similarity(recomposed, pretrained, dim=-1).mean()
 
         L_joint = L_D + L_C + self.rho * L_R
-        return L_D, l_Dd, l_Dc, l_DOC, L_C, l_Cd, l_Cc, l_COC, L_R, L_joint
+        return L_D, l_Dd, l_Dc, L_C, l_Cd, l_Cc, L_R, L_joint
 
     def predict(self, seq_word_ids: Vector) -> Tuple[Vector, ...]:
         self.eval()
@@ -206,7 +202,7 @@ class RecomposerExperiment(Experiment):
                 cono_labels = batch[3].to(self.device)
 
                 self.model.zero_grad()
-                L_D, l_Dd, l_Dc, l_DOC, L_C, l_Cd, l_Cc, l_COC, L_R, L_joint = self.model(
+                L_D, l_Dd, l_Dc, L_C, l_Cd, l_Cc, L_R, L_joint = self.model(
                     center_word_ids, context_word_ids,
                     seq_word_ids, cono_labels)
 
@@ -235,12 +231,12 @@ class RecomposerExperiment(Experiment):
                     self.update_tensorboard({
                         'Denotation Decomposer/deno_loss': l_Dd,
                         'Denotation Decomposer/cono_loss': l_Dc,
-                        'Denotation Decomposer/overcorrect_loss': l_DOC,
+                        'Denotation Decomposer/combined_loss': L_D,
                         'Denotation Decomposer/accuracy_train_cono': D_cono_acc,
 
                         'Connotation Decomposer/deno_loss': l_Cd,
                         'Connotation Decomposer/cono_loss': l_Cc,
-                        'Connotation Decomposer/overcorrect_loss': l_COC,
+                        'Connotation Decomposer/combined_loss': L_C,
                         'Connotation Decomposer/accuracy_train_cono': C_cono_acc,
 
                         'Joint/loss': L_joint,
@@ -252,20 +248,9 @@ class RecomposerExperiment(Experiment):
                 self.tb_global_step += 1
             # End Batches
             # self.lr_scheduler.step()
+            self.data.estimated_len = batch_index
             self.print_timestamp(epoch_index)
             self.auto_save(epoch_index)
-            # if config.export_error_analysis:
-            #     if (epoch_index % config.export_error_analysis == 0
-            #             or epoch_index == 1):
-            #         # model.all_vocab_connotation(os.path.join(
-            #         #     config.output_dir, f'vocab_cono_epoch{epoch_index}.txt'))
-            #         analysis_path = os.path.join(
-            #             config.output_dir, f'error_analysis_epoch{epoch_index}.tsv')
-            #         deno_accuracy, cono_accuracy = model.accuracy(
-            #             self.data.dev_seq.to(self.device),
-            #             self.data.dev_deno_labels.to(self.device),
-            #             self.data.dev_cono_labels.to(self.device),
-            #             error_analysis_path=analysis_path)
         # End Epochs
 
     def validation(self) -> None:
@@ -349,25 +334,19 @@ class RecomposerConfig():
     # placeholders, assigned programmatically
     delta: Optional[float] = None
     gamma: Optional[float] = None
-    kappa: Optional[float] = None
-    max_adversary_loss: Optional[float] = None
 
     # Denotation Decomposer
     deno_size: int = 300
-    deno_delta: float = 0.2  # denotation weight 𝛿
+    deno_delta: float = 1  # denotation weight 𝛿
     deno_gamma: float = -1  # connotation weight 𝛾
-    deno_kappa: float = 10  # set to 0 to disable
-    deno_max_adversary_loss: float = 10  # set to 0 to disable
 
     # Conotation Decomposer
     cono_size: int = 300
-    cono_delta: float = -0.2  # denotation weight 𝛿
+    cono_delta: float = -1  # denotation weight 𝛿
     cono_gamma: float = 1  # connotation weight 𝛾
-    cono_kappa: float = 10
-    cono_max_adversary_loss: float = 10
 
     # Recomposer
-    rho: float = 10
+    rho: float = 1
     dropout_p: float = 0.1
 
     architecture: str = 'L4'
@@ -391,13 +370,13 @@ class RecomposerConfig():
     update_tensorboard: int = 1000  # per batch
     print_stats: Optional[int] = 10_000  # per batch
     eval_dev_set: int = 100_000  # per batch  # NOTE
-    progress_bar_refresh_rate: int = 5  # per second
+    progress_bar_refresh_rate: int = 1  # per second
     suppress_stdout: bool = False  # during hyperparameter tuning
     reload_path: Optional[str] = None
     clear_tensorboard_log_in_output_dir: bool = True
     delete_all_exisiting_files_in_output_dir: bool = False
     auto_save_per_epoch: Optional[int] = 1
-    auto_save_if_interrupted: bool = False
+    auto_save_if_interrupted: bool = True
 
     def __post_init__(self) -> None:
         parser = argparse.ArgumentParser()
@@ -413,18 +392,9 @@ class RecomposerConfig():
         parser.add_argument(
             '-dg', '--deno-gamma', action='store', type=float)
         parser.add_argument(
-            '-dk', '--deno-kappa', action='store', type=float)
-        parser.add_argument(
-            '-dmal', '--deno-max-adversary-loss', action='store', type=float)
-
-        parser.add_argument(
             '-cd', '--cono-delta', action='store', type=float)
         parser.add_argument(
             '-cg', '--cono-gamma', action='store', type=float)
-        parser.add_argument(
-            '-ck', '--cono-kappa', action='store', type=float)
-        parser.add_argument(
-            '-cmal', '--cono-max-adversary-loss', action='store', type=float)
 
         parser.add_argument(
             '-a', '--architecture', action='store', type=str)
