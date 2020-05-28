@@ -204,8 +204,7 @@ class RecomposerExperiment(Experiment):
                 with torch.autograd.set_detect_anomaly(True):
                     self.model.zero_grad()
                     L_D, l_Dd, l_Dcp, l_Dca, L_C, l_Cd, l_Ccp, l_Cca, L_R, L_joint = self.model(
-                        center_word_ids, context_word_ids,
-                        seq_word_ids, cono_labels)
+                        center_word_ids, context_word_ids, seq_word_ids, cono_labels)
 
                     # Denotation Decomposer
                     L_joint.backward()
@@ -217,17 +216,15 @@ class RecomposerExperiment(Experiment):
                     self.C_decomp_optimizer.step()
 
                     self.model.zero_grad()
-                    L_D, l_Dd, l_Dcp, l_Dca, L_C, l_Cd, l_Ccp, l_Cca, L_R, L_joint = self.model(
-                        center_word_ids, context_word_ids,
-                        seq_word_ids, cono_labels)
+                    L_D, l_Dd, l_Dcp, l_Dca = self.model.deno_decomposer(
+                        center_word_ids, context_word_ids, seq_word_ids, cono_labels)
                     l_Dcp.backward()
                     nn.utils.clip_grad_norm_(model.deno_decomposer.cono_decoder.parameters(), grad_clip)
                     self.D_cono_optimizer.step()
 
                     self.model.zero_grad()
-                    L_D, l_Dd, l_Dcp, l_Dca, L_C, l_Cd, l_Ccp, l_Cca, L_R, L_joint = self.model(
-                        center_word_ids, context_word_ids,
-                        seq_word_ids, cono_labels)
+                    L_C, l_Cd, l_Ccp, l_Cca, = self.model.cono_decomposer(
+                        center_word_ids, context_word_ids, seq_word_ids, cono_labels)
                     l_Ccp.backward()
                     nn.utils.clip_grad_norm_(model.cono_decomposer.cono_decoder.parameters(), grad_clip)
                     self.C_cono_optimizer.step()
@@ -388,7 +385,7 @@ class RecomposerConfig():
     clear_tensorboard_log_in_output_dir: bool = True
     delete_all_exisiting_files_in_output_dir: bool = False
     auto_save_per_epoch: Optional[int] = 1
-    auto_save_if_interrupted: bool = True
+    auto_save_if_interrupted: bool = False
 
     def __post_init__(self) -> None:
         parser = argparse.ArgumentParser()

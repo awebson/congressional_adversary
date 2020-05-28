@@ -85,6 +85,7 @@ def load_en_masse(
         in_dirs: Union[Path, List[Path]],
         patterns: Union[str, List[str]],
         recomposer: bool = False,
+        pretrained: bool = True
         ) -> Tuple[Dict[str, np.ndarray], ...]:
     if not isinstance(in_dirs, List):
         in_dirs = [in_dirs, ]
@@ -97,11 +98,16 @@ def load_en_masse(
     if len(checkpoints) == 0:
         raise FileNotFoundError(f'No model with path pattern found at {in_dirs}?')
 
-    if recomposer:
-        D_models = {'pretrained': PE}
-        C_models = {'pretrained': PE}
-    else:
-        models = {'pretrained': PE}
+    models = {}
+    D_models = {}
+    C_models = {}
+    if pretrained:
+        if recomposer:
+            D_models = {'pretrained': PE}
+            C_models = {'pretrained': PE}
+        else:
+            models = {'pretrained': PE}
+
     for path in tqdm(checkpoints):
         tqdm.write(f'Loading {path}')
         # embed = load(path)
