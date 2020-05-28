@@ -168,20 +168,7 @@ class Decomposer(nn.Module):
             recompose: bool = False
             ) -> Scalar:
         # Denotation Probe
-        negative_context_ids = torch.multinomial(
-            self.negative_sampling_probs,
-            len(true_context_ids),
-            replacement=True
-            ).to(self.device)
-        center = self.embedding(center_word_ids)
-        true_context = self.embedding(true_context_ids)
-        negative_context = self.embedding(negative_context_ids)
-
-        true_context_loss = F.cosine_embedding_loss(
-            center, true_context, torch.ones_like(center_word_ids))
-        negative_context_loss = F.cosine_embedding_loss(
-            center, negative_context, torch.zeros_like(center_word_ids))
-        deno_loss = true_context_loss - negative_context_loss
+        deno_loss = self.skip_gram_loss(center_word_ids, true_context_ids)
 
         # Connotation Probe
         seq_word_vecs: R3Tensor = self.embedding(seq_word_ids)
@@ -203,6 +190,53 @@ class Decomposer(nn.Module):
             return decomposer_loss, deno_loss, proper_cono_loss, adversary_cono_loss, seq_word_vecs
         else:
             return decomposer_loss, deno_loss, proper_cono_loss, adversary_cono_loss
+
+    def skip_gram_loss(
+            self,
+            center_word_ids: Vector,
+            true_context_ids: Vector
+            ) -> Scalar:
+        # negative_context_ids = torch.multinomial(
+        #     self.negative_sampling_probs,
+        #     len(true_context_ids),
+        #     replacement=True
+        #     ).to(self.device)
+        # center = self.embedding(center_word_ids)
+        # true_context = self.embedding(true_context_ids)
+        # negative_context = self.embedding(negative_context_ids)
+
+        # true_context_loss = F.cosine_embedding_loss(
+        #     center, true_context, torch.ones_like(center_word_ids))
+        # negative_context_loss = F.cosine_embedding_loss(
+        #     center, negative_context, torch.zeros_like(center_word_ids))
+        # deno_loss = true_context_loss - negative_context_loss
+
+        # Faster but less readable
+        negative_context_ids = torch.multinomial(
+            self.negative_sampling_probs,
+            len(true_context_ids) * self.num_negative_samples,
+            replacement=True
+        ).view(len(true_context_ids), self.num_negative_samples).to(self.device)
+
+        center = self.embedding(center_word_ids)
+        true_context = self.embedding(true_context_ids)
+        negative_context = self.embedding(negative_context_ids)
+
+        # batch_size * embed_size
+        objective = torch.sum(  # dot product
+            torch.mul(center, true_context),  # Hadamard product
+            dim=1)  # be -> b
+        objective = F.logsigmoid(objective)
+
+        # batch_size * num_negative_samples * embed_size
+        # negative_context: bne
+        # center: be -> be1
+        negative_objective = torch.bmm(  # bne, be1 -> bn1
+            negative_context, center.unsqueeze(2)
+            ).squeeze()  # bn1 -> bn
+        negative_objective = F.logsigmoid(-negative_objective)
+        negative_objective = torch.sum(negative_objective, dim=1)  # bn -> b
+        return -torch.mean(objective + negative_objective)
 
     def predict(self, seq_word_ids: Vector) -> Vector:
         self.eval()
@@ -621,7 +655,7 @@ class DecomposerConfig():
     pretrained_embedding: Optional[Path] = Path('../data/pretrained_word2vec/partisan_news.txt')
     freeze_embedding: bool = False  # NOTE
     skip_gram_window_radius: int = 5
-    num_negative_samples: int = 10
+    num_negative_samples: int = 5
     optimizer: torch.optim.Optimizer = torch.optim.Adam
     # optimizer: torch.optim.Optimizer = torch.optim.SGD
     learning_rate: float = 1e-4

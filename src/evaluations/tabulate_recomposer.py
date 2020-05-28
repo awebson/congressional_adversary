@@ -10,12 +10,12 @@ from evaluations.helpers import lazy_load_en_masse, PE, WTI
 
 # warnings.simplefilter('ignore')
 DEVICE = 'cuda:1'
-in_dir = Path('../../results/PN/EWS_recomposer/GM0')
+in_dir = Path('../../results/PN/GM2')
 checkpoints = lazy_load_en_masse(
     in_dir,
     # patterns=['*/epoch2.pt', '*/epoch4.pt', '*/epoch6.pt', '*/epoch8.pt', '*/epoch10.pt', '*/epoch20.pt', '*/epoch50.pt', '*/epoch74.pt', '*/epoch100.pt'],
-    # patterns=['*/epoch10.pt', '*/epoch20.pt', '*/epoch50.pt', '*/epoch80.pt', '*/epoch100.pt'],
-    patterns=['epoch*.pt', ],
+    # patterns=['*/epoch1.pt', '*/epoch3.pt', '*/epoch5.pt', '*/epoch7.pt', '*/epoch10.pt'],
+    patterns=['*/epoch*.pt', ],
     device=DEVICE
 )
 out_path = in_dir / 'summary.tsv'

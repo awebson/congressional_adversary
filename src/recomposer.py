@@ -201,33 +201,32 @@ class RecomposerExperiment(Experiment):
                 context_word_ids = batch[2].to(self.device)
                 cono_labels = batch[3].to(self.device)
 
-                with torch.autograd.set_detect_anomaly(True):
-                    self.model.zero_grad()
-                    L_D, l_Dd, l_Dcp, l_Dca, L_C, l_Cd, l_Ccp, l_Cca, L_R, L_joint = self.model(
-                        center_word_ids, context_word_ids, seq_word_ids, cono_labels)
+                self.model.zero_grad()
+                L_D, l_Dd, l_Dcp, l_Dca, L_C, l_Cd, l_Ccp, l_Cca, L_R, L_joint = self.model(
+                    center_word_ids, context_word_ids, seq_word_ids, cono_labels)
 
-                    # Denotation Decomposer
-                    L_joint.backward()
-                    nn.utils.clip_grad_norm_(model.deno_decomposer.embedding.parameters(), grad_clip)
-                    self.D_decomp_optimizer.step()
+                # Denotation Decomposer
+                L_joint.backward()
+                nn.utils.clip_grad_norm_(model.deno_decomposer.embedding.parameters(), grad_clip)
+                self.D_decomp_optimizer.step()
 
-                    # Connotation Decomposer
-                    nn.utils.clip_grad_norm_(model.cono_decomposer.embedding.parameters(), grad_clip)
-                    self.C_decomp_optimizer.step()
+                # Connotation Decomposer
+                nn.utils.clip_grad_norm_(model.cono_decomposer.embedding.parameters(), grad_clip)
+                self.C_decomp_optimizer.step()
 
-                    self.model.zero_grad()
-                    L_D, l_Dd, l_Dcp, l_Dca = self.model.deno_decomposer(
-                        center_word_ids, context_word_ids, seq_word_ids, cono_labels)
-                    l_Dcp.backward()
-                    nn.utils.clip_grad_norm_(model.deno_decomposer.cono_decoder.parameters(), grad_clip)
-                    self.D_cono_optimizer.step()
+                self.model.zero_grad()
+                L_D, l_Dd, l_Dcp, l_Dca = self.model.deno_decomposer(
+                    center_word_ids, context_word_ids, seq_word_ids, cono_labels)
+                l_Dcp.backward()
+                nn.utils.clip_grad_norm_(model.deno_decomposer.cono_decoder.parameters(), grad_clip)
+                self.D_cono_optimizer.step()
 
-                    self.model.zero_grad()
-                    L_C, l_Cd, l_Ccp, l_Cca, = self.model.cono_decomposer(
-                        center_word_ids, context_word_ids, seq_word_ids, cono_labels)
-                    l_Ccp.backward()
-                    nn.utils.clip_grad_norm_(model.cono_decomposer.cono_decoder.parameters(), grad_clip)
-                    self.C_cono_optimizer.step()
+                self.model.zero_grad()
+                L_C, l_Cd, l_Ccp, l_Cca, = self.model.cono_decomposer(
+                    center_word_ids, context_word_ids, seq_word_ids, cono_labels)
+                l_Ccp.backward()
+                nn.utils.clip_grad_norm_(model.cono_decomposer.cono_decoder.parameters(), grad_clip)
+                self.C_cono_optimizer.step()
 
                 # # Recomposer
                 # nn.utils.clip_grad_norm_(self.recomp_params, grad_clip)
@@ -251,7 +250,7 @@ class RecomposerExperiment(Experiment):
                         'Joint/loss': L_joint,
                         'Joint/Recomposer': L_R
                     })
-                if batch_index % config.eval_dev_set == 0:  # NOTE
+                if batch_index % config.eval_dev_set == 0:
                     self.validation()
 
                 self.tb_global_step += 1
@@ -366,7 +365,7 @@ class RecomposerConfig():
     pretrained_embedding: Optional[Path] = Path('../data/pretrained_word2vec/partisan_news.txt')
     freeze_embedding: bool = False  # NOTE
     skip_gram_window_radius: int = 5
-    num_negative_samples: int = 10
+    num_negative_samples: int = 5
     optimizer: torch.optim.Optimizer = torch.optim.Adam
     learning_rate: float = 1e-4
     # momentum: float = 0.5
@@ -404,6 +403,8 @@ class RecomposerConfig():
             '-cd', '--cono-delta', action='store', type=float)
         parser.add_argument(
             '-cg', '--cono-gamma', action='store', type=float)
+        parser.add_argument(
+            '-ns', '--num-negative-samples', action='store', type=int)
 
         parser.add_argument(
             '-a', '--architecture', action='store', type=str)
