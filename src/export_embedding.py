@@ -9,25 +9,26 @@ from recomposer import Recomposer, RecomposerConfig
 in_dir = Path('../results/PN/GM2/NS5')
 # in_path = in_dir / 'epoch4.pt'
 # out_path = in_dir / 'denotation_ep4.txt'
-# for i in range(1, 11):
-i = 10
-in_path = in_dir / f'epoch{i}.pt'
-out_path = in_dir / f'denotation_ep{i}.txt'
+# i = 10
+for i in (15, 20, 25, 30):
+    in_path = in_dir / f'epoch{i}.pt'
+    out_path = in_dir / f'denotation_ep{i}.txt'
+    out_path = in_dir / f'connotation_ep{i}.txt'
 
-model = torch.load(in_path, map_location='cpu')['model']
+    model = torch.load(in_path, map_location='cpu')['model']
 
-# Single Decomposer
-# embed = model.embedding.weight.detach().cpu().numpy()
-# id_to_word = model.id_to_word
+    # Single Decomposer
+    # embed = model.embedding.weight.detach().cpu().numpy()
+    # id_to_word = model.id_to_word
 
-# Recomposer
-embed = model.deno_decomposer.embedding.weight.detach().cpu().numpy()
-id_to_word = model.deno_decomposer.id_to_word
+    # Recomposer
+    embed = model.cono_decomposer.embedding.weight.detach().cpu().numpy()
+    id_to_word = model.deno_decomposer.id_to_word
 
-# Pretrained
-# embed = model.pretrained_embed.weight.detach().cpu().numpy()
+    # Pretrained
+    # embed = model.pretrained_embed.weight.detach().cpu().numpy()
 
-with open(out_path, 'w') as out_file:
-    for word_id, vector in enumerate(embed):
-        word = id_to_word[word_id]
-        print(word, *vector, sep=' ', file=out_file)
+    with open(out_path, 'w') as out_file:
+        for word_id, vector in enumerate(embed):
+            word = id_to_word[word_id]
+            print(word, *vector, sep=' ', file=out_file)

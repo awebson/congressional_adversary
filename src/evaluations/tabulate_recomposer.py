@@ -9,13 +9,13 @@ from evaluations.helpers import lazy_load_en_masse, PE, WTI
 # from evaluations.euphemism import cherry_pairs
 
 # warnings.simplefilter('ignore')
-DEVICE = 'cuda:1'
+DEVICE = 'cuda:0'
 in_dir = Path('../../results/PN/GM2')
 checkpoints = lazy_load_en_masse(
     in_dir,
     # patterns=['*/epoch2.pt', '*/epoch4.pt', '*/epoch6.pt', '*/epoch8.pt', '*/epoch10.pt', '*/epoch20.pt', '*/epoch50.pt', '*/epoch74.pt', '*/epoch100.pt'],
-    # patterns=['*/epoch1.pt', '*/epoch3.pt', '*/epoch5.pt', '*/epoch7.pt', '*/epoch10.pt'],
-    patterns=['*/epoch*.pt', ],
+    patterns=['*/epoch1.pt', '*/epoch5.pt', '*/epoch10.pt', '*/epoch15.pt', '*/epoch20.pt', '*/epoch25.pt', '*/epoch30.pt'],
+    # patterns=['*/epoch*.pt', ],
     device=DEVICE
 )
 out_path = in_dir / 'summary.tsv'

@@ -174,12 +174,12 @@ class Decomposer(nn.Module):
         seq_word_vecs: R3Tensor = self.embedding(seq_word_ids)
         seq_repr: Matrix = torch.mean(seq_word_vecs, dim=1)
         cono_logits = self.cono_decoder(seq_repr)
-        cono_log_prob = F.log_softmax(cono_logits)
+        cono_log_prob = F.log_softmax(cono_logits, dim=1)
         proper_cono_loss = F.nll_loss(cono_log_prob, cono_labels)
 
         if self.gamma < 0:  # DS removing connotation
             uniform_dist = torch.full_like(cono_log_prob, 1 / self.num_cono_classes)
-            adversary_cono_loss = F.kl_div(cono_log_prob, uniform_dist)
+            adversary_cono_loss = F.kl_div(cono_log_prob, uniform_dist, reduction='batchmean')
             decomposer_loss = torch.sigmoid(deno_loss) + torch.sigmoid(adversary_cono_loss)
         else:  # CS removing denotation
             decomposer_loss = (1 + self.delta * torch.sigmoid(deno_loss)

@@ -111,12 +111,12 @@ class Decomposer(nn.Module):
         seq_word_vecs: R3Tensor = self.embedding(seq_word_ids)
         seq_repr: Matrix = torch.mean(seq_word_vecs, dim=1)
         cono_logits = self.cono_decoder(seq_repr)
-        cono_log_prob = F.log_softmax(cono_logits)
+        cono_log_prob = F.log_softmax(cono_logits, dim=1)
         proper_cono_loss = F.nll_loss(cono_log_prob, cono_labels)
 
         if self.gamma < 0:  # DS removing connotation
             uniform_dist = torch.full_like(cono_log_prob, 1 / self.num_cono_classes)
-            adversary_cono_loss = F.kl_div(cono_log_prob, uniform_dist)
+            adversary_cono_loss = F.kl_div(cono_log_prob, uniform_dist, reduction='batchmean')
             decomposer_loss = torch.sigmoid(deno_loss) + torch.sigmoid(adversary_cono_loss)
         else:  # CS removing denotation
             decomposer_loss = (1 + self.delta * torch.sigmoid(deno_loss)
@@ -1127,13 +1127,13 @@ class RecomposerConfig():
     update_tensorboard: int = 1000  # per batch
     print_stats: Optional[int] = 10_000  # per batch
     eval_dev_set: int = 100_000  # per batch  # NOTE
-    progress_bar_refresh_rate: int = 1  # per second
+    progress_bar_refresh_rate: int = 60  # per second
     suppress_stdout: bool = False  # during hyperparameter tuning
     reload_path: Optional[str] = None
     clear_tensorboard_log_in_output_dir: bool = True
     delete_all_exisiting_files_in_output_dir: bool = False
     auto_save_per_epoch: Optional[int] = 1
-    auto_save_if_interrupted: bool = True
+    auto_save_if_interrupted: bool = False
 
     def __post_init__(self) -> None:
         parser = argparse.ArgumentParser()
