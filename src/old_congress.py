@@ -36,6 +36,7 @@ class Decomposer(nn.Module):
         self.num_negative_samples = config.num_negative_samples
         self.init_embedding(config, data.word_to_id)
 
+        self.num_cono_classes = config.num_cono_classes
         self.cono_decoder = config.cono_decoder
 
         self.delta = config.delta
@@ -104,34 +105,59 @@ class Decomposer(nn.Module):
             recompose: bool = False,
             ) -> Scalar:
         # Denotation Probe
-        negative_context_ids = torch.multinomial(
-            self.negative_sampling_probs,
-            len(true_context_ids),
-            replacement=True
-            ).to(self.device)
-        center = self.embedding(center_word_ids)
-        true_context = self.embedding(true_context_ids)
-        negative_context = self.embedding(negative_context_ids)
-
-        true_context_loss = F.cosine_embedding_loss(
-            center, true_context, torch.ones_like(center_word_ids), margin=0.25)
-        negative_context_loss = F.cosine_embedding_loss(
-            center, negative_context, torch.zeros_like(center_word_ids), margin=0.25)
-        deno_loss = true_context_loss - negative_context_loss
+        deno_loss = self.skip_gram_loss(center_word_ids, true_context_ids)
 
         # Connotation Probe
         seq_word_vecs: R3Tensor = self.embedding(seq_word_ids)
         seq_repr: Matrix = torch.mean(seq_word_vecs, dim=1)
         cono_logits = self.cono_decoder(seq_repr)
-        cono_loss = F.cross_entropy(cono_logits, cono_labels)
+        cono_log_prob = F.log_softmax(cono_logits)
+        proper_cono_loss = F.nll_loss(cono_log_prob, cono_labels)
 
-        decomposer_loss = (self.delta * torch.sigmoid(deno_loss)
-                           + self.gamma * torch.sigmoid(cono_loss) + 1)
+        if self.gamma < 0:  # DS removing connotation
+            uniform_dist = torch.full_like(cono_log_prob, 1 / self.num_cono_classes)
+            adversary_cono_loss = F.kl_div(cono_log_prob, uniform_dist)
+            decomposer_loss = torch.sigmoid(deno_loss) + torch.sigmoid(adversary_cono_loss)
+        else:  # CS removing denotation
+            decomposer_loss = (1 + self.delta * torch.sigmoid(deno_loss)
+                               + self.gamma * torch.sigmoid(proper_cono_loss))
+            adversary_cono_loss = proper_cono_loss
 
         if recompose:
-            return decomposer_loss, deno_loss, cono_loss, seq_word_vecs
+            return decomposer_loss, deno_loss, proper_cono_loss, adversary_cono_loss, seq_word_vecs
         else:
-            return decomposer_loss, deno_loss, cono_loss
+            return decomposer_loss, deno_loss, proper_cono_loss, adversary_cono_loss
+
+    def skip_gram_loss(
+            self,
+            center_word_ids: Vector,
+            true_context_ids: Vector
+            ) -> Scalar:
+        negative_context_ids = torch.multinomial(
+            self.negative_sampling_probs,
+            len(true_context_ids) * self.num_negative_samples,
+            replacement=True
+        ).view(len(true_context_ids), self.num_negative_samples).to(self.device)
+
+        center = self.embedding(center_word_ids)
+        true_context = self.embedding(true_context_ids)
+        negative_context = self.embedding(negative_context_ids)
+
+        # batch_size * embed_size
+        objective = torch.sum(  # dot product
+            torch.mul(center, true_context),  # Hadamard product
+            dim=1)  # be -> b
+        objective = F.logsigmoid(objective)
+
+        # batch_size * num_negative_samples * embed_size
+        # negative_context: bne
+        # center: be -> be1
+        negative_objective = torch.bmm(  # bne, be1 -> bn1
+            negative_context, center.unsqueeze(2)
+            ).squeeze()  # bn1 -> bn
+        negative_objective = F.logsigmoid(-negative_objective)
+        negative_objective = torch.sum(negative_objective, dim=1)  # bn -> b
+        return -torch.mean(objective + negative_objective)
 
     def predict(self, seq_word_ids: Vector) -> Vector:
         self.eval()
@@ -589,21 +615,25 @@ class DecomposerExperiment(Experiment):
                 cono_labels = batch[3].to(self.device)
 
                 model.zero_grad()
-                L_decomp, l_deno, l_cono = model(
+                L_decomp, l_deno, l_cono_proper, l_cono_adversary = model(
                     center_word_ids, context_word_ids, seq_word_ids, cono_labels)
-                L_decomp.backward()
-
-                nn.utils.clip_grad_norm_(self.model.cono_decoder.parameters(), grad_clip)
-                self.cono_optimizer.step()
-
-                nn.utils.clip_grad_norm_(self.model.embedding.parameters(), grad_clip)
+                L_decomp.backward(retain_graph=True)
+                nn.utils.clip_grad_norm_(model.embedding.parameters(), config.clip_grad_norm)
                 self.decomposer_optimizer.step()
 
+                # model.zero_grad()
+                # L_decomp, l_deno, l_cono_proper, l_cono_adversary = model(
+                #     center_word_ids, context_word_ids, seq_word_ids, cono_labels)
+                nn.utils.clip_grad_norm_(model.cono_decoder.parameters(), config.clip_grad_norm)
+                l_cono_proper.backward()
+                self.cono_optimizer.step()
+
                 if batch_index % config.update_tensorboard == 0:
-                    cono_accuracy = self.model.accuracy(seq_word_ids, cono_labels)
+                    cono_accuracy = model.accuracy(seq_word_ids, cono_labels)
                     stats = {
                         'Decomposer/deno_loss': l_deno,
-                        'Decomposer/cono_loss': l_cono,
+                        'Decomposer/cono_loss_proper': l_cono_proper,
+                        'Decomposer/cono_loss_adversary': l_cono_adversary,
                         # 'Decomposer/accuracy_train_deno': deno_accuracy,
                         'Decomposer/accuracy_train_cono': cono_accuracy,
                         'Decomposer/combined_loss': L_decomp
@@ -713,36 +743,18 @@ class DecomposerConfig():
             '-pe', '--pretrained-embedding', action='store', type=Path)
         parser.parse_args(namespace=self)
 
+        self.num_cono_classes = 2
         if self.architecture == 'L1':
-            # self.deno_architecture = nn.Sequential(
-            #     nn.Linear(300, 41),
-            #     nn.SELU())
             self.cono_decoder = nn.Sequential(
-                nn.Linear(300, 2),
+                nn.Linear(300, self.num_cono_classes),
                 nn.SELU())
         elif self.architecture == 'L2':
-            # self.deno_architecture = nn.Sequential(
-            #     nn.Linear(300, 300),
-            #     nn.SELU(),
-            #     nn.Linear(300, 41),
-            #     nn.SELU())
             self.cono_decoder = nn.Sequential(
                 nn.Linear(300, 300),
                 nn.SELU(),
-                nn.Linear(300, 2),
+                nn.Linear(300, self.num_cono_classes),
                 nn.SELU())
         elif self.architecture == 'L4':
-            # self.deno_architecture = nn.Sequential(
-            #     nn.Linear(300, 300),
-            #     nn.SELU(),
-            #     nn.AlphaDropout(p=self.dropout_p),
-            #     nn.Linear(300, 300),
-            #     nn.SELU(),
-            #     nn.AlphaDropout(p=self.dropout_p),
-            #     nn.Linear(300, 300),
-            #     nn.SELU(),
-            #     nn.Linear(300, 41),
-            #     nn.SELU())
             self.cono_decoder = nn.Sequential(
                 nn.Linear(300, 300),
                 nn.SELU(),
@@ -752,7 +764,7 @@ class DecomposerConfig():
                 nn.AlphaDropout(p=self.dropout_p),
                 nn.Linear(300, 300),
                 nn.SELU(),
-                nn.Linear(300, 2),
+                nn.Linear(300, self.num_cono_classes),
                 nn.SELU())
         else:
             raise ValueError('Unknown architecture argument.')
@@ -798,10 +810,10 @@ class Recomposer(nn.Module):
             seq_word_ids: Matrix,
             cono_labels: Vector,
             ) -> Tuple[Scalar, ...]:
-        L_D, l_Dd, l_Dc, deno_vecs = self.deno_decomposer(
+        L_D, l_Dd, l_Dcp, l_Dca, deno_vecs = self.deno_decomposer(
             center_word_ids, context_word_ids,
             seq_word_ids, cono_labels, recompose=True)
-        L_C, l_Cd, l_Cc, cono_vecs = self.cono_decomposer(
+        L_C, l_Cd, l_Ccp, l_Cca, cono_vecs = self.cono_decomposer(
             center_word_ids, context_word_ids,
             seq_word_ids, cono_labels, recompose=True)
 
@@ -811,7 +823,7 @@ class Recomposer(nn.Module):
         L_R = 1 - F.cosine_similarity(recomposed, pretrained, dim=-1).mean()
 
         L_joint = L_D + L_C + self.rho * L_R
-        return L_D, l_Dd, l_Dc, L_C, l_Cd, l_Cc, L_R, L_joint
+        return L_D, l_Dd, l_Dcp, l_Dca, L_C, l_Cd, l_Ccp, l_Cca, L_R, L_joint
 
     def predict(self, seq_word_ids: Vector) -> Tuple[Vector, ...]:
         self.eval()
@@ -940,22 +952,29 @@ class RecomposerExperiment(Experiment):
                 cono_labels = batch[3].to(self.device)
 
                 self.model.zero_grad()
-                L_D, l_Dd, l_Dc, L_C, l_Cd, l_Cc, L_R, L_joint = self.model(
-                    center_word_ids, context_word_ids,
-                    seq_word_ids, cono_labels)
+                L_D, l_Dd, l_Dcp, l_Dca, L_C, l_Cd, l_Ccp, l_Cca, L_R, L_joint = self.model(
+                    center_word_ids, context_word_ids, seq_word_ids, cono_labels)
 
                 # Denotation Decomposer
                 L_joint.backward()
                 nn.utils.clip_grad_norm_(model.deno_decomposer.embedding.parameters(), grad_clip)
                 self.D_decomp_optimizer.step()
 
-                nn.utils.clip_grad_norm_(model.deno_decomposer.cono_decoder.parameters(), grad_clip)
-                self.D_cono_optimizer.step()
-
                 # Connotation Decomposer
                 nn.utils.clip_grad_norm_(model.cono_decomposer.embedding.parameters(), grad_clip)
                 self.C_decomp_optimizer.step()
 
+                self.model.zero_grad()
+                L_D, l_Dd, l_Dcp, l_Dca = self.model.deno_decomposer(
+                    center_word_ids, context_word_ids, seq_word_ids, cono_labels)
+                l_Dcp.backward()
+                nn.utils.clip_grad_norm_(model.deno_decomposer.cono_decoder.parameters(), grad_clip)
+                self.D_cono_optimizer.step()
+
+                self.model.zero_grad()
+                L_C, l_Cd, l_Ccp, l_Cca, = self.model.cono_decomposer(
+                    center_word_ids, context_word_ids, seq_word_ids, cono_labels)
+                l_Ccp.backward()
                 nn.utils.clip_grad_norm_(model.cono_decomposer.cono_decoder.parameters(), grad_clip)
                 self.C_cono_optimizer.step()
 
@@ -968,12 +987,13 @@ class RecomposerExperiment(Experiment):
                         seq_word_ids, cono_labels)
                     self.update_tensorboard({
                         'Denotation Decomposer/deno_loss': l_Dd,
-                        'Denotation Decomposer/cono_loss': l_Dc,
+                        'Denotation Decomposer/cono_loss_proper': l_Dcp,
+                        'Denotation Decomposer/cono_loss_adversary': l_Dca,
                         'Denotation Decomposer/combined_loss': L_D,
                         'Denotation Decomposer/accuracy_train_cono': D_cono_acc,
 
                         'Connotation Decomposer/deno_loss': l_Cd,
-                        'Connotation Decomposer/cono_loss': l_Cc,
+                        'Connotation Decomposer/cono_loss_proper': l_Ccp,
                         'Connotation Decomposer/combined_loss': L_C,
                         'Connotation Decomposer/accuracy_train_cono': C_cono_acc,
 
