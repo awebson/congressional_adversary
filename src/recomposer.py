@@ -195,7 +195,7 @@ class RecomposerExperiment(Experiment):
         # self.save_everything(self.config.output_dir / 'init_recomposer.pt')
         # raise SystemExit
         if not config.print_stats:
-            epoch_pbar = tqdm(range(1, config.num_epochs + 1), desc=config.output_dir)
+            epoch_pbar = tqdm(range(1, config.num_epochs + 1), desc=config.output_dir.name)
         else:
             epoch_pbar = tqdm(range(1, config.num_epochs + 1), desc='Epochs')
         for epoch_index in epoch_pbar:
@@ -301,6 +301,9 @@ class RecomposerExperiment(Experiment):
 class RecomposerConfig():
     # Essential
     input_dir: Path = Path('../data/processed/bill_mentions/topic_deno')
+    num_deno_classes: int = 41
+    num_cono_classes: int = 2
+
     # input_dir: str = '../data/processed/bill_mentions/title_deno'
 
     output_dir: Path = Path('../results/debug')
@@ -308,12 +311,11 @@ class RecomposerConfig():
     debug_subset_corpus: Optional[int] = None
     # dev_holdout: int = 5_000
     # test_holdout: int = 10_000
-    num_dataloader_threads: int = 12
+    num_dataloader_threads: int = 0
     pin_memory: bool = True
 
     delta: Optional[float] = None  # placeholders, assigned programmatically
     gamma: Optional[float] = None
-    max_adversary_loss: Optional[float] = 10
 
     # Denotation Decomposer
     deno_size: int = 300
@@ -336,12 +338,8 @@ class RecomposerConfig():
     encoder_update_cycle: int = 1  # per batch
     decoder_update_cycle: int = 1  # per batch
 
-    # pretrained_embedding: Optional[str] = None
-    # pretrained_embedding: Optional[str] = '../data/pretrained_word2vec/for_real.txt'
-    pretrained_embedding: Optional[Path] = Path('../data/pretrained_word2vec/bill_mentions_HS.txt')
-    freeze_embedding: bool = False  # NOTE
-    # window_radius: int = 5
-    # num_negative_samples: int = 10
+    pretrained_embedding: Optional[Path] = Path('../data/pretrained_word2vec/bill_mentions_SGNS.txt')
+    freeze_embedding: bool = False
     optimizer: torch.optim.Optimizer = torch.optim.Adam
     # optimizer: torch.optim.Optimizer = torch.optim.SGD
     learning_rate: float = 1e-4
@@ -395,21 +393,21 @@ class RecomposerConfig():
 
         if self.architecture == 'L1':
             self.deno_architecture = nn.Sequential(
-                nn.Linear(300, 41),
+                nn.Linear(300, self.num_deno_classes),
                 nn.SELU())
             self.cono_architecture = nn.Sequential(
-                nn.Linear(300, 2),
+                nn.Linear(300, self.num_cono_classes),
                 nn.SELU())
         elif self.architecture == 'L2':
             self.deno_architecture = nn.Sequential(
                 nn.Linear(300, 300),
                 nn.SELU(),
-                nn.Linear(300, 41),
+                nn.Linear(300, self.num_deno_classes),
                 nn.SELU())
             self.cono_architecture = nn.Sequential(
                 nn.Linear(300, 300),
                 nn.SELU(),
-                nn.Linear(300, 2),
+                nn.Linear(300, self.num_cono_classes),
                 nn.SELU())
         elif self.architecture == 'L4':
             self.deno_architecture = nn.Sequential(
@@ -421,7 +419,7 @@ class RecomposerConfig():
                 nn.AlphaDropout(p=self.dropout_p),
                 nn.Linear(300, 300),
                 nn.SELU(),
-                nn.Linear(300, 41),
+                nn.Linear(300, self.num_deno_classes),
                 nn.SELU())
             self.cono_architecture = nn.Sequential(
                 nn.Linear(300, 300),
@@ -432,8 +430,29 @@ class RecomposerConfig():
                 nn.AlphaDropout(p=self.dropout_p),
                 nn.Linear(300, 300),
                 nn.SELU(),
-                nn.Linear(300, 2),
+                nn.Linear(300, self.num_cono_classes),
                 nn.SELU())
+        elif self.architecture == 'L4R':
+            self.deno_architecture = nn.Sequential(
+                nn.Linear(300, 300),
+                nn.ReLU(),
+                nn.Dropout(p=self.dropout_p),
+                nn.Linear(300, 300),
+                nn.ReLU(),
+                nn.Dropout(p=self.dropout_p),
+                nn.Linear(300, 300),
+                nn.ReLU(),
+                nn.Linear(300, self.num_deno_classes))
+            self.cono_architecture = nn.Sequential(
+                nn.Linear(300, 300),
+                nn.ReLU(),
+                nn.Dropout(p=self.dropout_p),
+                nn.Linear(300, 300),
+                nn.ReLU(),
+                nn.Dropout(p=self.dropout_p),
+                nn.Linear(300, 300),
+                nn.ReLU(),
+                nn.Linear(300, self.num_cono_classes))
         else:
             raise ValueError('Unknown architecture argument.')
 

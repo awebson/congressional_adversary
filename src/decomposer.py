@@ -37,18 +37,18 @@ class Decomposer(nn.Module):
             data: 'LabeledSentences'):
         super().__init__()
         self.init_embedding(config, data.word_to_id)
-        self.num_deno_classes = len(data.deno_to_id)
-        self.num_cono_classes = 2
-        repr_size = 300
+        self.num_deno_classes = config.num_deno_classes
+        self.num_cono_classes = config.num_cono_classes
+        assert self.num_deno_classes == len(data.deno_to_id)
 
         # Dennotation Loss: Skip-Gram Negative Sampling
         self.deno_decoder = config.deno_architecture
-        assert self.deno_decoder[0].in_features == repr_size
-        assert self.deno_decoder[-2].out_features == self.num_deno_classes
+        # assert self.deno_decoder[0].in_features == repr_size
+        # assert self.deno_decoder[-2].out_features == self.num_deno_classes
 
         # Connotation Loss: Party Classifier
         self.cono_decoder = config.cono_architecture
-        assert self.cono_decoder[-2].out_features == self.num_cono_classes
+        # assert self.cono_decoder[-2].out_features == self.num_cono_classes
 
         self.delta = config.delta
         self.gamma = config.gamma
@@ -457,6 +457,7 @@ class DecomposerConfig():
     # Essential
     input_dir: Path = Path('../data/processed/bill_mentions/topic_deno')
     num_deno_classes: int = 41
+    num_cono_classes: int = 2
     # input_dir: str = '../data/processed/bill_mentions/title_deno_context3'
     # num_deno_classes: int = 1029 # 1027, 1030
 
@@ -480,9 +481,7 @@ class DecomposerConfig():
     encoder_update_cycle: int = 1  # per batch
     decoder_update_cycle: int = 1  # per batch
 
-    # pretrained_embedding: Optional[Path] = None
-    # pretrained_embedding: Optional[Path] = '../data/pretrained_word2vec/for_real.txt'
-    pretrained_embedding: Optional[Path] = Path('../data/pretrained_word2vec/bill_mentions_HS.txt')
+    pretrained_embedding: Optional[Path] = Path('../data/pretrained_word2vec/bill_mentions_SGNS.txt')
     freeze_embedding: bool = False
     # window_radius: int = 5
     # num_negative_samples: int = 10
