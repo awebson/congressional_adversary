@@ -37,23 +37,21 @@ class Decomposer(nn.Module):
             data: 'LabeledSentences'):
         super().__init__()
         self.init_embedding(config, data.word_to_id)
-        num_deno_classes = len(data.deno_to_id)
-        num_cono_classes = 2
+        self.num_deno_classes = len(data.deno_to_id)
+        self.num_cono_classes = 2
         repr_size = 300
 
         # Dennotation Loss: Skip-Gram Negative Sampling
         self.deno_decoder = config.deno_architecture
         assert self.deno_decoder[0].in_features == repr_size
-        assert self.deno_decoder[-2].out_features == num_deno_classes
+        assert self.deno_decoder[-2].out_features == self.num_deno_classes
 
         # Connotation Loss: Party Classifier
         self.cono_decoder = config.cono_architecture
-        assert self.cono_decoder[-2].out_features == num_cono_classes
+        assert self.cono_decoder[-2].out_features == self.num_cono_classes
 
         self.delta = config.delta
         self.gamma = config.gamma
-        self.rho = getattr(config, 'rho', None)
-        self.max_adversary_loss = config.max_adversary_loss
         self.device = config.device
         self.to(self.device)
 
@@ -94,32 +92,32 @@ class Decomposer(nn.Module):
             cono_labels: Vector,
             recompose: bool = False,
             ) -> Scalar:
-        word_vecs: R3Tensor = self.embedding(seq_word_ids)
-        seq_repr: Matrix = torch.mean(word_vecs, dim=1)
+        seq_vecs: R3Tensor = self.embedding(seq_word_ids)
+        seq_repr: Matrix = torch.mean(seq_vecs, dim=1)
 
         deno_logits = self.deno_decoder(seq_repr)
-        deno_loss = nn.functional.cross_entropy(deno_logits, deno_labels)
+        deno_log_prob = F.log_softmax(deno_logits, dim=1)
+        proper_deno_loss = F.nll_loss(deno_log_prob, deno_labels)
 
         cono_logits = self.cono_decoder(seq_repr)
-        cono_loss = nn.functional.cross_entropy(cono_logits, cono_labels)
+        cono_log_prob = F.log_softmax(cono_logits, dim=1)
+        proper_cono_loss = F.nll_loss(cono_log_prob, cono_labels)
 
-        overcorrect_loss = 1 - F.cosine_similarity(
-            word_vecs, self.pretrained_embed(seq_word_ids), dim=-1).mean()
-
-        if self.max_adversary_loss:
-            if self.gamma < 0:  # remove connotation
-                cono_loss = torch.clamp(cono_loss, max=self.max_adversary_loss)
-            else:  # remove denotation
-                deno_loss = torch.clamp(deno_loss, max=self.max_adversary_loss)
-        decomposer_loss = (
-            self.delta * deno_loss
-            + self.gamma * cono_loss
-            + self.rho * overcorrect_loss)
+        if self.gamma < 0:  # DS removing connotation
+            uniform_dist = torch.full_like(cono_log_prob, 1 / self.num_cono_classes)
+            adversary_cono_loss = F.kl_div(cono_log_prob, uniform_dist, reduction='batchmean')
+            decomposer_loss = torch.sigmoid(proper_deno_loss) + torch.sigmoid(adversary_cono_loss)
+            adversary_deno_loss = 0  # placeholder
+        else:  # CS removing denotation
+            uniform_dist = torch.full_like(deno_log_prob, 1 / self.num_deno_classes)
+            adversary_deno_loss = F.kl_div(deno_log_prob, uniform_dist, reduction='batchmean')
+            decomposer_loss = torch.sigmoid(adversary_deno_loss) + torch.sigmoid(proper_cono_loss)
+            adversary_cono_loss = 0
 
         if recompose:
-            return decomposer_loss, deno_loss, cono_loss, word_vecs
+            return decomposer_loss, proper_deno_loss, adversary_deno_loss, proper_cono_loss, adversary_cono_loss, seq_vecs
         else:
-            return decomposer_loss, deno_loss, cono_loss, overcorrect_loss
+            return decomposer_loss, proper_deno_loss, adversary_deno_loss, proper_cono_loss, adversary_cono_loss
 
     def predict(self, seq_word_ids: Vector) -> Vector:
         self.eval()
@@ -389,9 +387,9 @@ class DecomposerExperiment(Experiment):
                 cono_labels = batch[2].to(self.device)
 
                 model.zero_grad()
-                L_decomp, l_deno, l_cono, l_overcorrect = self.model(
+                L_decomp, l_dp, l_da, l_cp, l_ca = self.model(
                     seq_word_ids, deno_labels, cono_labels)
-
+                # TODO update backprop here
                 L_decomp.backward()
                 nn.utils.clip_grad_norm_(model.deno_decoder.parameters(), grad_clip)
                 self.deno_optimizer.step()
@@ -473,8 +471,6 @@ class DecomposerConfig():
     decomposed_size: int = 300
     delta: float = 1  # denotation classifier weight 𝛿
     gamma: float = 1  # connotation classifier weight 𝛾
-    rho: float = 100  # overcorrection loss
-    max_adversary_loss: Optional[float] = 10
 
     architecture: str = 'L4'
     dropout_p: float = 0
