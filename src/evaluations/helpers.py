@@ -14,7 +14,7 @@ from recomposer import Recomposer, RecomposerConfig
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 # pretrained_path = PROJECT_ROOT / 'results/CR_topic/pretrained subset/init.pt'
 # pretrained_path = PROJECT_ROOT / 'results/CR_skip/pretrained super large/init.pt'
-pretrained_path = PROJECT_ROOT / 'results/CR_skip/GM2/epoch1.pt'
+pretrained_path = PROJECT_ROOT / 'results/CR_topic/search/L1 B128 LR1e-03/epoch5.pt'
 PE = torch.load(pretrained_path)['model']
 
 
@@ -109,14 +109,19 @@ def lazy_load_recomposers(
     # PE1 = torch.load(
     #     '../../results/pretrained superset/init.pt', map_location=device)['model']
     # PE1.name = 'pretrained superset'
-    # yield PE1
-    # del PE1
-    PE2 = torch.load(
-        '../../results/CR_topic/pretrained subset/init_recomposer.pt',
-        map_location=device)['model']
-    PE2.name = 'pretrained subset'
-    yield PE2
-    del PE2
+    PE1 = copy(PE)  # HACK
+    PE1.deno_decomposer.embedding = PE1.deno_decomposer.pretrained_embed
+    PE1.cono_decomposer.embedding = PE1.deno_decomposer.pretrained_embed
+    PE1.name = 'pretrained'
+    yield PE1
+    del PE1
+
+    # PE2 = torch.load(
+    #     '../../results/CR_topic/pretrained subset/init_recomposer.pt',
+    #     map_location=device)['model']
+    # PE2.name = 'pretrained HS'
+    # yield PE2
+    # del PE2
 
     serial_number = 0
     for path in tqdm(checkpoints):

@@ -13,12 +13,15 @@ from evaluations.helpers import lazy_load_recomposers, PE
 
 # warnings.simplefilter('ignore')
 DEVICE = 'cuda:0'
-in_dir = Path('../../results/CR_topic/recomposer')
+in_dir = Path('../../results/CR_topic/search')
 generator = lazy_load_recomposers(
-    in_dir,
-    patterns=['*/epoch2.pt', '*/epoch4.pt', '*/epoch6.pt', '*/epoch8.pt', '*/epoch10.pt', '*/epoch20.pt', '*/epoch50.pt', '*/epoch74.pt', '*/epoch100.pt'],
+    [in_dir, Path('../../results/CR_topic/search greek')],
+    patterns=[
+        '*/epoch5.pt', '*/epoch10.pt', '*/epoch25.pt', '*/epoch50.pt',
+        '*/epoch75.pt', '*/epoch90.pt', '*/epoch100.pt'],
     # patterns=['*/epoch10.pt', '*/epoch20.pt', '*/epoch50.pt', '*/epoch80.pt', '*/epoch100.pt'],
     # patterns=['*/epoch10.pt', '*/epoch50.pt', '*/epoch100.pt'],
+    # patterns=['*/epoch*.pt', ],
     device=DEVICE)
 out_path = in_dir / 'summary.tsv'
 
