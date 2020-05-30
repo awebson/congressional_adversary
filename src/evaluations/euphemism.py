@@ -21,8 +21,8 @@ class Embedding():
         self.device = device
         if source == 'decomposer':
             self.init_from_decomposer(path)
-        # elif source == 'recomposer':
-        #     self.init_from_recomposer(path, device)
+        elif source == 'recomposer':
+            self.init_from_recomposer(path)
         # elif source == 'tensorboard':
         #     self.init_from_tensorboard(path)
         # elif source == 'skip_gram':
@@ -41,6 +41,13 @@ class Embedding():
         # self.GOP_frequency: Counter[str] = model.GOP_frequency
         self.embedding = model.export_embedding(device=self.device)
         self.embedding.requires_grad = False
+
+    def init_from_recomposer(self, path: str) -> None:
+        payload = torch.load(path, map_location=self.device)
+        model = payload['model']
+        self.word_to_id = model.word_to_id
+        self.id_to_word = model.id_to_word
+        self.embedding = model.deno_decomposer.embedding.weight.detach()
 
     def init_from_plain_text(self, path: str) -> None:
         id_generator = 0

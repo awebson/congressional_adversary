@@ -12,18 +12,23 @@ from decomposer import Decomposer, DecomposerConfig
 from recomposer import Recomposer, RecomposerConfig
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-pretrained_path = PROJECT_ROOT / 'results/CR_topic/pretrained subset/init.pt'
-print(f'Loading vocabulary from {pretrained_path}')
+# pretrained_path = PROJECT_ROOT / 'results/CR_topic/pretrained subset/init.pt'
+# pretrained_path = PROJECT_ROOT / 'results/CR_skip/pretrained super large/init.pt'
+pretrained_path = PROJECT_ROOT / 'results/CR_skip/GM2/epoch1.pt'
 PE = torch.load(pretrained_path)['model']
-# PE_embed = PE.embedding.weight.detach().cpu().numpy()
 
-GD = PE.grounding
+
+# print(f'Loading vocabulary from {pretrained_path}')
+# PE = torch.load(pretrained_path)['model']
+PE_embed = PE.deno_decomposer.pretrained_embed.weight.detach().cpu().numpy()
+
+# GD = PE.grounding
 
 
 def get_embed(model: Decomposer) -> np.ndarray:
     return model.embedding.weight.detach().cpu().numpy()
 
-PE_embed = get_embed(PE)
+# PE_embed = get_embed(PE)
 
 def load(
         path: Path,
