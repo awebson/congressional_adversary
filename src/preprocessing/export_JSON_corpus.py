@@ -1,5 +1,5 @@
 import xml.etree.ElementTree as ET
-import pickle
+import json
 from pathlib import Path
 from typing import Set, List, Iterable
 
@@ -57,14 +57,14 @@ def parse_xml(
 
         if text:  # nonempty
             label = labels[attr['id']]
-            data.append(LabeledDoc(
-                uid=attr['id'],
-                party=label['bias'],
-                partisan=bool(label['hyperpartisan']),
-                url=label['url'],
-                title=attr['title'],
-                date=attr.get('published-at', None),
-                text=text))
+            data.append({
+                'uid': attr['id'],
+                'party': label['bias'],
+                'partisan': bool(label['hyperpartisan']),
+                'url': label['url'],
+                'title': attr['title'],
+                'date': attr.get('published-at', None),
+                'text': text})
         else:
             print('Missing:', article.attrib)
     print(f'Number of duplicated articles = {duplicate_count:,}')
@@ -98,8 +98,9 @@ def main() -> None:
     # # processor = stanza.Pipeline(lang='en', processors={'tokenize': 'spacy'})
 
 
-    with open(out_dir / f'raw_corpus_3.6.pickle', 'wb') as file:
-        pickle.dump(data, file, protocol=4)
+    with open(out_dir / f'PN_corpus.json', 'w') as file:
+        json.dump(data, file)
+        # pickle.dump(data, file, protocol=4)
 
 
 if __name__ == '__main__':
