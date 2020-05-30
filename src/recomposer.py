@@ -201,8 +201,8 @@ class RecomposerExperiment(Experiment):
                 context_word_ids = batch[2].to(self.device)
                 cono_labels = batch[3].to(self.device)
 
-                self.model.zero_grad()
-                L_D, l_Dd, l_Dcp, l_Dca, L_C, l_Cd, l_Ccp, l_Cca, L_R, L_joint = self.model(
+                model.zero_grad()
+                L_D, l_Dd, l_Dcp, l_Dca, L_C, l_Cd, l_Ccp, l_Cca, L_R, L_joint = model(
                     center_word_ids, context_word_ids, seq_word_ids, cono_labels)
 
                 # Denotation Decomposer
@@ -214,15 +214,15 @@ class RecomposerExperiment(Experiment):
                 nn.utils.clip_grad_norm_(model.cono_decomposer.embedding.parameters(), grad_clip)
                 self.C_decomp_optimizer.step()
 
-                self.model.zero_grad()
-                L_D, l_Dd, l_Dcp, l_Dca = self.model.deno_decomposer(
+                model.zero_grad()
+                L_D, l_Dd, l_Dcp, l_Dca = model.deno_decomposer(
                     center_word_ids, context_word_ids, seq_word_ids, cono_labels)
                 l_Dcp.backward()
                 nn.utils.clip_grad_norm_(model.deno_decomposer.cono_decoder.parameters(), grad_clip)
                 self.D_cono_optimizer.step()
 
-                self.model.zero_grad()
-                L_C, l_Cd, l_Ccp, l_Cca, = self.model.cono_decomposer(
+                model.zero_grad()
+                L_C, l_Cd, l_Ccp, l_Cca, = model.cono_decomposer(
                     center_word_ids, context_word_ids, seq_word_ids, cono_labels)
                 l_Ccp.backward()
                 nn.utils.clip_grad_norm_(model.cono_decomposer.cono_decoder.parameters(), grad_clip)
@@ -450,6 +450,17 @@ class RecomposerConfig():
                 nn.SELU(),
                 nn.Linear(300, self.num_cono_classes),
                 nn.SELU())
+        elif self.architecture == 'L4R':
+            self.cono_decoder = nn.Sequential(
+                nn.Linear(300, 300),
+                nn.ReLU(),
+                nn.Dropout(p=self.dropout_p),
+                nn.Linear(300, 300),
+                nn.ReLU(),
+                nn.Dropout(p=self.dropout_p),
+                nn.Linear(300, 300),
+                nn.ReLU(),
+                nn.Linear(300, self.num_cono_classes))
         else:
             raise ValueError('Unknown architecture argument.')
 
