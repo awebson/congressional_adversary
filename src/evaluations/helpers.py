@@ -14,8 +14,10 @@ from recomposer import Recomposer, RecomposerConfig
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 # pretrained_path = PROJECT_ROOT / 'results/CR_topic/pretrained subset/init.pt'
 # pretrained_path = PROJECT_ROOT / 'results/CR_skip/pretrained super large/init.pt'
-pretrained_path = PROJECT_ROOT / 'results/CR_topic/search/L1 B128 LR1e-03/epoch5.pt'
-PE = torch.load(pretrained_path)['model']
+
+# pretrained_path = PROJECT_ROOT / 'results/CR_topic/search/L1 B128 LR1e-03/epoch5.pt'
+pretrained_path = PROJECT_ROOT / 'results/CR_bill/Ctx3/L1 B128 LR1e-03/epoch5.pt'
+PE = torch.load(pretrained_path, map_location='cuda:0')['model']
 
 
 # print(f'Loading vocabulary from {pretrained_path}')
@@ -134,6 +136,7 @@ def lazy_load_recomposers(
         C_model = recomp.cono_decomposer
 
         assert D_model.word_to_id == PE.word_to_id
+        recomp.path = path
         recomp.name = f'M{serial_number}'
         D_model.config = config
         C_model.config = config

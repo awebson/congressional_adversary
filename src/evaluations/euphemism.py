@@ -21,8 +21,10 @@ class Embedding():
         self.device = device
         if source == 'decomposer':
             self.init_from_decomposer(path)
-        elif source == 'recomposer':
-            self.init_from_recomposer(path)
+        elif source == 'recomposer_deno':
+            self.init_from_recomposer(path, 'deno')
+        elif source == 'recomposer_cono':
+            self.init_from_recomposer(path, 'cono')
         # elif source == 'tensorboard':
         #     self.init_from_tensorboard(path)
         # elif source == 'skip_gram':
@@ -42,12 +44,15 @@ class Embedding():
         self.embedding = model.export_embedding(device=self.device)
         self.embedding.requires_grad = False
 
-    def init_from_recomposer(self, path: str) -> None:
+    def init_from_recomposer(self, path: str, space: str) -> None:
         payload = torch.load(path, map_location=self.device)
         model = payload['model']
         self.word_to_id = model.word_to_id
         self.id_to_word = model.id_to_word
-        self.embedding = model.deno_decomposer.embedding.weight.detach()
+        if space == 'deno':
+            self.embedding = model.deno_decomposer.embedding.weight.detach()
+        elif space == 'cono':
+            self.embedding = model.cono_decomposer.embedding.weight.detach()
 
     def init_from_plain_text(self, path: str) -> None:
         id_generator = 0
@@ -74,12 +79,13 @@ class Embedding():
             query1_id = self.word_to_id[query1]
         except KeyError as error:
             print(f'Out of vocabulary: {query1}')
-            raise error
+            return -1
         try:
             query2_id = self.word_to_id[query2]
         except KeyError as error:
             print(f'Out of vocabulary: {query2}')
-            raise error
+            return -1
+            # raise error
 
         v1 = self.embedding[query1_id]
         v2 = self.embedding[query2_id]
@@ -229,7 +235,7 @@ cherry_pairs = [
     # ('trial_lawyer', 'personal_injury_lawyer'),  # aka ambulance chasers
     # ('corporate_transparency', 'corporate_accountability'),
     # ('school_choice', 'parental_choice'),  # equal_opportunity_in_education
-    #('healthcare_choice', 'right_to_choose')
+    # ('healthcare_choice', 'right_to_choose')
 
     # Own Cherries
     ('public_option', 'governmentrun'),

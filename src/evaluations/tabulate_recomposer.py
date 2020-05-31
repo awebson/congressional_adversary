@@ -13,9 +13,10 @@ from evaluations.helpers import lazy_load_recomposers, PE
 
 # warnings.simplefilter('ignore')
 DEVICE = 'cuda:0'
-in_dir = Path('../../results/CR_topic/search')
+in_dir = Path('../../results/CR_bill/Ctx3')
 generator = lazy_load_recomposers(
-    [in_dir, Path('../../results/CR_topic/search greek')],
+    in_dir,
+    # [in_dir, Path('../../results/CR_topic/search greek')],
     patterns=[
         '*/epoch5.pt', '*/epoch10.pt', '*/epoch25.pt', '*/epoch50.pt',
         '*/epoch75.pt', '*/epoch90.pt', '*/epoch100.pt'],
@@ -53,6 +54,7 @@ for model in generator:
         row = {
             'model_name': model.name,
             'epoch': D_model.stem,
+            'path': model.path,
             'DS delta': D_model.delta,
             'DS gamma': D_model.gamma,
             # 'DS delta/gamma': D_model.delta / D_model.gamma,
