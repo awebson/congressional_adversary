@@ -455,11 +455,15 @@ class DecomposerExperiment(Experiment):
 @dataclass
 class DecomposerConfig():
     # Essential
-    input_dir: Path = Path('../data/processed/bill_mentions/topic_deno')
-    num_deno_classes: int = 41
+    # input_dir: Path = Path('../data/processed/bill_mentions/topic_deno')
+    # num_deno_classes: int = 41
     num_cono_classes: int = 2
+
     # input_dir: str = '../data/processed/bill_mentions/title_deno_context3'
-    # num_deno_classes: int = 1029 # 1027, 1030
+    # num_deno_classes: int = 1029
+
+    input_dir: str = '../data/processed/bill_mentions/title_deno_context5'
+    num_deno_classes: int = 1027
 
     output_dir: Path = Path('../results/debug')
     device: torch.device = torch.device('cuda')

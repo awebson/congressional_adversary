@@ -300,9 +300,15 @@ class RecomposerExperiment(Experiment):
 @dataclass
 class RecomposerConfig():
     # Essential
-    input_dir: Path = Path('../data/processed/bill_mentions/topic_deno')
-    num_deno_classes: int = 41
+    # input_dir: Path = Path('../data/processed/bill_mentions/topic_deno')
+    # num_deno_classes: int = 41
     num_cono_classes: int = 2
+
+    input_dir: str = '../data/processed/bill_mentions/title_deno_context3'
+    num_deno_classes: int = 1029
+
+    # input_dir: str = '../data/processed/bill_mentions/title_deno_context5'
+    # num_deno_classes: int = 1027
 
     # input_dir: str = '../data/processed/bill_mentions/title_deno'
 
@@ -408,6 +414,25 @@ class RecomposerConfig():
                 nn.Linear(300, 300),
                 nn.SELU(),
                 nn.Linear(300, self.num_cono_classes),
+                nn.SELU())
+        elif self.architecture == 'L3':
+            self.deno_architecture = nn.Sequential(
+                nn.Linear(300, 1024),
+                nn.SELU(),
+                nn.AlphaDropout(p=self.dropout_p),
+                nn.Linear(1024, 1024),
+                nn.SELU(),
+                nn.AlphaDropout(p=self.dropout_p),
+                nn.Linear(1024, self.num_deno_classes),
+                nn.SELU())
+            self.cono_architecture = nn.Sequential(
+                nn.Linear(300, 1024),
+                nn.SELU(),
+                nn.AlphaDropout(p=self.dropout_p),
+                nn.Linear(1024, 1024),
+                nn.SELU(),
+                nn.AlphaDropout(p=self.dropout_p),
+                nn.Linear(1024, self.num_cono_classes),
                 nn.SELU())
         elif self.architecture == 'L4':
             self.deno_architecture = nn.Sequential(
