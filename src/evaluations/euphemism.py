@@ -21,8 +21,10 @@ class Embedding():
         self.device = device
         if source == 'decomposer':
             self.init_from_decomposer(path)
-        # elif source == 'recomposer':
-        #     self.init_from_recomposer(path, device)
+        elif source == 'recomposer_deno':
+            self.init_from_recomposer(path, 'deno')
+        elif source == 'recomposer_cono':
+            self.init_from_recomposer(path, 'cono')
         # elif source == 'tensorboard':
         #     self.init_from_tensorboard(path)
         # elif source == 'skip_gram':
@@ -41,6 +43,16 @@ class Embedding():
         # self.GOP_frequency: Counter[str] = model.GOP_frequency
         self.embedding = model.export_embedding(device=self.device)
         self.embedding.requires_grad = False
+
+    def init_from_recomposer(self, path: str, space: str) -> None:
+        payload = torch.load(path, map_location=self.device)
+        model = payload['model']
+        self.word_to_id = model.word_to_id
+        self.id_to_word = model.id_to_word
+        if space == 'deno':
+            self.embedding = model.deno_decomposer.embedding.weight.detach()
+        elif space == 'cono':
+            self.embedding = model.cono_decomposer.embedding.weight.detach()
 
     def init_from_plain_text(self, path: str) -> None:
         id_generator = 0
@@ -67,12 +79,13 @@ class Embedding():
             query1_id = self.word_to_id[query1]
         except KeyError as error:
             print(f'Out of vocabulary: {query1}')
-            raise error
+            return -1
         try:
             query2_id = self.word_to_id[query2]
         except KeyError as error:
             print(f'Out of vocabulary: {query2}')
-            raise error
+            return -1
+            # raise error
 
         v1 = self.embedding[query1_id]
         v2 = self.embedding[query2_id]
@@ -92,6 +105,20 @@ class Embedding():
             print(f'{sim:.4f}\t{neighbor_word}')
         print('\n')
 
+    def neighbor_rank(self, query: str, neighbor: str, top_k: int = 1000) -> int:
+        query_id = self.word_to_id[query]
+        query_vec = self.embedding[query_id]
+
+        cos_sim = nn.functional.cosine_similarity(
+            query_vec.unsqueeze(0), self.embedding, dim=1)
+        cos_sim, neighbor_ids = cos_sim.topk(k=len(self.word_to_id), dim=-1)
+
+        want_id = self.word_to_id[neighbor]
+        try:
+            rank = neighbor_ids.tolist().index(want_id)
+        except ValueError:
+            rank = None
+        return rank
 
 class PhrasePair(NamedTuple):
     query: str
@@ -222,7 +249,7 @@ cherry_pairs = [
     # ('trial_lawyer', 'personal_injury_lawyer'),  # aka ambulance chasers
     # ('corporate_transparency', 'corporate_accountability'),
     # ('school_choice', 'parental_choice'),  # equal_opportunity_in_education
-    #('healthcare_choice', 'right_to_choose')
+    # ('healthcare_choice', 'right_to_choose')
 
     # Own Cherries
     ('public_option', 'governmentrun'),
