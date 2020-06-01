@@ -105,6 +105,22 @@ class Embedding():
             print(f'{sim:.4f}\t{neighbor_word}')
         print('\n')
 
+    def neighbor_rank(self, query: str, neighbor: str) -> int:
+        query_id = self.word_to_id[query]
+        query_vec = self.embedding[query_id]
+
+        cos_sim = nn.functional.cosine_similarity(
+            query_vec.unsqueeze(0), self.embedding, dim=1)
+        cos_sim, neighbor_ids = cos_sim.topk(k=len(self.word_to_id), dim=-1)
+
+        want_id = self.word_to_id[neighbor]
+        try:
+            rank = neighbor_ids.tolist().index(want_id)
+        except ValueError:
+            rank = None
+        return rank
+
+
 
 class PhrasePair(NamedTuple):
     query: str
