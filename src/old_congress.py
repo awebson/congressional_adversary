@@ -281,9 +281,15 @@ class Decomposer(nn.Module):
                 # print(query_word, [self.id_to_word[i.item()] for i in top_neighbor_ids[query_index]])
                 continue
 
-            query_deno: Set[int] = self.deno_grounding[query_id]
-            overlap = len([nid for nid in neighbor_ids if nid in query_deno])
-            deno_homogeneity.append(overlap / len(neighbor_ids))
+            # query_deno: Set[int] = self.deno_grounding[query_id]
+            # overlap = len([nid for nid in neighbor_ids if nid in query_deno])
+            # deno_homogeneity.append(overlap / len(neighbor_ids))
+
+            query_deno = self.grounding[query_word]['majority_deno']
+            same_deno = len(
+                [nid for nid in neighbor_ids
+                 if self.grounding[self.id_to_word[nid]]['majority_deno'] == query_deno])
+            deno_homogeneity.append(same_deno / len(neighbor_ids))
 
             query_cono = self.id_to_cono(query_id)
             same_cono = len(

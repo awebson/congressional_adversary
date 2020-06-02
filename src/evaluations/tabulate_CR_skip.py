@@ -33,39 +33,27 @@ rand_ids = torch.tensor([WTI[w] for w in rand_words], device=DEVICE)
 dev_ids = torch.tensor([WTI[w] for w in dev_words], device=DEVICE)
 test_ids = torch.tensor([WTI[w] for w in test_words], device=DEVICE)
 
+# with open('../../data/processed/bill_mentions/topic_deno/train_data.pickle', 'rb') as file:
+with open('../../data/processed/bill_mentions/title_deno_context5/train_data.pickle', 'rb') as file:
+    import pickle
+    extra_ground = pickle.load(file)['grounding']
+
+# import IPython
+# IPython.embed()
+# raise SystemExit
+
 debug = 0
 table: List[Dict] = []
 for model in checkpoints:
     D_model = model.deno_decomposer
     C_model = model.cono_decomposer
 
+    for word in D_model.grounding.keys():
+        D_model.grounding[word]['majority_deno'] = extra_ground[word]['majority_deno']
+    C_model.grounding = D_model.grounding
+
     if 'pretrained' in model.name:
         row = {'model_name': model.name}
-
-        def pretrained_neighbors(
-                query_ids: torch.Tensor,
-                top_k: int = 10
-                ) -> Dict[int, Set[int]]:
-            import editdistance
-            import torch.nn.functional as F
-
-            deno_grounding: Dict[int, Set[int]] = {}
-            for qid in query_ids:
-                qv = D_model.pretrained_embed(qid)
-                qid = qid.item()
-                qw = model.id_to_word[qid]
-                cos_sim = F.cosine_similarity(qv.unsqueeze(0), D_model.pretrained_embed.weight)
-                cos_sim, neighbor_ids = cos_sim.topk(k=top_k + 5, dim=-1)
-                neighbor_ids = [
-                    nid for nid in neighbor_ids.tolist()
-                    if editdistance.eval(qw, model.id_to_word[nid]) > 3]
-                deno_grounding[qid] = set(neighbor_ids[:top_k])
-            return deno_grounding
-
-        rand_deno = pretrained_neighbors(rand_ids)
-        dev_deno = pretrained_neighbors(dev_ids)
-        test_deno = pretrained_neighbors(test_ids)
-
     else:
         row = {
             'model_name': model.name,
@@ -78,13 +66,12 @@ for model in checkpoints:
             # 'CS delta/gamma': C_model.delta / C_model.gamma,
             'rho': model.rho
         }
-
-    D_model.deno_grounding.update(rand_deno)
-    D_model.deno_grounding.update(dev_deno)
-    D_model.deno_grounding.update(test_deno)
-    C_model.deno_grounding.update(rand_deno)
-    C_model.deno_grounding.update(dev_deno)
-    C_model.deno_grounding.update(test_deno)
+    # D_model.deno_grounding.update(rand_deno)
+    # D_model.deno_grounding.update(dev_deno)
+    # D_model.deno_grounding.update(test_deno)
+    # C_model.deno_grounding.update(rand_deno)
+    # C_model.deno_grounding.update(dev_deno)
+    # C_model.deno_grounding.update(test_deno)
 
     row.update(model.tabulate(dev_ids, ' (dev)'))
     row.update(model.tabulate(rand_ids, ' (random)'))
