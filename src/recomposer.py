@@ -397,43 +397,43 @@ class RecomposerConfig():
             '-pe', '--pretrained-embedding', action='store', type=Path)
         parser.parse_args(namespace=self)
 
-        if self.architecture == 'L1':
+        if self.architecture == 'L1R':
             self.deno_architecture = nn.Sequential(
                 nn.Linear(300, self.num_deno_classes),
-                nn.SELU())
+                nn.ReLU())
             self.cono_architecture = nn.Sequential(
                 nn.Linear(300, self.num_cono_classes),
-                nn.SELU())
-        elif self.architecture == 'L2':
+                nn.ReLU())
+        elif self.architecture == 'L2R':
             self.deno_architecture = nn.Sequential(
                 nn.Linear(300, 300),
-                nn.SELU(),
+                nn.ReLU(),
                 nn.Linear(300, self.num_deno_classes),
-                nn.SELU())
+                nn.ReLU())
             self.cono_architecture = nn.Sequential(
                 nn.Linear(300, 300),
-                nn.SELU(),
+                nn.ReLU(),
                 nn.Linear(300, self.num_cono_classes),
-                nn.SELU())
-        elif self.architecture == 'L3':
+                nn.ReLU())
+        elif self.architecture == 'L3R':
             self.deno_architecture = nn.Sequential(
                 nn.Linear(300, 1024),
-                nn.SELU(),
-                nn.AlphaDropout(p=self.dropout_p),
+                nn.ReLU(),
+                nn.Dropout(p=self.dropout_p),
                 nn.Linear(1024, 1024),
-                nn.SELU(),
-                nn.AlphaDropout(p=self.dropout_p),
+                nn.ReLU(),
+                nn.Dropout(p=self.dropout_p),
                 nn.Linear(1024, self.num_deno_classes),
-                nn.SELU())
+                nn.ReLU())
             self.cono_architecture = nn.Sequential(
                 nn.Linear(300, 1024),
-                nn.SELU(),
-                nn.AlphaDropout(p=self.dropout_p),
+                nn.ReLU(),
+                nn.Dropout(p=self.dropout_p),
                 nn.Linear(1024, 1024),
-                nn.SELU(),
-                nn.AlphaDropout(p=self.dropout_p),
+                nn.ReLU(),
+                nn.Dropout(p=self.dropout_p),
                 nn.Linear(1024, self.num_cono_classes),
-                nn.SELU())
+                nn.ReLU())
         elif self.architecture == 'L4':
             self.deno_architecture = nn.Sequential(
                 nn.Linear(300, 300),
@@ -468,6 +468,27 @@ class RecomposerConfig():
                 nn.Linear(300, 300),
                 nn.ReLU(),
                 nn.Linear(300, self.num_deno_classes))
+            self.cono_architecture = nn.Sequential(
+                nn.Linear(300, 300),
+                nn.ReLU(),
+                nn.Dropout(p=self.dropout_p),
+                nn.Linear(300, 300),
+                nn.ReLU(),
+                nn.Dropout(p=self.dropout_p),
+                nn.Linear(300, 300),
+                nn.ReLU(),
+                nn.Linear(300, self.num_cono_classes))
+        elif self.architecture == 'L4RL':
+            self.deno_architecture = nn.Sequential(
+                nn.Linear(300, 1024),
+                nn.ReLU(),
+                nn.Dropout(p=self.dropout_p),
+                nn.Linear(1024, 1024),
+                nn.ReLU(),
+                nn.Dropout(p=self.dropout_p),
+                nn.Linear(1024, 1024),
+                nn.ReLU(),
+                nn.Linear(1024, self.num_deno_classes))
             self.cono_architecture = nn.Sequential(
                 nn.Linear(300, 300),
                 nn.ReLU(),

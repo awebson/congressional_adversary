@@ -13,10 +13,10 @@ from evaluations.helpers import lazy_load_recomposers, PE
 
 # warnings.simplefilter('ignore')
 DEVICE = 'cuda:0'
-in_dir = Path('../../results/CR_bill/Ctx3')
+in_dir = Path('../../results/CR_bill/Ctx3 HS')
 generator = lazy_load_recomposers(
     in_dir,
-    # [in_dir, Path('../../results/CR_topic/search greek')],
+    # [in_dir, Path('../../results/CR_bill/Ctx3 HS')],
     patterns=[
         '*/epoch5.pt', '*/epoch10.pt', '*/epoch25.pt', '*/epoch50.pt',
         '*/epoch75.pt', '*/epoch90.pt', '*/epoch100.pt'],

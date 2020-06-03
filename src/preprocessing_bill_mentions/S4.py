@@ -23,11 +23,11 @@ MIN_NUM_MENTIONS = 3
 FIXED_SENT_LEN = 15
 MIN_SENT_LEN = 5
 MIN_WORD_FREQ = 15
-DENO_LABEL = 'title'
+DENO_LABEL = 'topic'
 NUM_CONTEXT_SPEECHES = 3
 MAX_DEV_HOLDOUT = 100  # faux speeches per session
 in_dir = '../../data/interim/bill_mentions/'
-out_dir = '../../data/processed/bill_mentions/title_deno_context3'
+out_dir = '../../data/processed/bill_mentions/topic_deno_context3'
 os.makedirs(out_dir, exist_ok=True)
 print('Minimum number of mentions per bill =', MIN_NUM_MENTIONS)
 

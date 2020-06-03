@@ -20,10 +20,11 @@ stop_words = set(stopwords.words('english')).union(procedural_words)
 
 MIN_NUM_MENTIONS = 3
 MIN_SENT_LEN = 5
+NUM_CONTEXT_SPEECHES = 3
 
 sessions = range(97, 112)  # scraped up to 93; earlier ones unusally high bill mentions
 in_dir = '../../data/interim/bill_mentions/'
-out_path = '../../data/processed/bill_mentions/plain_corpus.txt'
+out_path = '../../data/processed/bill_mentions/plain_corpus_ctx3.txt'
 print('Minimum number of mentions per bill =', MIN_NUM_MENTIONS)
 
 total_num_words = 0
@@ -44,7 +45,7 @@ for session in tqdm(sessions):
         per_session_mention += 1
         # NOTE hardcoded context_size
         # for i in range(speech_index - 2, speech_index + 8):
-        for i in range(speech_index + 1, speech_index + 6):
+        for i in range(speech_index + 1, speech_index + NUM_CONTEXT_SPEECHES):
             try:
                 speeches[i].bill = speech.bill
             except IndexError:
