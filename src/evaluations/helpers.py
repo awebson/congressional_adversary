@@ -18,18 +18,20 @@ BASE_DIR = Path(__file__).parent.parent.parent / 'results'
 # base_path = BASE_DIR / 'news/validation/pretrained/init.pt'
 # base_path = BASE_DIR / '3bins/pretrained/init.pt'
 
-PE_path = BASE_DIR / 'PN/pretrained/init.pt'
+# PE_path = BASE_DIR / 'PN/pretrained/init.pt'
+PE_path = BASE_DIR / 'PN/pretrained HS/init_recomposer.pt'
+
 print(f'Loading vocabulary from {PE_path}')
 PE = torch.load(PE_path)['model']
 WTI = PE.word_to_id
 ITW = PE.id_to_word
 print(f'Vocab size = {len(WTI):,}')
 
-ground: Dict[str, GroundedWord] = PE.ground
-for gw in ground.values():
-    gw.init_extra()
+# ground: Dict[str, GroundedWord] = PE.ground
+# for gw in ground.values():
+#     gw.init_extra()
 
-PE = PE.pretrained_embed.weight.detach().cpu().numpy()
+# PE = PE.pretrained_embed.weight.detach().cpu().numpy()
 
 
 
@@ -145,9 +147,7 @@ def lazy_load_en_masse(
         raise FileNotFoundError(f'No model with path pattern found at {in_dirs}?')
 
 
-    pretrained = torch.load(
-        '../../results/PN/pretrained/init_recomposer.pt',
-        map_location=device)['model']
+    pretrained = torch.load(PE_path, map_location=device)['model']
     pretrained.name = 'pretrained'
     yield pretrained
     del pretrained

@@ -16,7 +16,7 @@ checkpoints = lazy_load_en_masse(
     # patterns=['*/epoch*.pt', ],
     device=DEVICE
 )
-out_path = in_dir / 'summary.tsv'
+out_path = in_dir / 'summary PE.tsv'
 
 rand_path = Path('../../data/ellie/rand_sample.cr.txt')
 with open(rand_path) as file:
@@ -77,9 +77,9 @@ for model in checkpoints:
     row.update(model.tabulate(rand_ids, ' (random)'))
     row.update(model.tabulate(test_ids, ' (test)'))
     table.append(row)
-    # if debug > 5:
-    #     break
-    # debug += 1
+    if debug > 1:
+        break
+    debug += 1
 
 columns = table[1].keys()
 # columns = list(table[1].keys()) + list(table[0].keys())

@@ -933,9 +933,9 @@ class RecomposerExperiment(Experiment):
         config = self.config
         grad_clip = config.clip_grad_norm
         model = self.model
-        # # For debugging
-        # self.save_everything(self.config.output_dir / 'init_recomposer.pt')
-        # raise SystemExit
+        # For debugging
+        self.save_everything(self.config.output_dir / 'init_recomposer.pt')
+        raise SystemExit
 
         if not config.print_stats:
             epoch_pbar = tqdm(range(1, config.num_epochs + 1), desc=config.output_dir.name)
@@ -1117,7 +1117,7 @@ class RecomposerConfig():
     embed_size: int = 300
     num_epochs: int = 10
 
-    pretrained_embedding: Optional[Path] = Path('../data/pretrained_word2vec/for_real_SGNS.txt')
+    pretrained_embedding: Optional[Path] = Path('../data/pretrained_word2vec/for_real.txt')
     freeze_embedding: bool = False  # NOTE
     skip_gram_window_radius: int = 5
     num_negative_samples: int = 10

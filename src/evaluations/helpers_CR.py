@@ -14,12 +14,10 @@ from recomposer import Recomposer, RecomposerConfig
 from data import GroundedWord
 
 BASE_DIR = Path(__file__).parent.parent.parent / 'results'
-# BASE_DIR = Path.home() / 'Research/congressional_adversary/results'
-# base_path = BASE_DIR / 'news/validation/pretrained/init.pt'
-# base_path = BASE_DIR / '3bins/pretrained/init.pt'
 
-# PE_path = BASE_DIR / 'PN/pretrained/init.pt'
-PE_path = BASE_DIR / 'CR_skip/GM2/B8 NS10/epoch1.pt'
+# PE_path = BASE_DIR / 'CR_skip/GM2/B8 NS10/epoch1.pt'  # SGNS
+PE_path = BASE_DIR / 'CR_skip/pretrained HS/init_recomposer.pt'  # HS
+
 print(f'Loading vocabulary from {PE_path}')
 PE = torch.load(PE_path)['model']
 WTI = PE.word_to_id
@@ -154,6 +152,8 @@ def lazy_load_en_masse(
     PE1.name = 'pretrained'
     PE1.deno_decomposer.embedding = PE1.deno_decomposer.pretrained_embed
     PE1.cono_decomposer.embedding = PE1.deno_decomposer.pretrained_embed
+    # PE1.deno_decomposer.embedding = PE1.pretrained_embed
+    # PE1.cono_decomposer.embedding = PE1.pretrained_embed
     yield PE1
     del PE1
 
