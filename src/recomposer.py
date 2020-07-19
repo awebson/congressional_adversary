@@ -10,7 +10,7 @@ from torch import nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from decomposer import Decomposer, DecomposerConfig, LabeledSentences
+from decomposer import Decomposer, DecomposerConfig, LabeledSentences, new_base_path
 from utils.experiment import Experiment
 from utils.improvised_typing import Scalar, Vector, Matrix, R3Tensor
 
@@ -51,11 +51,11 @@ class Recomposer(nn.Module):
         self.id_to_word = data.id_to_word
         self.grounding = data.grounding
 
-        dev_path = Path('../data/ellie/partisan_sample_val.cr.txt')
-        with open(dev_path) as file:
-            self.dev_ids = torch.tensor(
-                [self.word_to_id[word.strip()] for word in file],
-                device=self.device)
+        #dev_path = Path('../data/ellie/partisan_sample_val.cr.txt')
+        #with open(dev_path) as file:
+        #    self.dev_ids = torch.tensor(
+        #        [self.word_to_id[word.strip()] for word in file],
+        #        device=self.device)
 
     def forward(
             self,
@@ -265,7 +265,7 @@ class RecomposerExperiment(Experiment):
                         self.data.dev_deno_labels.to(self.device),
                         self.data.dev_cono_labels.to(self.device))
 
-                    DS_Hdeno, DS_Hcono, CS_Hdeno, CS_Hcono = model.homemade_homogeneity(model.dev_ids)
+                    DS_Hdeno, DS_Hcono, CS_Hdeno, CS_Hcono = 0.0, 0.0, 0.0, 0.0 # model.homemade_homogeneity(model.dev_ids)
                     self.update_tensorboard({
                         'Denotation Decomposer/accuracy_dev_deno': D_deno_acc,
                         'Denotation Decomposer/accuracy_dev_cono': D_cono_acc,
@@ -301,11 +301,11 @@ class RecomposerExperiment(Experiment):
 class RecomposerConfig():
     # Essential
     # input_dir: Path = Path('../data/processed/bill_mentions/topic_deno')
-    # num_deno_classes: int = 41
+    num_deno_classes: int = 41
     num_cono_classes: int = 2
 
-    input_dir: str = '../data/processed/bill_mentions/title_deno_context3'
-    num_deno_classes: int = 1029
+    input_dir: str = new_base_path + 'data/processed/bill_mentions'
+    # num_deno_classes: int = 1029
 
     # input_dir: str = '../data/processed/bill_mentions/title_deno_context5'
     # num_deno_classes: int = 1027
@@ -314,6 +314,7 @@ class RecomposerConfig():
 
     output_dir: Path = Path('../results/debug')
     device: torch.device = torch.device('cuda')
+    #device: torch.device = torch.device('cpu')
     debug_subset_corpus: Optional[int] = None
     # dev_holdout: int = 5_000
     # test_holdout: int = 10_000
@@ -344,7 +345,7 @@ class RecomposerConfig():
     encoder_update_cycle: int = 1  # per batch
     decoder_update_cycle: int = 1  # per batch
 
-    pretrained_embedding: Optional[Path] = Path('../data/pretrained_word2vec/bill_mentions_SGNS.txt')
+    pretrained_embedding: Optional[Path] = Path(new_base_path + 'data/pretrained_word2vec/bill_mentions_HS.txt')
     freeze_embedding: bool = False
     optimizer: torch.optim.Optimizer = torch.optim.Adam
     # optimizer: torch.optim.Optimizer = torch.optim.SGD

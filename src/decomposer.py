@@ -28,6 +28,7 @@ from utils.improvised_typing import Scalar, Vector, Matrix, R3Tensor
 random.seed(42)
 torch.manual_seed(42)
 
+new_base_path = "/data/people/tberckma/congressional_adversary/congressional_adversary/"
 
 class Decomposer(nn.Module):
 
@@ -39,6 +40,7 @@ class Decomposer(nn.Module):
         self.init_embedding(config, data.word_to_id)
         self.num_deno_classes = config.num_deno_classes
         self.num_cono_classes = config.num_cono_classes
+        print("self.num_deno_classes", self.num_deno_classes, "len(data.deno_to_id)", len(data.deno_to_id), "data.deno_to_id", data.deno_to_id)
         assert self.num_deno_classes == len(data.deno_to_id)
 
         # Dennotation Loss: Skip-Gram Negative Sampling
@@ -349,7 +351,7 @@ class DecomposerExperiment(Experiment):
             self.model.embedding.parameters(),
             lr=config.learning_rate)
 
-        dev_path = Path('../data/ellie/partisan_sample_val.cr.txt')
+        dev_path = Path(new_base_path + 'data/ellie/partisan_sample_val.cr.txt')
         with open(dev_path) as file:
             self.dev_ids = torch.tensor(
                 [self.model.word_to_id[word.strip()] for word in file],
@@ -455,18 +457,19 @@ class DecomposerExperiment(Experiment):
 @dataclass
 class DecomposerConfig():
     # Essential
-    # input_dir: Path = Path('../data/processed/bill_mentions/topic_deno')
-    # num_deno_classes: int = 41
+    input_dir: Path = Path(new_base_path + 'data/processed/bill_mentions')
+    num_deno_classes: int = 41
     num_cono_classes: int = 2
 
     # input_dir: str = '../data/processed/bill_mentions/title_deno_context3'
     # num_deno_classes: int = 1029
 
-    input_dir: str = '../data/processed/bill_mentions/title_deno_context5'
-    num_deno_classes: int = 1027
+    #input_dir: str = '../data/processed/bill_mentions/title_deno_context5'
+    #num_deno_classes: int = 1027
 
     output_dir: Path = Path('../results/debug')
     device: torch.device = torch.device('cuda')
+    #device: torch.device = torch.device('cpu')
     debug_subset_corpus: Optional[int] = None
     # dev_holdout: int = 5_000
     # test_holdout: int = 10_000
@@ -485,7 +488,7 @@ class DecomposerConfig():
     encoder_update_cycle: int = 1  # per batch
     decoder_update_cycle: int = 1  # per batch
 
-    pretrained_embedding: Optional[Path] = Path('../data/pretrained_word2vec/bill_mentions_SGNS.txt')
+    pretrained_embedding: Optional[Path] = Path(new_base_path + 'data/pretrained_word2vec/bill_mentions_SGNS.txt')
     freeze_embedding: bool = False
     # window_radius: int = 5
     # num_negative_samples: int = 10
