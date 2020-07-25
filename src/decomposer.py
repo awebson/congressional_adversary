@@ -85,6 +85,7 @@ class Decomposer(nn.Module):
             init_range = 1.0 / config.embed_size
             nn.init.uniform_(self.embedding.weight.data, -init_range, init_range)
         self.embedding.weight.requires_grad = not config.freeze_embedding
+        print("Embeddings frozen:", config.freeze_embedding)
 
         # freeze a copy of the pretrained embedding
         self.pretrained_embed = nn.Embedding.from_pretrained(self.embedding.weight)
@@ -94,8 +95,7 @@ class Decomposer(nn.Module):
             self,
             seq_word_ids: Matrix,
             deno_labels: Vector,
-            cono_labels: Vector,
-            recompose: bool = False,
+            cono_labels: Vector
             ) -> Scalar:
         seq_vecs: R3Tensor = self.embedding(seq_word_ids)
         seq_repr: Matrix = torch.mean(seq_vecs, dim=1)
@@ -107,22 +107,26 @@ class Decomposer(nn.Module):
         cono_logits = self.cono_decoder(seq_repr)
         cono_log_prob = F.log_softmax(cono_logits, dim=1)
         proper_cono_loss = F.nll_loss(cono_log_prob, cono_labels)
+        
+        joint_loss = proper_deno_loss + proper_cono_loss
 
-        if self.gamma < 0:  # DS removing connotation
-            uniform_dist = torch.full_like(cono_log_prob, 1 / self.num_cono_classes)
-            adversary_cono_loss = F.kl_div(cono_log_prob, uniform_dist, reduction='batchmean')
-            decomposer_loss = torch.sigmoid(proper_deno_loss) + torch.sigmoid(adversary_cono_loss)
-            adversary_deno_loss = 0  # placeholder
-        else:  # CS removing denotation
-            uniform_dist = torch.full_like(deno_log_prob, 1 / self.num_deno_classes)
-            adversary_deno_loss = F.kl_div(deno_log_prob, uniform_dist, reduction='batchmean')
-            decomposer_loss = torch.sigmoid(adversary_deno_loss) + torch.sigmoid(proper_cono_loss)
-            adversary_cono_loss = 0
+        #if self.gamma < 0:  # DS removing connotation
+        #    uniform_dist = torch.full_like(cono_log_prob, 1 / self.num_cono_classes)
+        #    adversary_cono_loss = F.kl_div(cono_log_prob, uniform_dist, reduction='batchmean')
+        #    decomposer_loss = torch.sigmoid(proper_deno_loss) + torch.sigmoid(adversary_cono_loss)
+        #    adversary_deno_loss = 0  # placeholder
+        #else:  # CS removing denotation
+        #    uniform_dist = torch.full_like(deno_log_prob, 1 / self.num_deno_classes)
+        #    adversary_deno_loss = F.kl_div(deno_log_prob, uniform_dist, reduction='batchmean')
+        #    decomposer_loss = torch.sigmoid(adversary_deno_loss) + torch.sigmoid(proper_cono_loss)
+        #    adversary_cono_loss = 0
 
-        if recompose:
-            return decomposer_loss, proper_deno_loss, adversary_deno_loss, proper_cono_loss, adversary_cono_loss, seq_vecs
-        else:
-            return decomposer_loss, proper_deno_loss, adversary_deno_loss, proper_cono_loss, adversary_cono_loss
+        return joint_loss, proper_deno_loss, proper_cono_loss
+
+        #if recompose:
+        #    return decomposer_loss, proper_deno_loss, adversary_deno_loss, proper_cono_loss, adversary_cono_loss, seq_vecs
+        #else:
+        #    return decomposer_loss, proper_deno_loss, adversary_deno_loss, proper_cono_loss, adversary_cono_loss
 
     def predict(self, seq_word_ids: Vector) -> Vector:
         self.eval()
@@ -392,18 +396,19 @@ class DecomposerExperiment(Experiment):
                 cono_labels = batch[2].to(self.device)
 
                 model.zero_grad()
-                L_decomp, l_dp, l_da, l_cp, l_ca = self.model(
+                L_j, l_dp, l_da = self.model(
                     seq_word_ids, deno_labels, cono_labels)
                 # TODO update backprop here
-                L_decomp.backward()
+                L_j.backward()
+                
                 nn.utils.clip_grad_norm_(model.deno_decoder.parameters(), grad_clip)
                 self.deno_optimizer.step()
 
                 nn.utils.clip_grad_norm_(model.cono_decoder.parameters(), grad_clip)
                 self.cono_optimizer.step()
 
-                nn.utils.clip_grad_norm_(model.embedding.parameters(), grad_clip)
-                self.decomposer_optimizer.step()
+                #nn.utils.clip_grad_norm_(model.embedding.parameters(), grad_clip)
+                #self.decomposer_optimizer.step()
 
                 if batch_index % config.update_tensorboard == 0:
                     deno_accuracy, cono_accuracy = self.model.accuracy(
@@ -411,12 +416,12 @@ class DecomposerExperiment(Experiment):
                     stats = {
                         'Decomposer/l_dp': l_dp,
                         'Decomposer/l_da': l_da,
-                        'Decomposer/l_dp': l_cp,
-                        'Decomposer/l_da': l_ca,
+                        #'Decomposer/l_dp': l_cp,
+                        #'Decomposer/l_da': l_ca,
                         #'Decomposer/overcorrect_loss': l_overcorrect,
                         'Decomposer/accuracy_train_deno': deno_accuracy,
                         'Decomposer/accuracy_train_cono': cono_accuracy,
-                        'Decomposer/combined_loss': L_decomp
+                        'Decomposer/joint_loss': L_j
                     }
                     self.update_tensorboard(stats)
                 # if config.print_stats and batch_index % config.print_stats == 0:
@@ -494,7 +499,7 @@ class DecomposerConfig():
     decoder_update_cycle: int = 1  # per batch
 
     pretrained_embedding: Optional[Path] = Path(new_base_path + 'data/pretrained_word2vec/bill_mentions_HS.txt')
-    freeze_embedding: bool = False
+    freeze_embedding: bool = True
     # window_radius: int = 5
     # num_negative_samples: int = 10
     optimizer: torch.optim.Optimizer = torch.optim.Adam
