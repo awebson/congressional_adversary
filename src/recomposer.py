@@ -313,8 +313,8 @@ class RecomposerConfig():
     # input_dir: str = '../data/processed/bill_mentions/title_deno'
 
     output_dir: Path = Path('../results/debug')
-    device: torch.device = torch.device('cuda')
-    #device: torch.device = torch.device('cpu')
+    #device: torch.device = torch.device('cuda')
+    device: torch.device = torch.device('cpu')
     debug_subset_corpus: Optional[int] = None
     # dev_holdout: int = 5_000
     # test_holdout: int = 10_000

@@ -29,6 +29,7 @@ random.seed(42)
 torch.manual_seed(42)
 
 new_base_path = "/data/people/tberckma/congressional_adversary/congressional_adversary/"
+new_base_path = "/Users/tberckma/Research/cong_ad_data/congressional_adversary/"
 
 class Decomposer(nn.Module):
 
@@ -75,9 +76,11 @@ class Decomposer(nn.Module):
             word_to_id: Dict[str, int]
             ) -> None:
         if config.pretrained_embedding is not None:
+            print("Using pretrained embedding")
             self.embedding = Experiment.load_txt_embedding(
                 config.pretrained_embedding, word_to_id)
         else:
+            print("Using learned embedding")
             self.embedding = nn.Embedding(len(word_to_id), config.embed_size)
             init_range = 1.0 / config.embed_size
             nn.init.uniform_(self.embedding.weight.data, -init_range, init_range)
@@ -351,11 +354,11 @@ class DecomposerExperiment(Experiment):
             self.model.embedding.parameters(),
             lr=config.learning_rate)
 
-        dev_path = Path(new_base_path + 'data/ellie/partisan_sample_val.cr.txt')
-        with open(dev_path) as file:
-            self.dev_ids = torch.tensor(
-                [self.model.word_to_id[word.strip()] for word in file],
-                device=config.device)
+        #dev_path = Path(new_base_path + 'data/ellie/partisan_sample_val.cr.txt')
+        #with open(dev_path) as file:
+        #    self.dev_ids = torch.tensor(
+        #        [self.model.word_to_id[word.strip()] for word in file],
+        #        device=config.device)
 
         self.to_be_saved = {
             'config': self.config,
@@ -406,9 +409,11 @@ class DecomposerExperiment(Experiment):
                     deno_accuracy, cono_accuracy = self.model.accuracy(
                         seq_word_ids, deno_labels, cono_labels)
                     stats = {
-                        'Decomposer/deno_loss': l_deno,
-                        'Decomposer/cono_loss': l_cono,
-                        'Decomposer/overcorrect_loss': l_overcorrect,
+                        'Decomposer/l_dp': l_dp,
+                        'Decomposer/l_da': l_da,
+                        'Decomposer/l_dp': l_cp,
+                        'Decomposer/l_da': l_ca,
+                        #'Decomposer/overcorrect_loss': l_overcorrect,
                         'Decomposer/accuracy_train_deno': deno_accuracy,
                         'Decomposer/accuracy_train_cono': cono_accuracy,
                         'Decomposer/combined_loss': L_decomp
@@ -443,14 +448,14 @@ class DecomposerExperiment(Experiment):
             self.data.dev_seq.to(self.device),
             self.data.dev_deno_labels.to(self.device),
             self.data.dev_cono_labels.to(self.device))
-        Hdeno, Hcono = self.model.homemade_homogeneity(self.dev_ids)
+        #Hdeno, Hcono = self.model.homemade_homogeneity(self.dev_ids)
         self.update_tensorboard({
             # 'Denotation Decomposer/nonpolitical_word_sim_cf_pretrained': deno_check,
             'Decomposer/accuracy_dev_deno': deno_accuracy,
             # 'Connotation Decomposer/nonpolitical_word_sim_cf_pretrained': cono_check,
             'Decomposer/accuracy_dev_cono': cono_accuracy,
-            'Decomposer/Topic Homogeneity': Hdeno,
-            'Decomposer/Party Homogeneity': Hcono,
+            'Decomposer/Topic Homogeneity': 0.0, #Hdeno,
+            'Decomposer/Party Homogeneity': 0.0, #Hcono,
         })
 
 
@@ -468,8 +473,8 @@ class DecomposerConfig():
     #num_deno_classes: int = 1027
 
     output_dir: Path = Path('../results/debug')
-    device: torch.device = torch.device('cuda')
-    #device: torch.device = torch.device('cpu')
+    #device: torch.device = torch.device('cuda')
+    device: torch.device = torch.device('cpu')
     debug_subset_corpus: Optional[int] = None
     # dev_holdout: int = 5_000
     # test_holdout: int = 10_000
@@ -488,7 +493,7 @@ class DecomposerConfig():
     encoder_update_cycle: int = 1  # per batch
     decoder_update_cycle: int = 1  # per batch
 
-    pretrained_embedding: Optional[Path] = Path(new_base_path + 'data/pretrained_word2vec/bill_mentions_SGNS.txt')
+    pretrained_embedding: Optional[Path] = Path(new_base_path + 'data/pretrained_word2vec/bill_mentions_HS.txt')
     freeze_embedding: bool = False
     # window_radius: int = 5
     # num_negative_samples: int = 10
