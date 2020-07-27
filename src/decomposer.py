@@ -6,6 +6,8 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import Tuple, List, Dict, Counter, Optional
 
+from ortho_basis_th import OrthoBasis
+
 import numpy as np
 import torch
 from torch import nn
@@ -52,6 +54,8 @@ class Decomposer(nn.Module):
         # Connotation Loss: Party Classifier
         self.cono_decoder = config.cono_architecture
         # assert self.cono_decoder[-2].out_features == self.num_cono_classes
+
+        self.ortho_basis = OrthoBasis(config.embed_size)
 
         self.delta = config.delta
         self.gamma = config.gamma
@@ -100,11 +104,13 @@ class Decomposer(nn.Module):
         seq_vecs: R3Tensor = self.embedding(seq_word_ids)
         seq_repr: Matrix = torch.mean(seq_vecs, dim=1)
 
-        deno_logits = self.deno_decoder(seq_repr)
+        c_vecs, d_vecs = self.ortho_basis(seq_repr)
+
+        deno_logits = self.deno_decoder(d_vecs)
         deno_log_prob = F.log_softmax(deno_logits, dim=1)
         proper_deno_loss = F.nll_loss(deno_log_prob, deno_labels)
 
-        cono_logits = self.cono_decoder(seq_repr)
+        cono_logits = self.cono_decoder(c_vecs)
         cono_log_prob = F.log_softmax(cono_logits, dim=1)
         proper_cono_loss = F.nll_loss(cono_log_prob, cono_labels)
         
