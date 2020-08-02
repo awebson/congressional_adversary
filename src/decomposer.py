@@ -139,9 +139,11 @@ class Decomposer(nn.Module):
         with torch.no_grad():
             word_vecs: R3Tensor = self.embedding(seq_word_ids)
             seq_repr: Matrix = torch.mean(word_vecs, dim=1)
+            
+            c_vecs, d_vecs = self.ortho_basis(seq_repr)
 
-            deno = self.deno_decoder(seq_repr)
-            cono = self.cono_decoder(seq_repr)
+            deno = self.deno_decoder(d_vecs)
+            cono = self.cono_decoder(c_vecs)
 
             deno_conf = nn.functional.softmax(deno, dim=1)
             cono_conf = nn.functional.softmax(cono, dim=1)
@@ -360,8 +362,11 @@ class DecomposerExperiment(Experiment):
         self.cono_optimizer = config.optimizer(
             self.model.cono_decoder.parameters(),
             lr=config.learning_rate)
-        self.decomposer_optimizer = config.optimizer(
-            self.model.embedding.parameters(),
+        #self.decomposer_optimizer = config.optimizer(
+        #    self.model.embedding.parameters(),
+        #    lr=config.learning_rate)
+        self.ortho_optimizer = config.optimizer(
+            self.model.ortho_basis.parameters(),
             lr=config.learning_rate)
 
         #dev_path = Path(new_base_path + 'data/ellie/partisan_sample_val.cr.txt')
@@ -415,6 +420,9 @@ class DecomposerExperiment(Experiment):
 
                 #nn.utils.clip_grad_norm_(model.embedding.parameters(), grad_clip)
                 #self.decomposer_optimizer.step()
+
+                nn.utils.clip_grad_norm_(model.ortho_basis.parameters(), grad_clip)
+                self.ortho_optimizer.step()
 
                 if batch_index % config.update_tensorboard == 0:
                     deno_accuracy, cono_accuracy = self.model.accuracy(
