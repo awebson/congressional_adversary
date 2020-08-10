@@ -31,7 +31,8 @@ random.seed(42)
 torch.manual_seed(42)
 
 new_base_path = "/data/people/tberckma/congressional_adversary/congressional_adversary/"
-new_base_path = "/Users/tberckma/Research/cong_ad_data/congressional_adversary/"
+new_base_path = "/Users/tberckma/Research/congad_data/congressional_adversary/"
+new_base_path = "/Users/tberckma/Research/newcong_ad_data/"
 
 class Decomposer(nn.Module):
 
@@ -145,10 +146,16 @@ class Decomposer(nn.Module):
             deno = self.deno_decoder(d_vecs)
             cono = self.cono_decoder(c_vecs)
 
+            deno_rev = self.deno_decoder(c_vecs)
+            cono_rev = self.cono_decoder(d_vecs)
+
             deno_conf = nn.functional.softmax(deno, dim=1)
             cono_conf = nn.functional.softmax(cono, dim=1)
+
+            deno_rev_conf = nn.functional.softmax(deno_rev, dim=1)
+            cono_rev_conf = nn.functional.softmax(cono_rev, dim=1)
         self.train()
-        return deno_conf, cono_conf
+        return deno_conf, cono_conf, deno_rev_conf, cono_rev_conf
 
     def accuracy(
             self,
@@ -157,9 +164,11 @@ class Decomposer(nn.Module):
             cono_labels: Vector,
             error_analysis_path: Optional[str] = None
             ) -> Tuple[float, float]:
-        deno_conf, cono_conf = self.predict(seq_word_ids)
+        deno_conf, cono_conf, deno_rev_conf, cono_rev_conf = self.predict(seq_word_ids)
         deno_predictions = deno_conf.argmax(dim=1)
         cono_predictions = cono_conf.argmax(dim=1)
+        deno_rev_predictions = deno_rev_conf.argmax(dim=1)
+        cono_rev_predictions = cono_rev_conf.argmax(dim=1)
         # # Random Guess Baseline
         # deno_predictions = torch.randint_like(deno_labels, high=len(self.deno_to_id))
         # # Majority Class Baseline
@@ -168,8 +177,12 @@ class Decomposer(nn.Module):
 
         deno_correct_indicies = deno_predictions.eq(deno_labels)
         cono_correct_indicies = cono_predictions.eq(cono_labels)
+        deno_rev_correct_indicies = deno_rev_predictions.eq(deno_labels)
+        cono_rev_correct_indicies = cono_rev_predictions.eq(cono_labels)
         deno_accuracy = deno_correct_indicies.float().mean().item()
         cono_accuracy = cono_correct_indicies.float().mean().item()
+        deno_rev_accuracy = deno_rev_correct_indicies.float().mean().item()
+        cono_rev_accuracy = cono_rev_correct_indicies.float().mean().item()
 
         if error_analysis_path:
             analysis_file = open(error_analysis_path, 'w')
@@ -198,7 +211,7 @@ class Decomposer(nn.Module):
         #     ax.set_ylabel('True Label')
         #     with open(error_analysis_path, 'wb') as file:
         #         fig.savefig(file, dpi=300, bbox_inches='tight')
-        return deno_accuracy, cono_accuracy
+        return deno_accuracy, cono_accuracy, deno_rev_accuracy, cono_rev_accuracy
 
     def nearest_neighbors(
             self,
@@ -425,7 +438,7 @@ class DecomposerExperiment(Experiment):
                 self.ortho_optimizer.step()
 
                 if batch_index % config.update_tensorboard == 0:
-                    deno_accuracy, cono_accuracy = self.model.accuracy(
+                    deno_accuracy, cono_accuracy, deno_rev_accuracy, cono_rev_accuracy = self.model.accuracy(
                         seq_word_ids, deno_labels, cono_labels)
                     stats = {
                         'Decomposer/l_dp': l_dp,
@@ -435,6 +448,8 @@ class DecomposerExperiment(Experiment):
                         #'Decomposer/overcorrect_loss': l_overcorrect,
                         'Decomposer/accuracy_train_deno': deno_accuracy,
                         'Decomposer/accuracy_train_cono': cono_accuracy,
+                        'Decomposer/accuracy_train_deno_rev': deno_rev_accuracy,
+                        'Decomposer/accuracy_train_cono_rev': cono_rev_accuracy,
                         'Decomposer/joint_loss': L_j
                     }
                     self.update_tensorboard(stats)
@@ -463,7 +478,7 @@ class DecomposerExperiment(Experiment):
         # End Epochs
 
     def validation(self) -> None:
-        deno_accuracy, cono_accuracy = self.model.accuracy(
+        deno_accuracy, cono_accuracy, deno_rev_accuracy, cono_rev_accuracy = self.model.accuracy(
             self.data.dev_seq.to(self.device),
             self.data.dev_deno_labels.to(self.device),
             self.data.dev_cono_labels.to(self.device))
@@ -473,8 +488,10 @@ class DecomposerExperiment(Experiment):
             'Decomposer/accuracy_dev_deno': deno_accuracy,
             # 'Connotation Decomposer/nonpolitical_word_sim_cf_pretrained': cono_check,
             'Decomposer/accuracy_dev_cono': cono_accuracy,
-            'Decomposer/Topic Homogeneity': 0.0, #Hdeno,
-            'Decomposer/Party Homogeneity': 0.0, #Hcono,
+            'Decomposer/accuracy_dev_deno_rev': deno_rev_accuracy,
+            'Decomposer/accuracy_dev_cono_rev': cono_rev_accuracy,
+            'Decomposer/Topic Homogeneity': 0, #Hdeno,
+            'Decomposer/Party Homogeneity': 0, #Hcono,
         })
 
 
