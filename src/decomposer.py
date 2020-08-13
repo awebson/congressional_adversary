@@ -121,7 +121,7 @@ class Decomposer(nn.Module):
         deno_rev_logits =  self.deno_rev_decoder(c_vecs.detach().clone())
         deno_rev_log_prob = F.log_softmax(deno_rev_logits, dim=1)
         proper_deno_rev_loss = F.nll_loss(deno_rev_log_prob, deno_labels)
-        cono_rev_logits = self.cono_decoder(d_vecs.detach().clone())
+        cono_rev_logits = self.cono_rev_decoder(d_vecs.detach().clone())
         cono_rev_log_prob = F.log_softmax(cono_rev_logits, dim=1)
         proper_cono_rev_loss = F.nll_loss(cono_rev_log_prob, cono_labels)
 
