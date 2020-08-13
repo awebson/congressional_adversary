@@ -31,9 +31,8 @@ random.seed(42)
 torch.manual_seed(42)
 
 new_base_path = "/data/people/tberckma/congressional_adversary/congressional_adversary/"
-new_base_path = "/Users/tberckma/Research/congad_data/congressional_adversary/"
 new_base_path = "/Users/tberckma/Research/newcong_ad_data/"
-new_base_path = "/data/people/tberckma/new_congad_data/"
+#new_base_path = "/data/people/tberckma/new_congad_data/"
 
 class Decomposer(nn.Module):
 
@@ -54,6 +53,10 @@ class Decomposer(nn.Module):
 
         # Connotation Loss: Party Classifier
         self.cono_decoder = config.cono_architecture
+        
+        # Reverse classifiers
+        self.deno_rev_decoder = config.deno_rev_architecture 
+        self.cono_rev_decoder = config.cono_rev_architecture
         # assert self.cono_decoder[-2].out_features == self.num_cono_classes
 
         self.ortho_basis = OrthoBasis(config.embed_size, config.device)
@@ -114,6 +117,14 @@ class Decomposer(nn.Module):
         
         joint_loss = proper_deno_loss + proper_cono_loss
 
+        # Reverse classifiers
+        deno_rev_logits =  self.deno_rev_decoder(c_vecs.detach().clone())
+        deno_rev_log_prob = F.log_softmax(deno_rev_logits, dim=1)
+        proper_deno_rev_loss = F.nll_loss(deno_rev_log_prob, deno_labels)
+        cono_rev_logits = self.cono_decoder(d_vecs.detach().clone())
+        cono_rev_log_prob = F.log_softmax(cono_rev_logits, dim=1)
+        proper_cono_rev_loss = F.nll_loss(cono_rev_log_prob, cono_labels)
+
         #if self.gamma < 0:  # DS removing connotation
         #    uniform_dist = torch.full_like(cono_log_prob, 1 / self.num_cono_classes)
         #    adversary_cono_loss = F.kl_div(cono_log_prob, uniform_dist, reduction='batchmean')
@@ -125,7 +136,7 @@ class Decomposer(nn.Module):
         #    decomposer_loss = torch.sigmoid(adversary_deno_loss) + torch.sigmoid(proper_cono_loss)
         #    adversary_cono_loss = 0
 
-        return joint_loss, proper_deno_loss, proper_cono_loss
+        return joint_loss, proper_deno_loss, proper_cono_loss, proper_deno_rev_loss, proper_cono_rev_loss
 
         #if recompose:
         #    return decomposer_loss, proper_deno_loss, adversary_deno_loss, proper_cono_loss, adversary_cono_loss, seq_vecs
@@ -143,8 +154,8 @@ class Decomposer(nn.Module):
             deno = self.deno_decoder(d_vecs)
             cono = self.cono_decoder(c_vecs)
 
-            deno_rev = self.deno_decoder(c_vecs)
-            cono_rev = self.cono_decoder(d_vecs)
+            deno_rev = self.deno_rev_decoder(c_vecs)
+            cono_rev = self.cono_rev_decoder(d_vecs)
 
             deno_conf = nn.functional.softmax(deno, dim=1)
             cono_conf = nn.functional.softmax(cono, dim=1)
@@ -378,6 +389,14 @@ class DecomposerExperiment(Experiment):
         self.ortho_optimizer = config.optimizer(
             self.model.ortho_basis.parameters(),
             lr=config.learning_rate)
+        
+        # Reverse classifiers
+        self.deno_rev_optimizer = config.optimizer(
+            self.model.deno_rev_decoder.parameters(),
+            lr=config.learning_rate)
+        self.cono_rev_optimizer = config.optimizer(
+            self.model.cono_rev_decoder.parameters(),
+            lr=config.learning_rate)
 
         dev_path = Path(new_base_path + 'data/ellie/partisan_sample_val.cr.txt')
         with open(dev_path) as file:
@@ -417,10 +436,12 @@ class DecomposerExperiment(Experiment):
                 cono_labels = batch[2].to(self.device)
 
                 model.zero_grad()
-                L_j, l_dp, l_da = self.model(
+                L_j, l_dp, l_da, ld_rev, lc_rev = self.model(
                     seq_word_ids, deno_labels, cono_labels)
                 # TODO update backprop here
                 L_j.backward()
+                ld_rev.backward()
+                lc_rev.backward()
                 
                 nn.utils.clip_grad_norm_(model.deno_decoder.parameters(), grad_clip)
                 self.deno_optimizer.step()
@@ -433,6 +454,12 @@ class DecomposerExperiment(Experiment):
 
                 nn.utils.clip_grad_norm_(model.ortho_basis.parameters(), grad_clip)
                 self.ortho_optimizer.step()
+
+                # Reverse classifiers
+                nn.utils.clip_grad_norm_(model.deno_rev_decoder.parameters(), grad_clip)
+                self.deno_rev_optimizer.step()
+                nn.utils.clip_grad_norm_(model.cono_rev_decoder.parameters(), grad_clip)
+                self.cono_rev_optimizer.step()
 
                 if batch_index % config.update_tensorboard == 0:
                     deno_accuracy, cono_accuracy, deno_rev_accuracy, cono_rev_accuracy = self.model.accuracy(
@@ -506,8 +533,8 @@ class DecomposerConfig():
     #num_deno_classes: int = 1027
 
     output_dir: Path = Path('../results/debug')
-    device: torch.device = torch.device('cuda')
-    #device: torch.device = torch.device('cpu')
+    #device: torch.device = torch.device('cuda')
+    device: torch.device = torch.device('cpu')
     debug_subset_corpus: Optional[int] = None
     # dev_holdout: int = 5_000
     # test_holdout: int = 10_000
@@ -596,28 +623,24 @@ class DecomposerConfig():
                 nn.Linear(300, 2),
                 nn.SELU())
         elif self.architecture == 'L4':
-            self.deno_architecture = nn.Sequential(
-                nn.Linear(300, 300),
-                nn.SELU(),
-                nn.AlphaDropout(p=self.dropout_p),
-                nn.Linear(300, 300),
-                nn.SELU(),
-                nn.AlphaDropout(p=self.dropout_p),
-                nn.Linear(300, 300),
-                nn.SELU(),
-                nn.Linear(300, self.num_deno_classes),
-                nn.SELU())
-            self.cono_architecture = nn.Sequential(
-                nn.Linear(300, 300),
-                nn.SELU(),
-                nn.AlphaDropout(p=self.dropout_p),
-                nn.Linear(300, 300),
-                nn.SELU(),
-                nn.AlphaDropout(p=self.dropout_p),
-                nn.Linear(300, 300),
-                nn.SELU(),
-                nn.Linear(300, 2),
-                nn.SELU())
+            def get_l4_architecture(output_width):
+                return nn.Sequential(
+                    nn.Linear(300, 300),
+                    nn.SELU(),
+                    nn.AlphaDropout(p=self.dropout_p),
+                    nn.Linear(300, 300),
+                    nn.SELU(),
+                    nn.AlphaDropout(p=self.dropout_p),
+                    nn.Linear(300, 300),
+                    nn.SELU(),
+                    nn.Linear(300, output_width),
+                    nn.SELU())
+            self.deno_architecture = get_l4_architecture(self.num_deno_classes)
+            self.cono_architecture = get_l4_architecture(2)
+            
+            # Reverse classifiers for orthogonality experiment
+            self.deno_rev_architecture = get_l4_architecture(self.num_deno_classes)
+            self.cono_rev_architecture = get_l4_architecture(2)
         else:
             raise ValueError('Unknown architecture argument.')
 
