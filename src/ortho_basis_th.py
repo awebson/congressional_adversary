@@ -13,7 +13,7 @@ def get_norm_sample(length, scale=0.01):
 
 class OrthoBasis(nn.Module):
 
-    def __init__(self, vec_size, delta=0.4):
+    def __init__(self, vec_size, dev, delta=0.4):
         super(OrthoBasis, self).__init__()
 
         self.vec_size = vec_size
@@ -25,13 +25,15 @@ class OrthoBasis(nn.Module):
         self.y_1 = nn.Parameter(get_norm_sample(self.vec_size - 1))
         self.y_2 = nn.Parameter(get_norm_sample(self.vec_size - 1))
         
-        self.I = torch.tensor(np.identity(self.vec_size - 1), dtype=use_dtype)
-        
+        self.I = torch.tensor(np.identity(self.vec_size - 1), dtype=use_dtype).to(dev)
+        self.t1 = torch.tensor(1.0).to(dev)
+        self.t1overVc = torch.tensor((1 / self.vec_size,)).to(dev)
+
     def forward(self, encoding_batch):
     
         def constrain_x1(x1_val):
-            return torch.tensor((1 / self.vec_size,)) * torch.tanh(x1_val) * (
-                1 - torch.tanh(x1_val) * torch.tanh(x1_val)
+            return self.t1overVc * torch.tanh(x1_val) * (
+                self.t1 - torch.tanh(x1_val) * torch.tanh(x1_val)
             )
         
         y_len = self.vec_size - 1

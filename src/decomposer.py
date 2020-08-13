@@ -33,6 +33,7 @@ torch.manual_seed(42)
 new_base_path = "/data/people/tberckma/congressional_adversary/congressional_adversary/"
 new_base_path = "/Users/tberckma/Research/congad_data/congressional_adversary/"
 new_base_path = "/Users/tberckma/Research/newcong_ad_data/"
+new_base_path = "/data/people/tberckma/new_congad_data/"
 
 class Decomposer(nn.Module):
 
@@ -44,7 +45,6 @@ class Decomposer(nn.Module):
         self.init_embedding(config, data.word_to_id)
         self.num_deno_classes = config.num_deno_classes
         self.num_cono_classes = config.num_cono_classes
-        print("self.num_deno_classes", self.num_deno_classes, "len(data.deno_to_id)", len(data.deno_to_id), "data.deno_to_id", data.deno_to_id)
         assert self.num_deno_classes == len(data.deno_to_id)
 
         # Dennotation Loss: Skip-Gram Negative Sampling
@@ -56,7 +56,7 @@ class Decomposer(nn.Module):
         self.cono_decoder = config.cono_architecture
         # assert self.cono_decoder[-2].out_features == self.num_cono_classes
 
-        self.ortho_basis = OrthoBasis(config.embed_size)
+        self.ortho_basis = OrthoBasis(config.embed_size, config.device)
 
         self.delta = config.delta
         self.gamma = config.gamma
@@ -81,16 +81,13 @@ class Decomposer(nn.Module):
             word_to_id: Dict[str, int]
             ) -> None:
         if config.pretrained_embedding is not None:
-            print("Using pretrained embedding")
             self.embedding = Experiment.load_txt_embedding(
                 config.pretrained_embedding, word_to_id)
         else:
-            print("Using learned embedding")
             self.embedding = nn.Embedding(len(word_to_id), config.embed_size)
             init_range = 1.0 / config.embed_size
             nn.init.uniform_(self.embedding.weight.data, -init_range, init_range)
         self.embedding.weight.requires_grad = not config.freeze_embedding
-        print("Embeddings frozen:", config.freeze_embedding)
 
         # freeze a copy of the pretrained embedding
         self.pretrained_embed = nn.Embedding.from_pretrained(self.embedding.weight)
@@ -382,11 +379,11 @@ class DecomposerExperiment(Experiment):
             self.model.ortho_basis.parameters(),
             lr=config.learning_rate)
 
-        #dev_path = Path(new_base_path + 'data/ellie/partisan_sample_val.cr.txt')
-        #with open(dev_path) as file:
-        #    self.dev_ids = torch.tensor(
-        #        [self.model.word_to_id[word.strip()] for word in file],
-        #        device=config.device)
+        dev_path = Path(new_base_path + 'data/ellie/partisan_sample_val.cr.txt')
+        with open(dev_path) as file:
+            self.dev_ids = torch.tensor(
+                [self.model.word_to_id[word.strip()] for word in file],
+                device=config.device)
 
         self.to_be_saved = {
             'config': self.config,
@@ -470,7 +467,7 @@ class DecomposerExperiment(Experiment):
                     #     config.output_dir, f'vocab_cono_epoch{epoch_index}.txt'))
                     analysis_path = os.path.join(
                         config.output_dir, f'error_analysis_epoch{epoch_index}.tsv')
-                    deno_accuracy, cono_accuracy = self.model.accuracy(
+                    deno_accuracy, cono_accuracy, deno_rev_accuracy, cono_dev_accuracy = self.model.accuracy(
                         self.data.dev_seq.to(self.device),
                         self.data.dev_deno_labels.to(self.device),
                         self.data.dev_cono_labels.to(self.device),
@@ -490,8 +487,8 @@ class DecomposerExperiment(Experiment):
             'Decomposer/accuracy_dev_cono': cono_accuracy,
             'Decomposer/accuracy_dev_deno_rev': deno_rev_accuracy,
             'Decomposer/accuracy_dev_cono_rev': cono_rev_accuracy,
-            'Decomposer/Topic Homogeneity': 0, #Hdeno,
-            'Decomposer/Party Homogeneity': 0, #Hcono,
+            'Decomposer/Topic Homogeneity': 0, # Hdeno,
+            'Decomposer/Party Homogeneity': 0  #Hcono,
         })
 
 
@@ -509,8 +506,8 @@ class DecomposerConfig():
     #num_deno_classes: int = 1027
 
     output_dir: Path = Path('../results/debug')
-    #device: torch.device = torch.device('cuda')
-    device: torch.device = torch.device('cpu')
+    device: torch.device = torch.device('cuda')
+    #device: torch.device = torch.device('cpu')
     debug_subset_corpus: Optional[int] = None
     # dev_holdout: int = 5_000
     # test_holdout: int = 10_000
