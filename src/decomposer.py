@@ -31,7 +31,7 @@ random.seed(42)
 torch.manual_seed(42)
 
 new_base_path = "/data/people/tberckma/congressional_adversary/congressional_adversary/"
-new_base_path = "/Users/tberckma/Research/newcong_ad_data/"
+new_base_path = "/Users/tberckma/Documents/Brown/Research/AlbertProject/newcong_ad_data/"
 #new_base_path = "/data/people/tberckma/new_congad_data/"
 
 class Decomposer(nn.Module):
@@ -57,6 +57,7 @@ class Decomposer(nn.Module):
         # Reverse classifiers
         self.deno_rev_decoder = config.deno_rev_architecture 
         self.cono_rev_decoder = config.cono_rev_architecture
+        
         # assert self.cono_decoder[-2].out_features == self.num_cono_classes
 
         self.ortho_basis = OrthoBasis(config.embed_size, config.device)
@@ -163,7 +164,7 @@ class Decomposer(nn.Module):
             deno_rev_conf = nn.functional.softmax(deno_rev, dim=1)
             cono_rev_conf = nn.functional.softmax(cono_rev, dim=1)
         self.train()
-        return deno_conf, cono_conf, deno_rev_conf, cono_rev_conf
+        return deno_conf, cono_conf, deno_rev_conf, cono_rev_conf, c_vecs, d_vecs, seq_repr
 
     def accuracy(
             self,
@@ -172,7 +173,7 @@ class Decomposer(nn.Module):
             cono_labels: Vector,
             error_analysis_path: Optional[str] = None
             ) -> Tuple[float, float]:
-        deno_conf, cono_conf, deno_rev_conf, cono_rev_conf = self.predict(seq_word_ids)
+        deno_conf, cono_conf, deno_rev_conf, cono_rev_conf, c_vecs, d_vecs, seq_repr = self.predict(seq_word_ids)
         deno_predictions = deno_conf.argmax(dim=1)
         cono_predictions = cono_conf.argmax(dim=1)
         deno_rev_predictions = deno_rev_conf.argmax(dim=1)
@@ -219,7 +220,7 @@ class Decomposer(nn.Module):
         #     ax.set_ylabel('True Label')
         #     with open(error_analysis_path, 'wb') as file:
         #         fig.savefig(file, dpi=300, bbox_inches='tight')
-        return deno_accuracy, cono_accuracy, deno_rev_accuracy, cono_rev_accuracy
+        return deno_accuracy, cono_accuracy, deno_rev_accuracy, cono_rev_accuracy, c_vecs, d_vecs, seq_repr
 
     def nearest_neighbors(
             self,
@@ -376,6 +377,8 @@ class DecomposerExperiment(Experiment):
             num_workers=config.num_dataloader_threads,
             pin_memory=config.pin_memory)
         self.model = Decomposer(config, self.data)
+        self.seed_progression_1 = []
+        self.seed_progression_2 = []
 
         self.deno_optimizer = config.optimizer(
             self.model.deno_decoder.parameters(),
@@ -462,7 +465,7 @@ class DecomposerExperiment(Experiment):
                 self.cono_rev_optimizer.step()
 
                 if batch_index % config.update_tensorboard == 0:
-                    deno_accuracy, cono_accuracy, deno_rev_accuracy, cono_rev_accuracy = self.model.accuracy(
+                    deno_accuracy, cono_accuracy, deno_rev_accuracy, cono_rev_accuracy, c_vecs, d_vecs, seq_repr = self.model.accuracy(
                         seq_word_ids, deno_labels, cono_labels)
                     stats = {
                         'Decomposer/l_dp': l_dp,
@@ -494,7 +497,7 @@ class DecomposerExperiment(Experiment):
                     #     config.output_dir, f'vocab_cono_epoch{epoch_index}.txt'))
                     analysis_path = os.path.join(
                         config.output_dir, f'error_analysis_epoch{epoch_index}.tsv')
-                    deno_accuracy, cono_accuracy, deno_rev_accuracy, cono_dev_accuracy = self.model.accuracy(
+                    deno_accuracy, cono_accuracy, deno_rev_accuracy, cono_dev_accuracy, c_vecs, d_vecs, seq_repr = self.model.accuracy(
                         self.data.dev_seq.to(self.device),
                         self.data.dev_deno_labels.to(self.device),
                         self.data.dev_cono_labels.to(self.device),
@@ -502,11 +505,37 @@ class DecomposerExperiment(Experiment):
         # End Epochs
 
     def validation(self) -> None:
-        deno_accuracy, cono_accuracy, deno_rev_accuracy, cono_rev_accuracy = self.model.accuracy(
+        deno_accuracy, cono_accuracy, deno_rev_accuracy, cono_rev_accuracy, c_vecs, d_vecs, seq_repr = self.model.accuracy(
             self.data.dev_seq.to(self.device),
             self.data.dev_deno_labels.to(self.device),
             self.data.dev_cono_labels.to(self.device))
-        #Hdeno, Hcono = self.model.homemade_homogeneity(self.dev_ids)
+        #Hdeno, Hcono = self.model.homemade_homogeneity(self.dev_ids)        
+        self.seed_progression_1.append(self.model.ortho_basis.y_1.detach().tolist())
+        self.seed_progression_2.append(self.model.ortho_basis.y_2.detach().tolist())
+        
+        self.tensorboard.add_embedding(
+            c_vecs,
+            metadata=self.data.dev_cono_labels, 
+            global_step=self.tb_global_step,
+            tag='c_vecs')
+        self.tensorboard.add_embedding(
+            d_vecs,
+            metadata=self.data.dev_deno_labels, 
+            global_step=self.tb_global_step,
+            tag='d_vecs')
+        self.tensorboard.add_embedding(
+            seq_repr,
+            metadata=[int(l) for l in self.data.dev_deno_labels], 
+            global_step=self.tb_global_step,
+            tag='seq_repr')
+        self.tensorboard.add_embedding(
+            np.array(self.seed_progression_1),
+            global_step=self.tb_global_step,
+            tag='prog_1')
+        #self.tensorboard.add_embedding(
+        #    np.array(self.seed_progression_2),
+        #    global_step=self.tb_global_step,
+        #    tag='prog_2')
         self.update_tensorboard({
             # 'Denotation Decomposer/nonpolitical_word_sim_cf_pretrained': deno_check,
             'Decomposer/accuracy_dev_deno': deno_accuracy,
@@ -559,7 +588,7 @@ class DecomposerConfig():
     # num_negative_samples: int = 10
     optimizer: torch.optim.Optimizer = torch.optim.Adam
     # optimizer: torch.optim.Optimizer = torch.optim.SGD
-    learning_rate: float = 1e-4
+    learning_rate: float = 1e-5
     # momentum: float = 0.5
     # lr_scheduler: torch.optim.lr_scheduler._LRScheduler
     # num_prediction_classes: int = 5

@@ -22,8 +22,12 @@ class OrthoBasis(nn.Module):
 
         self.x1_1 = nn.Parameter(get_norm_sample(1))
         self.x1_2 = nn.Parameter(get_norm_sample(1))
+        self.x1_3 = nn.Parameter(get_norm_sample(1))
+        self.x1_4 = nn.Parameter(get_norm_sample(1))
         self.y_1 = nn.Parameter(get_norm_sample(self.vec_size - 1))
         self.y_2 = nn.Parameter(get_norm_sample(self.vec_size - 1))
+        self.y_3 = nn.Parameter(get_norm_sample(self.vec_size - 1))
+        self.y_4 = nn.Parameter(get_norm_sample(self.vec_size - 1))
         
         self.I = torch.tensor(np.identity(self.vec_size - 1), dtype=use_dtype).to(dev)
         self.t1 = torch.tensor(1.0).to(dev)
@@ -54,11 +58,17 @@ class OrthoBasis(nn.Module):
 
         x1_1 = constrain_x1(self.x1_1)
         x1_2 = constrain_x1(self.x1_2)
+        x1_3 = constrain_x1(self.x1_3)
+        x1_4 = constrain_x1(self.x1_4)
 
         H_1 = generate_h(x1_1, self.y_1)
         H_2 = generate_h(x1_2, self.y_2)
+        H_3 = generate_h(x1_1, self.y_3)
+        H_4 = generate_h(x1_2, self.y_4)
         
-        H = torch.matmul(H_1, H_2)
+        H_A = torch.matmul(H_1, H_2)
+        H_B = torch.matmul(H_3, H_4)
+        H = torch.matmul(H_A, H_B)
         H_T = torch.transpose(H, 0, 1)
 
         coeffs = torch.matmul(H_T, torch.transpose(encoding_batch, 0, 1))
