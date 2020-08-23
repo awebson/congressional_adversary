@@ -300,12 +300,12 @@ class RecomposerExperiment(Experiment):
 @dataclass
 class RecomposerConfig():
     # Essential
-    # input_dir: Path = Path('../data/processed/bill_mentions/topic_deno')
-    # num_deno_classes: int = 41
+    input_dir: Path = Path('../data/processed/bill_mentions/topic_deno')
+    num_deno_classes: int = 41
     num_cono_classes: int = 2
 
-    input_dir: str = '../data/processed/bill_mentions/title_deno_context3'
-    num_deno_classes: int = 1029
+    # input_dir: str = '../data/processed/bill_mentions/title_deno_context3'
+    # num_deno_classes: int = 1029
 
     # input_dir: str = '../data/processed/bill_mentions/title_deno_context5'
     # num_deno_classes: int = 1027
@@ -335,20 +335,20 @@ class RecomposerConfig():
 
     # Recomposer
     recomposer_rho: float = 1
-    dropout_p: float = 0.1
+    dropout_p: float = 0.33
 
-    architecture: str = 'L4'
-    batch_size: int = 128
+    architecture: str = 'L4R'
+    batch_size: int = 512
     embed_size: int = 300
-    num_epochs: int = 50
+    num_epochs: int = 100
     encoder_update_cycle: int = 1  # per batch
     decoder_update_cycle: int = 1  # per batch
 
-    pretrained_embedding: Optional[Path] = Path('../data/pretrained_word2vec/bill_mentions_SGNS.txt')
+    pretrained_embedding: Optional[Path] = Path('../data/pretrained_word2vec/CR_ctx3_HS.txt')
     freeze_embedding: bool = False
     optimizer: torch.optim.Optimizer = torch.optim.Adam
     # optimizer: torch.optim.Optimizer = torch.optim.SGD
-    learning_rate: float = 1e-4
+    learning_rate: float = 1e-3
     # momentum: float = 0.5
     # lr_scheduler: torch.optim.lr_scheduler._LRScheduler
     # num_prediction_classes: int = 5
@@ -364,7 +364,7 @@ class RecomposerConfig():
     reload_path: Optional[str] = None
     clear_tensorboard_log_in_output_dir: bool = True
     delete_all_exisiting_files_in_output_dir: bool = False
-    auto_save_per_epoch: Optional[int] = 10
+    auto_save_per_epoch: Optional[int] = 5
     auto_save_if_interrupted: bool = False
 
     def __post_init__(self) -> None:

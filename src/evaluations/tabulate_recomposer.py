@@ -13,7 +13,7 @@ from evaluations.helpers import lazy_load_recomposers, PE
 
 # warnings.simplefilter('ignore')
 DEVICE = 'cuda:0'
-in_dir = Path('../../results/CR_bill/Ctx3 HS')
+in_dir = Path('../../results/replica/CR_topic/')
 generator = lazy_load_recomposers(
     in_dir,
     # [in_dir, Path('../../results/CR_bill/Ctx3 HS')],

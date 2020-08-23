@@ -19,7 +19,9 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 # pretrained_path = PROJECT_ROOT / 'results/CR_topic/Ctx3 HS/L2 B512 LR2e-04/epoch5.pt'
 
 # pretrained_path = PROJECT_ROOT / 'results/CR_bill/Ctx3 SGNS/L4 B128 LR1e-04/epoch25.pt'
-pretrained_path = PROJECT_ROOT / 'results/CR_bill/Ctx3 HS/L4R B512 LR1e-03/epoch5.pt'
+
+# pretrained_path = PROJECT_ROOT / 'results/replica/CR_bill/L4RL/epoch5.pt'
+pretrained_path = PROJECT_ROOT / 'results/replica/CR_topic/L4R/epoch5.pt'
 
 PE = torch.load(pretrained_path, map_location='cuda:0')['model']
 
