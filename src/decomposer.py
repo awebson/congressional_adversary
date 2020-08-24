@@ -28,7 +28,7 @@ from utils.improvised_typing import Scalar, Vector, Matrix, R3Tensor
 random.seed(42)
 torch.manual_seed(42)
 
-new_base_path = "/data/people/tberckma/congressional_adversary/congressional_adversary/"
+new_base_path = "/data/people/tberckma/new_congad_data/"
 
 class Decomposer(nn.Module):
 
@@ -406,9 +406,9 @@ class DecomposerExperiment(Experiment):
                     deno_accuracy, cono_accuracy = self.model.accuracy(
                         seq_word_ids, deno_labels, cono_labels)
                     stats = {
-                        'Decomposer/deno_loss': l_deno,
-                        'Decomposer/cono_loss': l_cono,
-                        'Decomposer/overcorrect_loss': l_overcorrect,
+                        #'Decomposer/deno_loss': l_deno,
+                        #'Decomposer/cono_loss': l_cono,
+                        #'Decomposer/overcorrect_loss': l_overcorrect,
                         'Decomposer/accuracy_train_deno': deno_accuracy,
                         'Decomposer/accuracy_train_cono': cono_accuracy,
                         'Decomposer/combined_loss': L_decomp
@@ -443,14 +443,14 @@ class DecomposerExperiment(Experiment):
             self.data.dev_seq.to(self.device),
             self.data.dev_deno_labels.to(self.device),
             self.data.dev_cono_labels.to(self.device))
-        Hdeno, Hcono = self.model.homemade_homogeneity(self.dev_ids)
+        #Hdeno, Hcono = self.model.homemade_homogeneity(self.dev_ids)
         self.update_tensorboard({
             # 'Denotation Decomposer/nonpolitical_word_sim_cf_pretrained': deno_check,
             'Decomposer/accuracy_dev_deno': deno_accuracy,
             # 'Connotation Decomposer/nonpolitical_word_sim_cf_pretrained': cono_check,
             'Decomposer/accuracy_dev_cono': cono_accuracy,
-            'Decomposer/Topic Homogeneity': Hdeno,
-            'Decomposer/Party Homogeneity': Hcono,
+            'Decomposer/Topic Homogeneity': 0.0, #Hdeno,
+            'Decomposer/Party Homogeneity': 0.0, #Hcono,
         })
 
 
@@ -488,7 +488,7 @@ class DecomposerConfig():
     encoder_update_cycle: int = 1  # per batch
     decoder_update_cycle: int = 1  # per batch
 
-    pretrained_embedding: Optional[Path] = Path(new_base_path + 'data/pretrained_word2vec/bill_mentions_SGNS.txt')
+    pretrained_embedding: Optional[Path] = Path(new_base_path + 'data/pretrained_word2vec/bill_mentions_HS.txt')
     freeze_embedding: bool = False
     # window_radius: int = 5
     # num_negative_samples: int = 10
