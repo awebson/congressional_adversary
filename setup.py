@@ -5,8 +5,8 @@ from setuptools import setup, find_namespace_packages
 
 setup(
     name='congressional_adversary',
-    description='work in progress',
-    version='0.2',
+    description='EMNLP 2020',
+    version='0.9',
     python_requires='>=3.7.0',
     packages=find_namespace_packages(where='src'),
     package_dir={'': 'src'},

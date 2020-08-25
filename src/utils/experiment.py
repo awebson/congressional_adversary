@@ -40,6 +40,8 @@ class Experiment(ABC):
 
     def __enter__(self) -> 'Experiment':
         config = self.config
+        config.pytorch_version = torch.__version__
+        config.cuda_version = torch.version.cuda
         if not isinstance(config.output_dir, Path):
             raise TypeError('config.output_dir must be a pathlib.Path')
         if not Path.exists(config.output_dir):
@@ -59,20 +61,21 @@ class Experiment(ABC):
                         tb_log_dir = config.output_dir / file.name
                         shutil.rmtree(tb_log_dir)
                         print(f'Deleted {file.name} in output_dir')
+
         timestamp = datetime.now().strftime("%m-%d %H-%M-%S")
         log_dir = config.output_dir / f'TB {timestamp}'
         self.tensorboard = SummaryWriter(log_dir=log_dir)
 
-        # config_dict = asdict(self.config)
-        # config_dict['_model'] = str(self.model)
         # self.tensorboard.add_text(
         #     'config', pprint.pformat(config_dict), global_step=0)
+        # config_dict = asdict(self.config)
+        # config_dict['_model'] = str(self.model)
         preview_path = config.output_dir / 'config.txt'
         with open(preview_path, 'w') as preview_file:
-            # pprint.pprint(config_dict, preview_file)
             if hasattr(self, 'model'):
-                preview_file.write('architecture = ' + str(self.model) + '\n')
-            for key, val in asdict(self.config).items():
+                preview_file.write('model = ' + str(self.model) + '\n')
+            # pprint.pprint(config_dict, preview_file)
+            for key, val in asdict(config).items():
                 preview_file.write(f'{key} = {val}\n')
         return self
 
@@ -97,12 +100,13 @@ class Experiment(ABC):
     def save_state_dict(self, save_path: str) -> None:
         """
         PyTorch's recommended method of saving a model,
-        but this requires re-instantiate the model object first, along with
-        all of its required arguments, which I find to be finicky;
-        therefore, save_everything is used by default.
+        but this requires re-instantiate the model object first,
+        along with all of its required arguments, which I find to be finicky;
+        thus save_everything is used by default.
         """
         payload = {
             'config': self.config,
+            # TODO needs data to init model too
             'model': self.model.state_dict(),
             'optimizer': self.optimizer.state_dict(),
             # 'lr_scheduler': self.lr_scheduler.state_dict()
@@ -117,17 +121,16 @@ class Experiment(ABC):
     def save_everything(
             self,
             save_path: str,
-            include_data: bool = False
+            # include_data: bool = False
             ) -> None:
         """
-        Directly serialize config, model, optimizer, and lr_scheduler,
-        similar to PyTorch's non-recommended method of saving
-        an entire model (as opposed to only the state_dict).
+        PyTorch's non-recommended method of saving an entire model
+        (as opposed to only the state_dict).
 
         Unfortunately, the Experiment class itself is not picklable,
         even with the dill module.
         """
-        torch.save(self.to_be_saved, save_path, pickle_protocol=-1)
+        torch.save(self.model, save_path, pickle_protocol=-1)
         tqdm.write(f'💾 Experiment saved to {save_path}')
 
     @staticmethod
