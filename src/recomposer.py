@@ -517,43 +517,36 @@ def main() -> None:
     print("pretrained embedding shape", p_embedding.shape)
     w2id = black_box.model.word_to_id
     
-    pca = FastICA(max_iter=1000)
-    pca.fit(p_embedding)
-    print("done with fit:", pca)
-    new_embeddings = pca.transform(p_embedding)
-    print("new embedding shape", new_embeddings.shape)
-
     ground = black_box.model.deno_decomposer.grounding
-
     query_conos = []
-    embedding_rows = []
-
-    print("qword len", len(w2id))
-    #num_underscore = 0
-
+    filtered_embeddings = []
     for query_word in w2id.keys():
-        #if "_" not in query_word:
-        #    continue
+        if "_" not in query_word:
+            continue
         id = w2id[query_word]
-        embedding_row = new_embeddings[id]
-        embedding_rows.append(embedding_row)
+        filtered_embeddings.append(p_embedding[id])
         query_cono = ground[query_word]['R_ratio']
         query_conos.append(query_cono)
+    filtered_embeddings = np.array(filtered_embeddings)
     
-    embedding_rows = np.array(embedding_rows)
-    
+    use_pca = True
+    if use_pca:
+        ca = PCA()
+    else:
+        ca = FastICA()
+    ca.fit(filtered_embeddings)
+    print("done with fit:", ca)
+    filtered_embeddings = ca.transform(filtered_embeddings)
+    print("new embedding shape", filtered_embeddings.shape)
+
     rvals = []
-    
-    for emb_pos in range(new_embeddings.shape[1]):
-        rval, ptail = stats.spearmanr(query_conos, embedding_rows[:,emb_pos])
+    for emb_pos in range(filtered_embeddings.shape[1]):
+        rval, ptail = stats.spearmanr(query_conos, filtered_embeddings[:,emb_pos])
         rvals.append((rval, emb_pos, ptail))
     
     rvals.sort()
     for rv in rvals:
         print(rv)
-        
-    
-        
 
 if __name__ == '__main__':
     main()
