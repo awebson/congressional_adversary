@@ -530,15 +530,16 @@ def main() -> None:
         query_conos.append(query_cono)
     filtered_embeddings = np.array(filtered_embeddings)
     
-    use_pca = True
-    if use_pca:
-        ca = PCA()
-    else:
-        ca = FastICA()
-    ca.fit(filtered_embeddings)
-    print("done with fit:", ca)
-    filtered_embeddings = ca.transform(filtered_embeddings)
-    print("new embedding shape", filtered_embeddings.shape)
+    if False: # Transform embedding matrix
+        use_pca = True
+        if use_pca:
+            ca = PCA()
+        else:
+            ca = FastICA()
+        ca.fit(filtered_embeddings)
+        print("done with fit:", ca)
+        filtered_embeddings = ca.transform(filtered_embeddings)
+        print("new embedding shape", filtered_embeddings.shape)
 
     rvals = []
     for emb_pos in range(filtered_embeddings.shape[1]):
@@ -549,10 +550,10 @@ def main() -> None:
     for rv in rvals:
         print(rv)
 
-    plt.scatter(query_conos, filtered_embeddings[:,2], s=4)
-    plt.xlabel("Connotation Ratio")
-    plt.ylabel("Component 2 from PCA")
-    plt.show()
+    #plt.scatter(query_conos, filtered_embeddings[:,284], s=4)
+    #plt.xlabel("Connotation Ratio")
+    #plt.ylabel("Component 284 from PCA")
+    #plt.show()
 
 if __name__ == '__main__':
     main()
