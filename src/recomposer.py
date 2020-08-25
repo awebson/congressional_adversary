@@ -17,6 +17,7 @@ from utils.improvised_typing import Scalar, Vector, Matrix, R3Tensor
 from sklearn.decomposition import PCA, FastICA
 from scipy import stats
 import numpy as np
+import matplotlib.pyplot as plt
 
 random.seed(42)
 torch.manual_seed(42)
@@ -547,6 +548,11 @@ def main() -> None:
     rvals.sort()
     for rv in rvals:
         print(rv)
+
+    plt.scatter(query_conos, filtered_embeddings[:,2], s=4)
+    plt.xlabel("Connotation Ratio")
+    plt.ylabel("Component 2 from PCA")
+    plt.show()
 
 if __name__ == '__main__':
     main()
