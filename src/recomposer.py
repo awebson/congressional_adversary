@@ -14,6 +14,10 @@ from decomposer import Decomposer, DecomposerConfig, LabeledSentences, new_base_
 from utils.experiment import Experiment
 from utils.improvised_typing import Scalar, Vector, Matrix, R3Tensor
 
+from sklearn.decomposition import PCA
+from scipy import stats
+import numpy as np
+
 random.seed(42)
 torch.manual_seed(42)
 
@@ -313,8 +317,8 @@ class RecomposerConfig():
     # input_dir: str = '../data/processed/bill_mentions/title_deno'
 
     output_dir: Path = Path('../results/debug')
-    device: torch.device = torch.device('cuda')
-    #device: torch.device = torch.device('cpu')
+    #device: torch.device = torch.device('cuda')
+    device: torch.device = torch.device('cpu')
     debug_subset_corpus: Optional[int] = None
     # dev_holdout: int = 5_000
     # test_holdout: int = 10_000
@@ -507,9 +511,49 @@ class RecomposerConfig():
 def main() -> None:
     config = RecomposerConfig()
     black_box = RecomposerExperiment(config)
-    with black_box as auto_save_wrapped:
-        auto_save_wrapped.train()
+    #with black_box as auto_save_wrapped:
+    #    auto_save_wrapped.train()
+    p_embedding = black_box.model.deno_decomposer.embedding.weight.detach().cpu().numpy()
+    print("pretrained embedding shape", p_embedding.shape)
+    w2id = black_box.model.word_to_id
+    
+    pca = PCA()
+    pca.fit(p_embedding)
+    print("done with fit:", pca)
+    new_embeddings = pca.transform(p_embedding)
+    print("new embedding shape", new_embeddings.shape)
 
+    ground = black_box.model.deno_decomposer.grounding
+
+    query_conos = []
+    embedding_rows = []
+
+    print("qword len", len(w2id))
+    #num_underscore = 0
+
+    for query_word in w2id.keys():
+        #if "_" not in query_word:
+        #    continue
+        id = w2id[query_word]
+        embedding_row = new_embeddings[id]
+        embedding_rows.append(embedding_row)
+        query_cono = ground[query_word]['R_ratio']
+        query_conos.append(query_cono)
+    
+    embedding_rows = np.array(embedding_rows)
+    
+    rvals = []
+    
+    for emb_pos in range(new_embeddings.shape[1]):
+        rval, ptail = stats.spearmanr(query_conos, embedding_rows[:,emb_pos])
+        rvals.append((rval, emb_pos, ptail))
+    
+    rvals.sort()
+    for rv in rvals:
+        print(rv)
+        
+    
+        
 
 if __name__ == '__main__':
     main()

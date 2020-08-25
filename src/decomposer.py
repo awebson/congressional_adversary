@@ -29,6 +29,7 @@ random.seed(42)
 torch.manual_seed(42)
 
 new_base_path = "/data/people/tberckma/new_congad_data/"
+new_base_path = "/Users/tberckma/Documents/Brown/Research/AlbertProject/newcong_ad_data/"
 
 class Decomposer(nn.Module):
 
@@ -468,8 +469,8 @@ class DecomposerConfig():
     #num_deno_classes: int = 1027
 
     output_dir: Path = Path('../results/debug')
-    device: torch.device = torch.device('cuda')
-    #device: torch.device = torch.device('cpu')
+    #device: torch.device = torch.device('cuda')
+    device: torch.device = torch.device('cpu')
     debug_subset_corpus: Optional[int] = None
     # dev_holdout: int = 5_000
     # test_holdout: int = 10_000
