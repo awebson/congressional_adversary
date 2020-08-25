@@ -14,7 +14,7 @@ from decomposer import Decomposer, DecomposerConfig, LabeledSentences, new_base_
 from utils.experiment import Experiment
 from utils.improvised_typing import Scalar, Vector, Matrix, R3Tensor
 
-from sklearn.decomposition import PCA
+from sklearn.decomposition import PCA, FastICA
 from scipy import stats
 import numpy as np
 
@@ -517,7 +517,7 @@ def main() -> None:
     print("pretrained embedding shape", p_embedding.shape)
     w2id = black_box.model.word_to_id
     
-    pca = PCA()
+    pca = FastICA(max_iter=1000)
     pca.fit(p_embedding)
     print("done with fit:", pca)
     new_embeddings = pca.transform(p_embedding)
