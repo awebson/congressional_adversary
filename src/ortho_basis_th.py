@@ -15,74 +15,33 @@ class OrthoBasis(nn.Module):
 
     def __init__(self, vec_size, dev, delta=0.4):
         super(OrthoBasis, self).__init__()
-
+        self.dev = dev
         self.vec_size = vec_size
         self.delta_size = int(delta * vec_size)
         self.gamma_size = vec_size - self.delta_size
 
-        self.x1_1 = nn.Parameter(get_norm_sample(1))
-        self.x1_2 = nn.Parameter(get_norm_sample(1))
-        self.x1_3 = nn.Parameter(get_norm_sample(1))
-        self.x1_4 = nn.Parameter(get_norm_sample(1))
-        self.y_1 = nn.Parameter(get_norm_sample(self.vec_size - 1))
-        self.y_2 = nn.Parameter(get_norm_sample(self.vec_size - 1))
-        self.y_3 = nn.Parameter(get_norm_sample(self.vec_size - 1))
-        self.y_4 = nn.Parameter(get_norm_sample(self.vec_size - 1))
-        
-        self.I = torch.tensor(np.identity(self.vec_size - 1), dtype=use_dtype).to(dev)
-        self.t1 = torch.tensor(1.0).to(dev)
-        self.t1overVc = torch.tensor((1 / self.vec_size,)).to(dev)
+        self.H = nn.Parameter(torch.randn((vec_size, vec_size), dtype=use_dtype) * 0.01)
 
     def forward(self, encoding_batch):
     
-        def constrain_x1(x1_val):
-            return self.t1overVc * torch.tanh(x1_val) * (
-                self.t1 - torch.tanh(x1_val) * torch.tanh(x1_val)
-            )
-        
-        y_len = self.vec_size - 1
-
-        def generate_h(x1_val, y_val):
-            n = torch.norm(y_val) / torch.sqrt(1.0 - x1_val) # What to divide self.y by to get norm
-            y_tilde = y_val / n
-            u1_tilde_flat = torch.cat((x1_val, y_tilde))
-            u1_tilde = u1_tilde_flat.reshape((self.vec_size, 1))
-
-            Y = u1_tilde[1:]
-            YT = Y.reshape((1, y_len))
-        
-            bot_right = self.I - (1.0 / (1 - x1_val)) * torch.matmul(Y, YT)
-
-            right = torch.cat((YT, bot_right))
-            return torch.cat((u1_tilde, right), dim=1) 
-
-        x1_1 = constrain_x1(self.x1_1)
-        x1_2 = constrain_x1(self.x1_2)
-        x1_3 = constrain_x1(self.x1_3)
-        x1_4 = constrain_x1(self.x1_4)
-
-        H_1 = generate_h(x1_1, self.y_1)
-        H_2 = generate_h(x1_2, self.y_2)
-        H_3 = generate_h(x1_1, self.y_3)
-        H_4 = generate_h(x1_2, self.y_4)
-        
-        H_A = torch.matmul(H_1, H_2)
-        H_B = torch.matmul(H_3, H_4)
-        H = torch.matmul(H_A, H_B)
-        H_T = torch.transpose(H, 0, 1)
+        H_T = torch.transpose(self.H, 0, 1)
 
         coeffs = torch.matmul(H_T, torch.transpose(encoding_batch, 0, 1))
         
         coeffs_C = coeffs[:self.gamma_size,:]
         coeffs_D = coeffs[self.gamma_size:,:]
         
-        H_C = H[:,:self.gamma_size]
-        H_D = H[:,self.gamma_size:]
+        H_C = self.H[:,:self.gamma_size]
+        H_D = self.H[:,self.gamma_size:]
         
         c_vecs = torch.transpose(torch.matmul(H_C, coeffs_C), 0, 1)
         d_vecs = torch.transpose(torch.matmul(H_D, coeffs_D), 0, 1)
         
         return c_vecs, d_vecs
+    
+    def orthogonalize(self):
+        u, s, vh = np.linalg.svd(self.H.detach().numpy())
+        self.H = nn.Parameter(torch.tensor(np.matmul(u, vh))).to(self.dev)
         
 
 if __name__ == "__main__":
@@ -91,17 +50,18 @@ if __name__ == "__main__":
     vec_length = 16
     num_epochs = 50
     
+    dev = torch.device('cpu')
+    
     input_batch = get_norm_sample((batch_size,vec_length), scale=1.0)
     tgt_delta_batch = get_norm_sample((batch_size,vec_length), scale=1.0)
     tgt_gamma_batch = get_norm_sample((batch_size,vec_length), scale=1.0)
     cosine_label = torch.ones(batch_size, vec_length)
     
-    model = OrthoBasis(vec_length)
+    model = OrthoBasis(vec_length, dev)
     optimizer = torch.optim.Adam(model.parameters())
     
     def loss_fn(a, b):
         return 1 - nn.functional.cosine_similarity(a, b, dim=-1).mean()
-
 
     model = model.train()
     for e in range(num_epochs):
@@ -112,6 +72,7 @@ if __name__ == "__main__":
         loss_joint = loss_delta + loss_gamma
         loss_joint.backward()
         optimizer.step()
+        model.orthogonalize()
     
         print("cos sim of result", nn.functional.cosine_similarity(
             gamma_vec + delta_vec,

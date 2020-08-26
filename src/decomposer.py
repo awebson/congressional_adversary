@@ -464,6 +464,8 @@ class DecomposerExperiment(Experiment):
                 nn.utils.clip_grad_norm_(model.cono_rev_decoder.parameters(), grad_clip)
                 self.cono_rev_optimizer.step()
 
+                self.model.ortho_basis.orthogonalize()
+
                 if batch_index % config.update_tensorboard == 0:
                     deno_accuracy, cono_accuracy, deno_rev_accuracy, cono_rev_accuracy, c_vecs, d_vecs, seq_repr = self.model.accuracy(
                         seq_word_ids, deno_labels, cono_labels)
@@ -510,9 +512,6 @@ class DecomposerExperiment(Experiment):
             self.data.dev_deno_labels.to(self.device),
             self.data.dev_cono_labels.to(self.device))
         #Hdeno, Hcono = self.model.homemade_homogeneity(self.dev_ids)        
-        self.seed_progression_1.append(self.model.ortho_basis.y_1.detach().tolist())
-        self.seed_progression_2.append(self.model.ortho_basis.y_2.detach().tolist())
-        
         self.tensorboard.add_embedding(
             c_vecs,
             metadata=self.data.dev_cono_labels, 
@@ -528,10 +527,6 @@ class DecomposerExperiment(Experiment):
             metadata=[int(l) for l in self.data.dev_deno_labels], 
             global_step=self.tb_global_step,
             tag='seq_repr')
-        self.tensorboard.add_embedding(
-            np.array(self.seed_progression_1),
-            global_step=self.tb_global_step,
-            tag='prog_1')
         #self.tensorboard.add_embedding(
         #    np.array(self.seed_progression_2),
         #    global_step=self.tb_global_step,
