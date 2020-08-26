@@ -35,7 +35,6 @@ class Decomposer(nn.Module):
         information from the decomposed space, and vice versa.
         """
         super().__init__()
-
         self.decomposed = nn.Embedding.from_pretrained(initial_space)
         self.decomposed.weight.requires_grad = True
         self.deno_probe = deno_probe
@@ -57,9 +56,9 @@ class Decomposer(nn.Module):
             seq_word_ids: Matrix,
             deno_labels: Vector,
             cono_labels: Vector
-            ) -> Scalar:
-        seq_vecs: R3Tensor = self.decomposed(seq_word_ids)
-        seq_repr: Matrix = torch.mean(seq_vecs, dim=1)
+            ) -> Tuple[Scalar, ...]:
+        seq_word_vecs: R3Tensor = self.decomposed(seq_word_ids)
+        seq_repr: Matrix = torch.mean(seq_word_vecs, dim=1)
 
         deno_logits = self.deno_probe(seq_repr)
         deno_log_prob = F.log_softmax(deno_logits, dim=1)
@@ -82,17 +81,15 @@ class Decomposer(nn.Module):
 
         return (decomposer_loss,
                 proper_deno_loss, adversary_deno_loss,
-                proper_cono_loss, adversary_cono_loss, seq_vecs)
+                proper_cono_loss, adversary_cono_loss, seq_word_vecs)
 
     def predict(self, seq_word_ids: Vector) -> Vector:
         self.eval()
         with torch.no_grad():
             word_vecs: R3Tensor = self.decomposed(seq_word_ids)
             seq_repr: Matrix = torch.mean(word_vecs, dim=1)
-
             deno = self.deno_probe(seq_repr)
             cono = self.cono_probe(seq_repr)
-
             deno_conf = F.softmax(deno, dim=1)
             cono_conf = F.softmax(cono, dim=1)
         self.train()
@@ -134,7 +131,6 @@ class Decomposer(nn.Module):
             # output.sort(key=lambda t: t[1], reverse=True)
             for stuff in output:
                 analysis_file.write('\t'.join(stuff) + '\n')
-
         # if error_analysis_path:  # confusion  matrix
         #     cf_mtx = confusion_matrix(deno_labels.cpu(), deno_predictions.cpu())
         #     fig, ax = plt.subplots(figsize=(20, 20))
@@ -181,14 +177,12 @@ class Decomposer(nn.Module):
             cono_discrete = 0
         else:
             cono_discrete = 1
-
         # if cono_continuous < 0.2:
         #     cono_discrete = 0
         # elif cono_continuous < 0.8:
         #     cono_discrete = 1
         # else:
         #     cono_discrete = 2
-
         return deno_label, cono_discrete
 
     def homogeneity(
