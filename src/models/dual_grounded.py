@@ -1,6 +1,5 @@
 import argparse
 import pickle
-from copy import copy
 from statistics import mean
 from pathlib import Path
 from dataclasses import dataclass
@@ -15,8 +14,6 @@ import editdistance
 
 from utils.experiment import Experiment
 from utils.improvised_typing import Scalar, Vector, Matrix, R3Tensor
-
-torch.manual_seed(42)
 
 
 class Decomposer(nn.Module):
@@ -351,6 +348,9 @@ class Recomposer(nn.Module):
         return {prefix + key + suffix: round(val, rounding)
                 for key, val in row.items()}
 
+    def export_embeddings(self, out_path: Path) -> Tuple[Matrix, Matrix]:
+        raise NotImplementedError
+
 
 class LabeledSentences(torch.utils.data.Dataset):
 
@@ -660,16 +660,14 @@ class DualGroundedConfig():
     clip_grad_norm: float = 10.0
 
     # Housekeeping
-    export_error_analysis: Optional[int] = 1  # per epoch
+    # export_error_analysis: Optional[int] = 1  # per epoch
     update_tensorboard: int = 1000  # per batch
     print_stats: Optional[int] = 10_000  # per batch
     eval_dev_set: int = 100_000  # per batch
     progress_bar_refresh_rate: int = 5  # per second
-    suppress_stdout: bool = False  # during hyperparameter tuning
-    reload_path: Optional[str] = None
     clear_tensorboard_log_in_output_dir: bool = True
     delete_all_exisiting_files_in_output_dir: bool = False
-    auto_save_per_epoch: Optional[int] = 5
+    auto_save_per_epoch: Optional[int] = 10
     auto_save_if_interrupted: bool = False
 
     def __post_init__(self) -> None:
@@ -700,6 +698,8 @@ class DualGroundedConfig():
             '-ep', '--num-epochs', action='store', type=int)
         parser.add_argument(
             '-pe', '--pretrained-embed-path', action='store', type=Path)
+        parser.add_argument(
+            '-sv', '--auto-save-per-epoch', action='store', type=int)
         parser.parse_args(namespace=self)
 
         if self.architecture == 'L1R':
@@ -816,4 +816,7 @@ def main() -> None:
 
 
 if __name__ == '__main__':
+    torch.manual_seed(42)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
     main()

@@ -18,7 +18,6 @@ class ExperimentConfig():
     num_epochs: int
     device: torch.device
 
-    reload_path: Optional[Path]
     clear_tensorboard_log_in_output_dir: bool
     delete_all_exisiting_files_in_output_dir: bool
     auto_save_per_epoch: Optional[int]
@@ -40,8 +39,6 @@ class Experiment(ABC):
 
     def __enter__(self) -> 'Experiment':
         config = self.config
-        config.pytorch_version = torch.__version__
-        config.cuda_version = torch.version.cuda
         if not isinstance(config.output_dir, Path):
             raise TypeError('config.output_dir must be a pathlib.Path')
         if not Path.exists(config.output_dir):
@@ -66,17 +63,20 @@ class Experiment(ABC):
         log_dir = config.output_dir / f'TB {timestamp}'
         self.tensorboard = SummaryWriter(log_dir=log_dir)
 
-        # self.tensorboard.add_text(
-        #     'config', pprint.pformat(config_dict), global_step=0)
-        # config_dict = asdict(self.config)
-        # config_dict['_model'] = str(self.model)
+        config_dict = asdict(self.config)
+        config_dict['pytorch_version'] = torch.__version__
+        config_dict['cuda_version'] = torch.version.cuda
+        config_dict['timestamp'] = timestamp
+        if hasattr(self, 'model'):
+            config_dict['_model'] = str(self.model)
         preview_path = config.output_dir / 'config.txt'
         with open(preview_path, 'w') as preview_file:
-            if hasattr(self, 'model'):
-                preview_file.write('model = ' + str(self.model) + '\n')
             # pprint.pprint(config_dict, preview_file)
-            for key, val in asdict(config).items():
+            for key, val in config_dict.items():
                 preview_file.write(f'{key} = {val}\n')
+                # if not isinstance(val, (int, float, str, bool, torch.Tensor)):
+                #     config_dict[key] = str(val)  # for TensorBoard HParams
+        # self.tensorboard.add_hparams(hparam_dict=config_dict, metric_dict={})
         return self
 
     @no_type_check
@@ -92,9 +92,12 @@ class Experiment(ABC):
     def auto_save(self, epoch_index: int) -> None:
         if self.config.auto_save_per_epoch:
             interim_save = epoch_index % self.config.auto_save_per_epoch == 0
+        else:
+            interim_save = False
         final_save = epoch_index == self.config.num_epochs
         if interim_save or final_save:
-            self.save_everything(self.config.output_dir / f'epoch{epoch_index}.pt')
+            self.save_state_dict(
+                self.config.output_dir / f'epoch{epoch_index}.pt')
 
     @no_type_check
     def save_state_dict(self, save_path: str) -> None:
@@ -104,14 +107,14 @@ class Experiment(ABC):
         along with all of its required arguments, which I find to be finicky;
         thus save_everything is used by default.
         """
-        payload = {
+        cucumbers = {
+            'model': self.model.state_dict(),
             'config': self.config,
             # TODO needs data to init model too
-            'model': self.model.state_dict(),
-            'optimizer': self.optimizer.state_dict(),
+            # 'optimizer': self.optimizer.state_dict(),
             # 'lr_scheduler': self.lr_scheduler.state_dict()
         }
-        torch.save(payload, save_path)
+        torch.save(cucumbers, save_path, pickle_protocol=-1)
         tqdm.write(f'💾 state_dict saved to {save_path}\n')
 
     def reload_state_dict(self) -> Any:
@@ -132,14 +135,6 @@ class Experiment(ABC):
         """
         torch.save(self.model, save_path, pickle_protocol=-1)
         tqdm.write(f'💾 Experiment saved to {save_path}')
-
-    @staticmethod
-    def reload_everything(
-            reload_path: str,
-            device: torch.device
-            ) -> Tuple[Any, ...]:
-        print(f'Reloading model and config from {reload_path}')
-        return torch.load(reload_path, map_location=device)
 
     def print_stats(
             self,
@@ -252,48 +247,4 @@ class Experiment(ABC):
             print('\nThe following words in the training corpus are out of '
                   'the vocabulary of the given pretrained embedding: ')
             print(out_of_vocabulary, end='\n\n')
-        return nn.Embedding.from_pretrained(torch.tensor(embedding))
-        # Unsafe
-        # if word_to_id is None:
-        #     embedding: List[List[float]] = []
-        #     id_generator = 0
-        #     word_to_id: Dict[str, int] = {}  # type: ignore
-        #     id_to_word: Dict[int, str] = {}
-        #     for line in file:
-        #         line = line.split()
-        #         word = line[0]
-        #         embedding.append(list(map(float, line[-embed_size:])))
-        #         word_to_id[word] = id_generator
-        #         id_to_word[id_generator] = word
-        #         id_generator += 1
-        #     return torch.tensor(embedding), word_to_id, id_to_word
-
-    # @staticmethod
-    # def convert_word_ids(
-    #         corpus: List[int],
-    #         corpus_id_to_word: Dict[int, str],
-    #         pretrained_word_to_id: Dict[str, int],
-    #         OOV_token: Optional[str] = None
-    #         ) -> List[int]:
-    #     """
-    #     Convert word_ids constructed from preprocessed corpus
-    #     to the word_ids used by pretrained_embedding.
-    #     """
-    #     converted = []
-    #     out_of_vocabulary = set()
-    #     for corpus_word_id in tqdm(corpus, desc='Converting word_ids'):
-    #         word = corpus_id_to_word[corpus_word_id]
-    #         try:
-    #             converted.append(pretrained_word_to_id[word])
-    #         except KeyError:
-    #             out_of_vocabulary.add(word)
-    #             if OOV_token:
-    #                 converted.append(pretrained_word_to_id[OOV_token])
-
-    #     if out_of_vocabulary:
-    #         print('The following words in the corpus are out of'
-    #               'the vocabulary of the given pretrained embedding.')
-    #         print(out_of_vocabulary)
-    #         if not OOV_token:
-    #             raise KeyError
-    #     return converted
+        return nn.Embedding.from_pretrained(embedding)
