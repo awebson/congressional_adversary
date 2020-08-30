@@ -18,7 +18,8 @@ class LabeledDoc():
     title: str
     url: str
     party: str  # left, left-center, least, right-center, right
-    partisan: bool
+    # partisan: bool
+    referent: str
     text: str
     date: Optional[str] = None
     sentences: Optional[List[Sentence]] = None
@@ -28,9 +29,12 @@ class LabeledDoc():
 class GroundedWord():
     word: str
     id: int
-    cono_freq: np.ndarray
-    cono_ratio: np.ndarray
-    cono_PMI: np.ndarray
+    deno: Optional[str]
+    cono: str
+    # cono_ratio: np.ndarray
+    # R_ratio
+    # cono_PMI: np.ndarray
+    # TODO majority deno
 
 #     def __post_init__(self) -> None:
 #         self.word_id: int = WTI[self.word]
@@ -44,12 +48,12 @@ class GroundedWord():
 #     def deno_ground(self, embed, top_k=10):
 #         self.neighbors: List[str] = nearest_neighbors()
 
-    def __str__(self) -> str:
-        return (
-            f'{self.word}\t'
-            f'{self.cono_freq}\t'
-            f'{np.around(self.cono_ratio, 4)}\t'
-            f'{np.around(self.cono_PMI, 4)}')
+    # def __str__(self) -> str:
+    #     return (
+    #         f'{self.word}\t'
+    #         f'{self.cono_freq}\t'
+    #         f'{np.around(self.cono_ratio, 4)}\t'
+    #         f'{np.around(self.cono_PMI, 4)}')
 
     def init_extra(self) -> None:
         self.freq = np.sum(self.cono_freq)

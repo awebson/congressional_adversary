@@ -156,9 +156,9 @@ def main(
             else:  # discard short sentences
                 sent.subsampled_tokens = None
             if conserve_RAM:
-                del sent.tokens
-                del sent.normalized_tokens
-                del sent.underscored_tokens
+                sent.tokens = None
+                sent.normalized_tokens = None
+                sent.underscored_tokens = None
         # End looping sentences
 
         doc.sentences = [  # Filter out empty sentences
@@ -179,7 +179,7 @@ def main(
             sent.numerical_tokens = [
                 word_to_id[token] for token in sent.subsampled_tokens]
             if conserve_RAM:
-                del sent.subsampled_tokens
+                sent.subsampled_tokens = None
 
     # Compute PMI
     def prob(count: int) -> float:
@@ -241,7 +241,7 @@ def main(
 if __name__ == '__main__':
     main(
         in_dir=Path('../../data/interim/news'),
-        out_dir=Path('../../data/ready/3bin'),
+        out_dir=Path('../../data/ready/debug'),
         min_frequency=30,
         min_sent_len=5,
         max_sent_len=20,

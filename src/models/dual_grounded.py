@@ -349,6 +349,7 @@ class Recomposer(nn.Module):
 class LabeledSentences(torch.utils.data.Dataset):
 
     def __init__(self, config: 'DualGroundedConfig'):
+        super().__init__()
         with open(config.corpus_path, 'rb') as corpus_file:
             preprocessed = pickle.load(corpus_file)
         self.word_to_id = preprocessed['word_to_id']

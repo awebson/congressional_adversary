@@ -1,20 +1,20 @@
 import argparse
+import random
 import pickle
 from pathlib import Path
 from dataclasses import dataclass
-from typing import Tuple, List, Dict, Counter, Optional, Any
+from typing import Tuple, List, Iterable, Dict, Counter, Optional, Any
 
 import torch
 from torch import nn
 from torch.nn import functional as F
 from torch.nn.utils import rnn
-from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 
 from models.dual_grounded import Decomposer, Recomposer
 from utils.experiment import Experiment
 from utils.improvised_typing import Scalar, Vector, Matrix, R3Tensor
-from evaluations.word_similarity import all_wordsim as word_sim
+# from evaluations.word_similarity import all_wordsim as word_sim
 
 
 class ProxyGroundedDecomposer(Decomposer):
@@ -81,7 +81,7 @@ class ProxyGroundedDecomposer(Decomposer):
             seq_word_ids: Matrix,
             cono_labels: Vector,
             ) -> Tuple[Scalar, ...]:
-        seq_word_vecs: R3Tensor = self.embedding(seq_word_ids)
+        seq_word_vecs: R3Tensor = self.decomposed(seq_word_ids)
         seq_repr: Matrix = torch.mean(seq_word_vecs, dim=1)
 
         cono_logits = self.cono_probe(seq_repr)
@@ -113,9 +113,9 @@ class ProxyGroundedDecomposer(Decomposer):
             replacement=True
         ).view(len(true_context_ids), self.num_negative_samples).to(self.device)
 
-        center = self.embedding(center_word_ids)
-        true_context = self.embedding(true_context_ids)
-        negative_context = self.embedding(negative_context_ids)
+        center = self.decomposed(center_word_ids)
+        true_context = self.decomposed(true_context_ids)
+        negative_context = self.decomposed(negative_context_ids)
 
         # batch_size * embed_size
         objective = torch.sum(  # dot product
@@ -136,7 +136,7 @@ class ProxyGroundedDecomposer(Decomposer):
     def predict(self, seq_word_ids: Vector) -> Vector:
         self.eval()
         with torch.no_grad():
-            word_vecs: R3Tensor = self.embedding(seq_word_ids)
+            word_vecs: R3Tensor = self.decomposed(seq_word_ids)
             seq_repr: Matrix = torch.mean(word_vecs, dim=1)
             cono = self.cono_probe(seq_repr)
             cono_conf = nn.functional.softmax(cono, dim=1)
@@ -206,10 +206,10 @@ class ProxyGroundedRecomposer(Recomposer):
             seq_word_ids: Matrix,
             cono_labels: Vector,
             ) -> Tuple[Scalar, ...]:
-        L_D, l_Dd, l_Dcp, l_Dca, deno_vecs = self.deno_space(
+        L_DS, DS_d, DS_cp, DS_ca, deno_vecs = self.deno_space(
             center_word_ids, context_word_ids,
             seq_word_ids, cono_labels)
-        L_C, l_Cd, l_Ccp, l_Cca, cono_vecs = self.cono_space(
+        L_CS, CS_d, CS_cp, CS_ca, cono_vecs = self.cono_space(
             center_word_ids, context_word_ids,
             seq_word_ids, cono_labels)
 
@@ -218,8 +218,8 @@ class ProxyGroundedRecomposer(Recomposer):
         pretrained = self.deno_space.pretrained_embed(seq_word_ids)
         L_R = 1 - F.cosine_similarity(recomposed, pretrained, dim=-1).mean()
 
-        L_joint = L_D + L_C + self.rho * L_R
-        return L_D, l_Dd, l_Dcp, l_Dca, L_C, l_Cd, l_Ccp, l_Cca, L_R, L_joint
+        L_joint = L_DS + L_CS + self.rho * L_R
+        return L_DS, DS_d, DS_cp, DS_ca, L_CS, CS_d, CS_cp, CS_ca, L_R, L_joint
 
     def predict(self, seq_word_ids: Vector) -> Tuple[Vector, ...]:
         self.eval()
@@ -242,10 +242,11 @@ class ProxyGroundedRecomposer(Recomposer):
         return D_cono_accuracy, C_cono_accuracy
 
 
-class LabeledDocuments(Dataset):
+class LabeledDocuments(torch.utils.data.IterableDataset):
 
     def __init__(self, config: 'DecomposerConfig'):
-        with open(corpus_path, 'rb') as corpus_file:
+        super().__init__()
+        with open(config.corpus_path, 'rb') as corpus_file:
             preprocessed = pickle.load(corpus_file)
         self.word_to_id = preprocessed['word_to_id']
         self.id_to_word = preprocessed['id_to_word']
@@ -255,6 +256,7 @@ class LabeledDocuments(Dataset):
         self.grounding: Dict[str, Counter[str]] = preprocessed['grounding']
         self.window_radius = config.skip_gram_window_radius
         self.num_negative_samples = config.num_negative_samples
+
         self.fixed_sent_len = 15  # HACK
         self.min_sent_len = 5
 
@@ -269,93 +271,147 @@ class LabeledDocuments(Dataset):
         #     batch_first=True)
         # self.dev_cono_labels = torch.tensor(preprocessed['dev_cono_labels'])
 
-    def __len__(self) -> int:
-        return len(self.documents)
+    def __iter__(self) -> Iterable[Tuple]:
+        """
+        Denotation: Parsing (center, context) word_id pairs
+        Connotation: (a sentence of word_ids, cono_label)
+        """
+        documents = self.documents[self.worker_start:self.worker_end]
+        cono_labels = self.cono_labels[self.worker_start:self.worker_end]
+        labeled_docs = list(zip(documents, cono_labels))
+        random.shuffle(labeled_docs)
 
-    def __getitem__(
-            self,
-            index: int
-            ) -> Tuple[
-            List[int],
-            List[int],
-            # List[List[int]],
-            List[List[int]],
-            int]:
-        """process one document into skip-gram pairs and faux sentences"""
-        doc: List[int] = self.documents[index]
+        batch_seq: List[Vector] = []
+        batch_cono: List[int] = []
+        batch_center: List[int] = []
+        batch_context: List[int] = []
+        for doc, cono_label in labeled_docs:
+            for sent in doc.sentences:
+                if len(batch_center) > self.batch_size:
+                    yield (
+                        rnn.pad_sequence(batch_seq, batch_first=True),
+                        torch.tensor(batch_center),
+                        torch.tensor(batch_context),
+                        torch.tensor(batch_cono))
+                    batch_seq = []
+                    batch_cono = []
+                    batch_center = []
+                    batch_context = []
 
-        # For Denotation
-        # parsing (center, context) word id pairs
-        center_word_ids: List[int] = []
-        context_word_ids: List[int] = []
-        for center_index, center_word_id in enumerate(doc):
-            left_index = max(center_index - self.window_radius, 0)
-            right_index = min(center_index + self.window_radius, len(doc) - 1)
-            context_word_id: List[int] = (
-                doc[left_index:center_index] +
-                doc[center_index + 1:right_index + 1])
-            context_word_ids += context_word_id
-            center_word_ids += [center_word_id] * len(context_word_id)
-            # labels += [self.id_to_label[center_word_id]] * len(context_word_id)
+                center_word_ids: List[int] = []
+                context_word_ids: List[int] = []
+                seq = sent.numerical_tokens  # TODO no sentence tokenized!
+                for center_index, center_word_id in enumerate(seq):
+                    left_index = max(center_index - self.window_radius, 0)
+                    right_index = min(center_index + self.window_radius,
+                                      len(seq) - 1)
+                    context_word_id: List[int] = (
+                        seq[left_index:center_index] +
+                        seq[center_index + 1:right_index + 1])
+                    context_word_ids += context_word_id
+                    center_word_ids += [center_word_id] * len(context_word_id)
 
-        # negative_context_ids = torch.multinomial(
-        #     self.negative_sampling_probs,
-        #     len(context_word_ids) * self.num_negative_samples,
-        #     replacement=True
-        # ).view(len(context_word_ids), self.num_negative_samples)
+                batch_seq.append(torch.tensor(seq))
+                batch_cono.append(cono_label)
+                batch_center += center_word_ids
+                batch_context += context_word_ids
 
-        # For Connotation, split a document into faux sentences
-        faux_sentences: List[List[int]] = []
-        start_index = 0
-        while (start_index + self.fixed_sent_len) < (len(doc) - 1):
-            faux_sentences.append(
-                doc[start_index:start_index + self.fixed_sent_len])
-            start_index += self.fixed_sent_len
+    # def __getitem__(
+    #         self,
+    #         index: int
+    #         ) -> Tuple[
+    #         List[int],
+    #         List[int],
+    #         # List[List[int]],
+    #         List[List[int]],
+    #         int]:
+    #     """process one document into skip-gram pairs and faux sentences"""
+    #     doc: List[int] = self.documents[index]
 
-        trailing_words = doc[start_index:-1]
-        if len(trailing_words) >= self.min_sent_len:
-            faux_sentences.append(trailing_words)
+    #     # For Denotation
+    #     # parsing (center, context) word id pairs
+    #     center_word_ids: List[int] = []
+    #     context_word_ids: List[int] = []
+    #     for center_index, center_word_id in enumerate(doc):
+    #         left_index = max(center_index - self.window_radius, 0)
+    #         right_index = min(center_index + self.window_radius, len(doc) - 1)
+    #         context_word_id: List[int] = (
+    #             doc[left_index:center_index] +
+    #             doc[center_index + 1:right_index + 1])
+    #         context_word_ids += context_word_id
+    #         center_word_ids += [center_word_id] * len(context_word_id)
+    #         # labels += [self.id_to_label[center_word_id]] * len(context_word_id)
 
-        return (
-            center_word_ids,
-            context_word_ids,
-            # negative_context_ids,
-            faux_sentences,
-            self.cono_labels[index])
+    #     # negative_context_ids = torch.multinomial(
+    #     #     self.negative_sampling_probs,
+    #     #     len(context_word_ids) * self.num_negative_samples,
+    #     #     replacement=True
+    #     # ).view(len(context_word_ids), self.num_negative_samples)
+
+    #     # For Connotation, split a document into faux sentences
+    #     faux_sentences: List[List[int]] = []
+    #     start_index = 0
+    #     while (start_index + self.fixed_sent_len) < (len(doc) - 1):
+    #         faux_sentences.append(
+    #             doc[start_index:start_index + self.fixed_sent_len])
+    #         start_index += self.fixed_sent_len
+
+    #     trailing_words = doc[start_index:-1]
+    #     if len(trailing_words) >= self.min_sent_len:
+    #         faux_sentences.append(trailing_words)
+
+    #     return (
+    #         center_word_ids,
+    #         context_word_ids,
+    #         # negative_context_ids,
+    #         faux_sentences,
+    #         self.cono_labels[index])
+
+    # @staticmethod
+    # def collate(
+    #         processed_docs: List[Tuple[
+    #         List[int],
+    #         List[int],
+    #         # List[List[int]],
+    #         List[List[int]],
+    #         int]]
+    #         ) -> Tuple[Vector, Vector, Matrix, Vector]:
+    #     """flatten indeterminate docs full of data into batches"""
+    #     # seq_word_ids = [torch.tensor(w) for w, _, _ in processed_docs]
+    #     # deno_labels = torch.tensor([d for _, d, _ in processed_docs])
+    #     # cono_labels = torch.tensor([c for _, _, c in processed_docs])
+    #     center_ids = []
+    #     context_ids = []
+    #     # negative_ids = []
+    #     seq_word_ids: List[Vector] = []
+    #     cono_labels = []
+    #     for center, context, seqs, cono_label in processed_docs:
+    #         center_ids += center
+    #         context_ids += context
+    #         # negative_ids += neg_sample
+    #         seq_word_ids += [torch.tensor(seq) for seq in seqs]
+    #         cono_labels += [cono_label] * len(seqs)
+
+    #     # import IPython
+    #     # IPython.embed()
+    #     return (
+    #         torch.tensor(center_ids),
+    #         torch.tensor(context_ids),
+    #         # torch.tensor(negative_ids),
+    #         rnn.pad_sequence(seq_word_ids, batch_first=True),
+    #         torch.tensor(cono_labels))
 
     @staticmethod
-    def collate(
-            processed_docs: List[Tuple[
-            List[int],
-            List[int],
-            # List[List[int]],
-            List[List[int]],
-            int]]
-            ) -> Tuple[Vector, Vector, Matrix, Vector]:
-        """flatten indeterminate docs full of data into batches"""
-        # seq_word_ids = [torch.tensor(w) for w, _, _ in processed_docs]
-        # deno_labels = torch.tensor([d for _, d, _ in processed_docs])
-        # cono_labels = torch.tensor([c for _, _, c in processed_docs])
-        center_ids = []
-        context_ids = []
-        # negative_ids = []
-        seq_word_ids: List[Vector] = []
-        cono_labels = []
-        for center, context, seqs, cono_label in processed_docs:
-            center_ids += center
-            context_ids += context
-            # negative_ids += neg_sample
-            seq_word_ids += [torch.tensor(seq) for seq in seqs]
-            cono_labels += [cono_label] * len(seqs)
-
-        # import IPython
-        # IPython.embed()
-        return (
-            torch.tensor(center_ids),
-            torch.tensor(context_ids),
-            # torch.tensor(negative_ids),
-            rnn.pad_sequence(seq_word_ids, batch_first=True),
-            torch.tensor(cono_labels))
+    def worker_init_fn(worker_id: int) -> None:
+        worker = torch.utils.data.get_worker_info()
+        assert worker.id == worker_id
+        dataset = worker.dataset
+        per_worker = dataset.total_workload // worker.num_workers
+        dataset.worker_start = worker.id * per_worker
+        dataset.worker_end = min(dataset.worker_start + per_worker,
+                                 dataset.total_workload)
+        print(f'Worker {worker_id + 1}/{worker.num_workers} loading data '
+              f'range({dataset.worker_start}, {dataset.worker_end})')
 
 
 class RecomposerExperiment(Experiment):
@@ -363,7 +419,7 @@ class RecomposerExperiment(Experiment):
     def __init__(self, config: 'RecomposerConfig'):
         super().__init__(config)
         self.data = LabeledDocuments(config)
-        self.dataloader = DataLoader(
+        self.dataloader = torch.utils.data.DataLoader(
             self.data,
             batch_size=config.batch_size,
             shuffle=True,
@@ -376,9 +432,9 @@ class RecomposerExperiment(Experiment):
         #     if param.requires_grad:
         #         print(name)  # param.data)
 
-        # self.D_decomp_params = self.model.deno_space.embedding.parameters()
+        # self.D_decomp_params = self.model.deno_space.decomposed.parameters()
         self.D_decomp_optimizer = config.optimizer(
-            self.model.deno_space.embedding.parameters(), lr=config.learning_rate)
+            self.model.deno_space.decomposed.parameters(), lr=config.learning_rate)
         # self.D_cono_params = self.model.deno_space.cono_probe.parameters()
         self.D_cono_optimizer = config.optimizer(
             self.model.deno_space.cono_probe.parameters(), lr=config.learning_rate)
@@ -386,9 +442,9 @@ class RecomposerExperiment(Experiment):
         #     self.model.deno_space.deno_decoder.parameters(),
         #     lr=config.learning_rate)
 
-        # self.C_decomp_params = self.model.cono_space.embedding.parameters()
+        # self.C_decomp_params = self.model.cono_space.decomposed.parameters()
         self.C_decomp_optimizer = config.optimizer(
-            self.model.cono_space.embedding.parameters(), lr=config.learning_rate)
+            self.model.cono_space.decomposed.parameters(), lr=config.learning_rate)
         # self.C_cono_parms = self.model.cono_space.cono_probe.parameters()
         self.C_cono_optimizer = config.optimizer(
             self.model.cono_space.cono_probe.parameters(), lr=config.learning_rate)
@@ -399,22 +455,119 @@ class RecomposerExperiment(Experiment):
         # self.recomp_params = self.model.recomposer.parameters()
         # self.R_optimizer = config.optimizer(self.recomp_params, lr=config.learning_rate)
 
-        self.to_be_saved = {
-            'config': self.config,
-            'model': self.model}
+        dev_Hd, dev_Hc = self.model.deno_space.homogeneity(self.data.dev_ids)
+        test_Hd, test_Hc = self.model.deno_space.homogeneity(self.data.test_ids)
+        rand_Hd, rand_Hc = self.model.deno_space.homogeneity(self.data.rand_ids)
+        self.model.PE_homogeneity = {
+            'dev Hd': dev_Hd,
+            'dev Hc': dev_Hc,
+            'test Hd': test_Hd,
+            'test Hc': test_Hc,
+            'rand Hd': rand_Hd,
+            'rand Hc': rand_Hc,
+        }
+        print(self.model.PE_homogeneity)
+
+    def train_step(self, batch_index: int, batch: Tuple) -> None:
+        model = self.model
+        grad_clip = self.config.clip_grad_norm
+
+        center_word_ids = batch[0].to(self.device)
+        context_word_ids = batch[1].to(self.device)
+        seq_word_ids = batch[2].to(self.device)
+        cono_labels = batch[3].to(self.device)
+
+        model.zero_grad()
+        L_DS, DS_d, DS_cp, DS_ca, L_CS, CS_d, CS_cp, CS_ca, L_R, L_joint = model(
+            center_word_ids, context_word_ids, seq_word_ids, cono_labels)
+
+        # Denotation Decomposer
+        L_joint.backward()
+        nn.utils.clip_grad_norm_(model.deno_space.decomposed.parameters(), grad_clip)
+        self.D_decomp_optimizer.step()
+
+        # Connotation Decomposer
+        nn.utils.clip_grad_norm_(model.cono_space.decomposed.parameters(), grad_clip)
+        self.C_decomp_optimizer.step()
+
+        model.zero_grad()
+        L_DS, DS_d, DS_cp, DS_ca, _ = model.deno_space(
+            center_word_ids, context_word_ids, seq_word_ids, cono_labels)
+        DS_cp.backward()
+        nn.utils.clip_grad_norm_(model.deno_space.cono_probe.parameters(), grad_clip)
+        self.D_cono_optimizer.step()
+
+        model.zero_grad()
+        L_CS, CS_d, CS_cp, CS_ca, _ = model.cono_space(
+            center_word_ids, context_word_ids, seq_word_ids, cono_labels)
+        CS_cp.backward()
+        nn.utils.clip_grad_norm_(model.cono_space.cono_probe.parameters(), grad_clip)
+        self.C_cono_optimizer.step()
+
+        # # Recomposer
+        # nn.utils.clip_grad_norm_(self.recomp_params, grad_clip)
+        # self.R_optimizer.step()
+
+        if batch_index % self.config.update_tensorboard == 0:
+            D_cono_acc, C_cono_acc = model.accuracy(seq_word_ids, cono_labels)
+            self.update_tensorboard({
+                'Denotation Decomposer/deno_loss': DS_d,
+                'Denotation Decomposer/cono_loss_proper': DS_cp,
+                'Denotation Decomposer/cono_loss_adversary': DS_ca,
+                'Denotation Decomposer/combined_loss': L_DS,
+                'Denotation Decomposer/accuracy_train_cono': D_cono_acc,
+
+                'Connotation Decomposer/deno_loss': CS_d,
+                'Connotation Decomposer/cono_loss_proper': CS_cp,
+                'Connotation Decomposer/combined_loss': L_CS,
+                'Connotation Decomposer/accuracy_train_cono': C_cono_acc,
+
+                'Joint/loss': L_joint,
+                'Joint/Recomposer': L_R
+            })
+
+        if batch_index % self.config.eval_dev_set == 0:
+            self.eval_step()
+            # self.validation()
+
+    def eval_step(self) -> None:
+        PE = self.model.PE_homogeneity
+        DS_Hd, DS_Hc, CS_Hd, CS_Hc = self.model.homogeneity(self.data.dev_ids)
+        self.update_tensorboard({
+            'Homogeneity Diff Dev/DS Hdeno': DS_Hd - PE['dev Hd'],
+            'Homogeneity Diff Dev/DS Hcono': DS_Hc - PE['dev Hc'],
+            'Homogeneity Diff Dev/CS Hdeno': CS_Hd - PE['dev Hd'],
+            'Homogeneity Diff Dev/CS Hcono': CS_Hc - PE['dev Hc'],
+        })
+        DS_Hd, DS_Hc, CS_Hd, CS_Hc = self.model.homogeneity(self.data.test_ids)
+        self.update_tensorboard({
+            'Homogeneity Diff Test/DS Hdeno': DS_Hd - PE['test Hd'],
+            'Homogeneity Diff Test/DS Hcono': DS_Hc - PE['test Hc'],
+            'Homogeneity Diff Test/CS Hdeno': CS_Hd - PE['test Hd'],
+            'Homogeneity Diff Test/CS Hcono': CS_Hc - PE['test Hc'],
+        })
+        DS_Hd, DS_Hc, CS_Hd, CS_Hc = self.model.homogeneity(self.data.rand_ids)
+        self.update_tensorboard({
+            'Homogeneity Diff Random/DS Hdeno': DS_Hd - PE['rand Hd'],
+            'Homogeneity Diff Random/DS Hcono': DS_Hc - PE['rand Hc'],
+            'Homogeneity Diff Random/CS Hdeno': CS_Hd - PE['rand Hd'],
+            'Homogeneity Diff Random/CS Hcono': CS_Hc - PE['rand Hc'],
+        })
 
     def train(self) -> None:
         config = self.config
-        grad_clip = config.clip_grad_norm
-        model = self.model
-        # For debugging
-        self.save_everything(self.config.output_dir / 'init_recomposer.pt')
-        raise SystemExit
+        # # For debugging only
+        # self.save_everything(self.config.output_dir / 'init_recomposer.pt')
+        # raise SystemExit
 
-        if not config.print_stats:
-            epoch_pbar = tqdm(range(1, config.num_epochs + 1), desc=config.output_dir.name)
+        if config.print_stats:
+            epoch_pbar = tqdm(
+                range(1, config.num_epochs + 1),
+                desc='Epochs')
         else:
-            epoch_pbar = tqdm(range(1, config.num_epochs + 1), desc='Epochs')
+            epoch_pbar = tqdm(
+                range(1, config.num_epochs + 1),
+                desc=config.output_dir.name)
 
         for epoch_index in epoch_pbar:
             if not config.print_stats:
@@ -426,134 +579,77 @@ class RecomposerExperiment(Experiment):
                     mininterval=config.progress_bar_refresh_rate,
                     desc='Batches')
             for batch_index, batch in batches:
-                center_word_ids = batch[0].to(self.device)
-                context_word_ids = batch[1].to(self.device)
-                seq_word_ids = batch[2].to(self.device)
-                cono_labels = batch[3].to(self.device)
-
-                self.model.zero_grad()
-                L_D, l_Dd, l_Dcp, l_Dca, L_C, l_Cd, l_Ccp, l_Cca, L_R, L_joint = self.model(
-                    center_word_ids, context_word_ids, seq_word_ids, cono_labels)
-
-                # Denotation Decomposer
-                L_joint.backward()
-                nn.utils.clip_grad_norm_(model.deno_space.embedding.parameters(), grad_clip)
-                self.D_decomp_optimizer.step()
-
-                # Connotation Decomposer
-                nn.utils.clip_grad_norm_(model.cono_space.embedding.parameters(), grad_clip)
-                self.C_decomp_optimizer.step()
-
-                self.model.zero_grad()
-                L_D, l_Dd, l_Dcp, l_Dca, _ = self.model.deno_space(
-                    center_word_ids, context_word_ids, seq_word_ids, cono_labels)
-                l_Dcp.backward()
-                nn.utils.clip_grad_norm_(model.deno_space.cono_probe.parameters(), grad_clip)
-                self.D_cono_optimizer.step()
-
-                self.model.zero_grad()
-                L_C, l_Cd, l_Ccp, l_Cca, _ = self.model.cono_space(
-                    center_word_ids, context_word_ids, seq_word_ids, cono_labels)
-                l_Ccp.backward()
-                nn.utils.clip_grad_norm_(model.cono_space.cono_probe.parameters(), grad_clip)
-                self.C_cono_optimizer.step()
-
-                # # Recomposer
-                # nn.utils.clip_grad_norm_(self.recomp_params, grad_clip)
-                # self.R_optimizer.step()
-
-                if batch_index % config.update_tensorboard == 0:
-                    D_cono_acc, C_cono_acc = model.accuracy(
-                        seq_word_ids, cono_labels)
-                    self.update_tensorboard({
-                        'Denotation Decomposer/deno_loss': l_Dd,
-                        'Denotation Decomposer/cono_loss_proper': l_Dcp,
-                        'Denotation Decomposer/cono_loss_adversary': l_Dca,
-                        'Denotation Decomposer/combined_loss': L_D,
-                        'Denotation Decomposer/accuracy_train_cono': D_cono_acc,
-
-                        'Connotation Decomposer/deno_loss': l_Cd,
-                        'Connotation Decomposer/cono_loss_proper': l_Ccp,
-                        'Connotation Decomposer/combined_loss': L_C,
-                        'Connotation Decomposer/accuracy_train_cono': C_cono_acc,
-
-                        'Joint/loss': L_joint,
-                        'Joint/Recomposer': L_R
-                    })
-                if batch_index % config.eval_dev_set == 0:
-                    self.validation()
-
+                self.train_step(batch_index, batch)
                 self.tb_global_step += 1
-            # End Batches
-            # self.lr_scheduler.step()
-            self.print_timestamp(epoch_index)
             self.auto_save(epoch_index)
-        # End Epochs
 
-    def validation(self) -> None:
-        # D_deno_acc, D_cono_acc, C_deno_acc, C_cono_acc = self.model.accuracy(
-        #     self.data.dev_seq.to(self.device),
-        #     self.data.dev_deno_labels.to(self.device),
-        #     self.data.dev_cono_labels.to(self.device))
-        model = self.model
-        D_model = model.deno_space
-        DS_Hdeno, DS_Hcono = D_model.homemade_homogeneity(D_model.dev_ids)
-        # _, DS_Hcono_SP = D_model.SciPy_homogeneity(D_model.dev_ids)
+            if config.print_stats:
+                self.print_timestamp(epoch_index)
 
-        mean_delta, abs_rhos = word_sim.mean_delta(
-            D_model.embedding.weight, D_model.pretrained_embed.weight,
-            model.id_to_word, reduce=False)
-        cos_sim = F.cosine_similarity(
-            D_model.embedding.weight, D_model.pretrained_embed.weight).mean()
-        self.update_tensorboard({
-            'Denotation Space/Neighbor Overlap': DS_Hdeno,
-            'Denotation Space/Party Homogeneity': DS_Hcono,
-            # 'Denotation Space/Party Homogeneity SciPy': DS_Hcono_SP,
-            'Denotation Space/Overlap - Party': DS_Hdeno - DS_Hcono,
+    # def validation(self) -> None:
+    #     # D_deno_acc, D_cono_acc, C_deno_acc, C_cono_acc = self.model.accuracy(
+    #     #     self.data.dev_seq.to(self.device),
+    #     #     self.data.dev_deno_labels.to(self.device),
+    #     #     self.data.dev_cono_labels.to(self.device))
+    #     model = self.model
+    #     D_model = model.deno_space
+    #     DS_Hdeno, DS_Hcono = D_model.homemade_homogeneity(D_model.dev_ids)
+    #     # _, DS_Hcono_SP = D_model.SciPy_homogeneity(D_model.dev_ids)
 
-            'Denotation Space/rho difference cf pretrained': mean_delta,
-            'Denotation Space/MTurk-771': abs_rhos[0],
-            'Denotation Space/cosine cf pretrained': cos_sim
-        })
+    #     mean_delta, abs_rhos = word_sim.mean_delta(
+    #         D_model.decomposed.weight, D_model.pretrained_embed.weight,
+    #         model.id_to_word, reduce=False)
+    #     cos_sim = F.cosine_similarity(
+    #         D_model.decomposed.weight, D_model.pretrained_embed.weight).mean()
+    #     self.update_tensorboard({
+    #         'Denotation Space/Neighbor Overlap': DS_Hdeno,
+    #         'Denotation Space/Party Homogeneity': DS_Hcono,
+    #         # 'Denotation Space/Party Homogeneity SciPy': DS_Hcono_SP,
+    #         'Denotation Space/Overlap - Party': DS_Hdeno - DS_Hcono,
 
-        C_model = model.cono_space
-        CS_Hdeno, CS_Hcono = C_model.homemade_homogeneity(C_model.dev_ids)
-        # _, CS_Hcono_SP = C_model.SciPy_homogeneity(C_model.dev_ids)
-        mean_delta, abs_rhos = word_sim.mean_delta(
-            C_model.embedding.weight, C_model.pretrained_embed.weight,
-            model.id_to_word, reduce=False)
-        cos_sim = F.cosine_similarity(
-            C_model.embedding.weight, C_model.pretrained_embed.weight).mean()
-        self.update_tensorboard({
-            'Connotation Space/Neighbor Overlap': CS_Hdeno,
-            'Connotation Space/Party Homogeneity': CS_Hcono,
-            # 'Connotation Space/Party Homogeneity SciPy': CS_Hcono_SP,
-            'Connotation Space/Party - Overlap': CS_Hcono - CS_Hdeno,
+    #         'Denotation Space/rho difference cf pretrained': mean_delta,
+    #         'Denotation Space/MTurk-771': abs_rhos[0],
+    #         'Denotation Space/cosine cf pretrained': cos_sim
+    #     })
 
-            'Connotation Space/rho difference cf pretrained': mean_delta,
-            'Connotation Space/MTurk-771': abs_rhos[0],
-            'Connotation Space/cosine cf pretrained': cos_sim
-        })
+    #     C_model = model.cono_space
+    #     CS_Hdeno, CS_Hcono = C_model.homemade_homogeneity(C_model.dev_ids)
+    #     # _, CS_Hcono_SP = C_model.SciPy_homogeneity(C_model.dev_ids)
+    #     mean_delta, abs_rhos = word_sim.mean_delta(
+    #         C_model.decomposed.weight, C_model.pretrained_embed.weight,
+    #         model.id_to_word, reduce=False)
+    #     cos_sim = F.cosine_similarity(
+    #         C_model.decomposed.weight, C_model.pretrained_embed.weight).mean()
+    #     self.update_tensorboard({
+    #         'Connotation Space/Neighbor Overlap': CS_Hdeno,
+    #         'Connotation Space/Party Homogeneity': CS_Hcono,
+    #         # 'Connotation Space/Party Homogeneity SciPy': CS_Hcono_SP,
+    #         'Connotation Space/Party - Overlap': CS_Hcono - CS_Hdeno,
 
-        with torch.no_grad():
-            # sample = torch.randint(
-            #     D_model.embedding.num_embeddings, size=(25_000,), device=self.device)
-            sample = torch.arange(D_model.embedding.num_embeddings, device=self.device)
-            recomposed = D_model.embedding(sample) + C_model.embedding(sample)
+    #         'Connotation Space/rho difference cf pretrained': mean_delta,
+    #         'Connotation Space/MTurk-771': abs_rhos[0],
+    #         'Connotation Space/cosine cf pretrained': cos_sim
+    #     })
 
-        mean_delta, abs_rhos = word_sim.mean_delta(
-            recomposed,
-            D_model.pretrained_embed.weight,
-            model.id_to_word,
-            reduce=False)
-        self.update_tensorboard({
-            'Recomposer/mean IntraSpace quality': ((DS_Hdeno - DS_Hcono) + (CS_Hcono - CS_Hdeno)) / 2,
+    #     with torch.no_grad():
+    #         # sample = torch.randint(
+    #         #     D_model.decomposed.num_embeddings, size=(25_000,), device=self.device)
+    #         sample = torch.arange(D_model.decomposed.num_embeddings, device=self.device)
+    #         recomposed = D_model.decomposed(sample) + C_model.decomposed(sample)
 
-            'Recomposer/rho difference cf pretrained': mean_delta,
-            'Recomposer/MTurk-771': abs_rhos[0],
-            'Recomposer/cosine similarity':
-                F.cosine_similarity(recomposed, D_model.pretrained_embed(sample), dim=1).mean()
-        })
+    #     mean_delta, abs_rhos = word_sim.mean_delta(
+    #         recomposed,
+    #         D_model.pretrained_embed.weight,
+    #         model.id_to_word,
+    #         reduce=False)
+    #     self.update_tensorboard({
+    #         'Recomposer/mean IntraSpace quality': ((DS_Hdeno - DS_Hcono) + (CS_Hcono - CS_Hdeno)) / 2,
+
+    #         'Recomposer/rho difference cf pretrained': mean_delta,
+    #         'Recomposer/MTurk-771': abs_rhos[0],
+    #         'Recomposer/cosine similarity':
+    #             F.cosine_similarity(recomposed, D_model.pretrained_embed(sample), dim=1).mean()
+    #     })
 
 
 @dataclass
@@ -680,6 +776,7 @@ def main() -> None:
 
 
 if __name__ == '__main__':
+    random.seed(42)
     torch.manual_seed(42)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
