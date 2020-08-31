@@ -13,6 +13,8 @@ from tqdm import tqdm
 from decomposer import Decomposer, DecomposerConfig, LabeledSentences, new_base_path
 from utils.experiment import Experiment
 from utils.improvised_typing import Scalar, Vector, Matrix, R3Tensor
+from gcide import get_full_pos_dict, global_pos_list
+from wordcat import word_cat, annotate_heatmap, heatmap
 
 from sklearn.decomposition import PCA, FastICA
 from scipy import stats
@@ -518,22 +520,61 @@ def main() -> None:
     print("pretrained embedding shape", p_embedding.shape)
     w2id = black_box.model.word_to_id
     
+    master_pos_dict = get_full_pos_dict()
+    global_pos_list_l = list(global_pos_list)
+    
+    pos_one_hot = [[] for i in global_pos_list_l]
+    
+    
     ground = black_box.model.deno_decomposer.grounding
     query_conos = []
     filtered_embeddings = []
+    found_count = 0
+    
+    connotation_experiment = False
+    
     for query_word in w2id.keys():
-        if "_" not in query_word:
-            continue
+    
         id = w2id[query_word]
+    
+        if connotation_experiment:
+            if "_" not in query_word:
+                # Only use compound words
+                continue
+
+            query_cono = ground[query_word]['R_ratio']
+            query_conos.append(query_cono)
+        else:
+            # POS experiment
+            if "_" in query_word:
+                # Skip compound words
+                continue
+            try:
+                this_word_posset = master_pos_dict[query_word.lower()]
+                found_count += 1
+            except KeyError:
+                this_word_posset = set()
+        
+            alt_set = word_cat(query_word)
+            if alt_set:
+                this_word_posset.add(alt_set)
+                
+            for idx, pos in enumerate(global_pos_list_l):
+                if pos in this_word_posset:
+                    pos_one_hot[idx].append(1)
+                else:
+                    pos_one_hot[idx].append(0)
+        
         filtered_embeddings.append(p_embedding[id])
-        query_cono = ground[query_word]['R_ratio']
-        query_conos.append(query_cono)
     filtered_embeddings = np.array(filtered_embeddings)
     
-    if False: # Transform embedding matrix
+    print("pos found", found_count)
+    print("global_pos_list", global_pos_list)
+    
+    if True: # Transform embedding matrix
         use_pca = True
         if use_pca:
-            ca = PCA()
+            ca = PCA(n_components=9)
         else:
             ca = FastICA()
         ca.fit(filtered_embeddings)
@@ -541,19 +582,33 @@ def main() -> None:
         filtered_embeddings = ca.transform(filtered_embeddings)
         print("new embedding shape", filtered_embeddings.shape)
 
-    rvals = []
-    for emb_pos in range(filtered_embeddings.shape[1]):
-        rval, ptail = stats.spearmanr(query_conos, filtered_embeddings[:,emb_pos])
-        rvals.append((rval, emb_pos, ptail))
+    if connotation_experiment:
+        rvals = []
+        for emb_pos in range(filtered_embeddings.shape[1]):
+            rval, ptail = stats.spearmanr(query_conos, filtered_embeddings[:,emb_pos])
+            rvals.append((rval, emb_pos, ptail))
     
-    rvals.sort()
-    for rv in rvals:
-        print(rv)
+        rvals.sort()
+        for rv in rvals:
+            print(rv)
 
-    #plt.scatter(query_conos, filtered_embeddings[:,284], s=4)
-    #plt.xlabel("Connotation Ratio")
-    #plt.ylabel("Component 284 from PCA")
-    #plt.show()
+        #plt.scatter(query_conos, filtered_embeddings[:,284], s=4)
+        #plt.xlabel("Connotation Ratio")
+        #plt.ylabel("Component 284 from PCA")
+        #plt.show()
+    else:
+        num_pca_components_displayed = len(global_pos_list_l)
+        correlation_matrix = [[] for i in range(num_pca_components_displayed)]
+        for row_idx, matrix_row in enumerate(correlation_matrix):
+            # Each row is PCA vec
+            for col_idx, pos in enumerate(global_pos_list_l):
+                # Columns are POS
+                rval, pval = stats.pointbiserialr(pos_one_hot[col_idx], filtered_embeddings[:,row_idx])
+                matrix_row.append(rval)
+        correlation_matrix = np.array(correlation_matrix)
+        print(correlation_matrix)
+        
+        print("min", correlation_matrix.min(), "max", correlation_matrix.max())
 
 if __name__ == '__main__':
     main()
