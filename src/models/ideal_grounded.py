@@ -212,12 +212,15 @@ class Decomposer(nn.Module):
             same_deno = 0
             same_cono = 0
             for nid in neighbor_ids:
-                neighbor_word = self.id_to_word[nid]
-                neighbor_deno, neighbor_cono = self.ground(neighbor_word)
-                if neighbor_deno == query_deno:
-                    same_deno += 1
-                if neighbor_cono == query_cono:
-                    same_cono += 1
+                try:
+                    neighbor_word = self.id_to_word[nid]
+                    neighbor_deno, neighbor_cono = self.ground(neighbor_word)
+                    if neighbor_deno == query_deno:
+                        same_deno += 1
+                    if neighbor_cono == query_cono:
+                        same_cono += 1
+                except KeyError:  # special tokens like [PAD] are ungrounded
+                    continue
             deno_homogeneity.append(same_deno / len(neighbor_ids))
             cono_homogeneity.append(same_cono / len(neighbor_ids))
         return mean(deno_homogeneity), mean(cono_homogeneity)
