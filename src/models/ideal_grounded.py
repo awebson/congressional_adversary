@@ -170,7 +170,7 @@ class Decomposer(nn.Module):
     def ground(
             self,
             word: str
-            ) -> Tuple[str, int]:
+            ) -> Tuple[str, int]:  # TODO
         deno_label = self.grounding[word]['majority_deno']
         cono_continuous = self.grounding[word]['R_ratio']
         if cono_continuous < 0.5:
@@ -244,8 +244,6 @@ class Recomposer(nn.Module):
             id_to_word=data.id_to_word,
             grounding=data.grounding,
             device=self.device)
-        assert config.deno_probe[-1].out_features == config.num_deno_classes
-        assert config.num_deno_classes == len(data.deno_to_id)
 
         self.cono_space = Decomposer(
             preserve='cono',
@@ -255,7 +253,6 @@ class Recomposer(nn.Module):
             id_to_word=data.id_to_word,
             grounding=data.grounding,
             device=self.device)
-        assert config.cono_probe[-1].out_features == config.num_cono_classes
 
         # Recomposer
         # self.recomposer = nn.Linear(600, 300)
@@ -286,11 +283,9 @@ class Recomposer(nn.Module):
         return L_joint, L_R, DS_dp, DS_cp, DS_ca, L_CS, CS_dp, CS_da, CS_cp
 
     def predict(self, seq_word_ids: Vector) -> Tuple[Vector, ...]:
-        self.eval()
-        D_deno_conf, D_cono_conf = self.deno_space.predict(seq_word_ids)
-        C_deno_conf, C_cono_conf = self.cono_space.predict(seq_word_ids)
-        self.train()
-        return D_deno_conf, D_cono_conf, C_deno_conf, C_cono_conf
+        DS_deno_conf, DS_cono_conf = self.deno_space.predict(seq_word_ids)
+        CS_deno_conf, CS_cono_conf = self.cono_space.predict(seq_word_ids)
+        return DS_deno_conf, DS_cono_conf, CS_deno_conf, CS_cono_conf
 
     def accuracy(
             self,
@@ -299,11 +294,11 @@ class Recomposer(nn.Module):
             cono_labels: Vector,
             error_analysis_path: Optional[str] = None
             ) -> Tuple[float, ...]:
-        D_deno_accuracy, D_cono_accuracy = self.deno_space.accuracy(
+        DS_deno_acc, DS_cono_acc = self.deno_space.accuracy(
             seq_word_ids, deno_labels, cono_labels)
-        C_deno_accuracy, C_cono_accuracy = self.cono_space.accuracy(
+        CS_deno_acc, CS_cono_acc = self.cono_space.accuracy(
             seq_word_ids, deno_labels, cono_labels)
-        return D_deno_accuracy, D_cono_accuracy, C_deno_accuracy, C_cono_accuracy
+        return DS_deno_acc, DS_cono_acc, CS_deno_acc, CS_cono_acc
 
     def homogeneity(
             self,
@@ -421,37 +416,38 @@ class IdealGroundedExperiment(Experiment):
             num_workers=config.num_dataloader_threads,
             pin_memory=config.pin_memory)
         self.model = Recomposer(config, self.data)
+        model = self.model
 
         # for name, param in self.model.named_parameters():
         #     if param.requires_grad:
         #         print(name)  # param.data)
-        self.D_decomp_optimizer = config.optimizer(
-            self.model.deno_space.decomposed.parameters(),
+        self.DS_decomp_optimizer = config.optimizer(
+            model.deno_space.decomposed.parameters(),
             lr=config.learning_rate)
-        self.D_deno_optimizer = config.optimizer(
-            self.model.deno_space.deno_probe.parameters(),
+        self.DS_deno_optimizer = config.optimizer(
+            model.deno_space.deno_probe.parameters(),
             lr=config.learning_rate)
-        self.D_cono_optimizer = config.optimizer(
-            self.model.deno_space.cono_probe.parameters(),
+        self.DS_cono_optimizer = config.optimizer(
+            model.deno_space.cono_probe.parameters(),
             lr=config.learning_rate)
 
-        self.C_decomp_optimizer = config.optimizer(
-            self.model.cono_space.decomposed.parameters(),
+        self.CS_decomp_optimizer = config.optimizer(
+            model.cono_space.decomposed.parameters(),
             lr=config.learning_rate)
-        self.C_deno_optimizer = config.optimizer(
-            self.model.cono_space.deno_probe.parameters(),
+        self.CS_deno_optimizer = config.optimizer(
+            model.cono_space.deno_probe.parameters(),
             lr=config.learning_rate)
-        self.C_cono_optimizer = config.optimizer(
-            self.model.cono_space.cono_probe.parameters(),
+        self.CS_cono_optimizer = config.optimizer(
+            model.cono_space.cono_probe.parameters(),
             lr=config.learning_rate)
         # self.R_optimizer = config.optimizer(
-        #     self.model.recomposer.parameters(),
+        #     model.recomposer.parameters(),
         #     lr=config.learning_rate)
 
-        dev_Hd, dev_Hc = self.model.deno_space.homogeneity(self.data.dev_ids)
-        test_Hd, test_Hc = self.model.deno_space.homogeneity(self.data.test_ids)
-        rand_Hd, rand_Hc = self.model.deno_space.homogeneity(self.data.rand_ids)
-        self.model.PE_homogeneity = {
+        dev_Hd, dev_Hc = model.deno_space.homogeneity(self.data.dev_ids)
+        test_Hd, test_Hc = model.deno_space.homogeneity(self.data.test_ids)
+        rand_Hd, rand_Hc = model.deno_space.homogeneity(self.data.rand_ids)
+        model.PE_homogeneity = {
             'dev Hd': dev_Hd,
             'dev Hc': dev_Hc,
             'test Hd': test_Hd,
@@ -459,7 +455,7 @@ class IdealGroundedExperiment(Experiment):
             'rand Hd': rand_Hd,
             'rand Hc': rand_Hc,
         }
-        print(self.model.PE_homogeneity)
+        print(model.PE_homogeneity)
 
     def train_step(self, batch_index: int, batch: Tuple) -> None:
         model = self.model
@@ -471,27 +467,28 @@ class IdealGroundedExperiment(Experiment):
         L_joint, L_R, DS_dp, DS_cp, DS_ca, L_CS, CS_dp, CS_da, CS_cp = model(
             seq_word_ids, deno_labels, cono_labels)
         L_joint.backward()
-        self.D_decomp_optimizer.step()
-        self.C_decomp_optimizer.step()
+        self.DS_decomp_optimizer.step()
+        self.CS_decomp_optimizer.step()
 
+        # Update probes with proper losses
         # TODO test reordering
         model.zero_grad()
         L_DS, DS_dp, DS_da, DS_cp, DS_ca, _ = model.deno_space(
             seq_word_ids, deno_labels, cono_labels)
         DS_dp.backward(retain_graph=True)
-        self.D_deno_optimizer.step()
+        self.DS_deno_optimizer.step()
         # model.zero_grad()
         DS_cp.backward()
-        self.D_cono_optimizer.step()
+        self.DS_cono_optimizer.step()
 
         model.zero_grad()
         L_CS, CS_dp, CS_da, CS_cp, CS_ca, _ = model.cono_space(
             seq_word_ids, deno_labels, cono_labels)
         CS_dp.backward(retain_graph=True)
-        self.C_deno_optimizer.step()
+        self.CS_deno_optimizer.step()
         # model.zero_grad()
         CS_cp.backward()
-        self.C_cono_optimizer.step()
+        self.CS_cono_optimizer.step()
 
         if batch_index % self.config.update_tensorboard == 0:
             D_deno_acc, D_cono_acc, C_deno_acc, C_cono_acc = model.accuracy(
@@ -801,6 +798,9 @@ class IdealGroundedConfig():
                 nn.Linear(300, self.num_cono_classes))
         else:
             raise ValueError('Unknown architecture argument.')
+
+        assert self.cono_probe[-1].out_features == self.num_cono_classes
+        assert self.deno_probe[-1].out_features == self.num_deno_classes
 
 
 def main() -> None:
