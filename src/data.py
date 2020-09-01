@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List, Counter, Optional
 
 import numpy as np
 
@@ -27,34 +27,34 @@ class LabeledDoc():
 
 @dataclass
 class GroundedWord():
-    word: str
-    id: int
-    deno: Optional[str]
-    cono: str
-    # cono_ratio: np.ndarray
-    # R_ratio
-    # cono_PMI: np.ndarray
-    # TODO majority deno
+    text: str
+    # id: int
+    deno: Optional[Counter[str]]
+    cono: Optional[Counter[str]]
+    # majority_deno: Optional[str] = None
+    # majority_cono: Optional[str] = None
 
-#     def __post_init__(self) -> None:
-#         self.word_id: int = WTI[self.word]
-#         metadata = sub_PE_GD[self.word]
-#         self.freq: int = metadata['freq']
-#         self.R_ratio: float = metadata['R_ratio']
-#         self.majority_deno: int = metadata['majority_deno']
+    # def __post_init__(self) -> None:
+    #     if self.deno is not None:
+    #         self.majority_deno: str = self.cono.most_common(1)[0][0]
+    #     if self.cono is not None:
+    #         self.majority_cono: str = self.deno.most_common(1)[0][0]
 
-#         self.PE_neighbors = self.neighbors(PE)
+    def __str__(self) -> str:
+        if self.deno is not None:
+            return (
+                f'{self.text}\t'
+                f'{self.deno}\t'
+                f'{self.cono}\t'
+                # f'{self.majority_cono}\t'
+                # f'{np.around(self.cono_ratio, 4)}\t'
+                # f'{np.around(self.cono_PMI, 4)}'
+            )
+        else:
+            return (
+                f'{self.text}\t'
+                f'{self.cono}\t')
 
-#     def deno_ground(self, embed, top_k=10):
-#         self.neighbors: List[str] = nearest_neighbors()
-
-    # def __str__(self) -> str:
-    #     return (
-    #         f'{self.word}\t'
-    #         f'{self.cono_freq}\t'
-    #         f'{np.around(self.cono_ratio, 4)}\t'
-    #         f'{np.around(self.cono_PMI, 4)}')
-
-    def init_extra(self) -> None:
-        self.freq = np.sum(self.cono_freq)
-        self.R_ratio = self.cono_freq[2] / (self.cono_freq[0] + self.cono_freq[2])
+    # def init_extra(self) -> None:
+    #     self.freq = np.sum(self.cono_freq)
+    #     self.R_ratio = self.cono_freq[2] / (self.cono_freq[0] + self.cono_freq[2])

@@ -16,19 +16,21 @@ random.seed(42)
 
 def build_vocabulary(
         frequency: Counter,
-        # special_tokens: Optional[Tuple[str]] = None
+        min_frequency: int = 0,
+        add_special_tokens: bool = True
         ) -> Tuple[
         Dict[str, int],
         Dict[int, str]]:
     word_to_id: Dict[str, int] = {}
-    word_to_id['[PAD]'] = 0
-    word_to_id['[UNK]'] = 1
-    word_to_id['[CLS]'] = 2
-    word_to_id['[SEP]'] = 3
+    if add_special_tokens:
+        word_to_id['[PAD]'] = 0
+        word_to_id['[UNK]'] = 1
+        word_to_id['[CLS]'] = 2
+        word_to_id['[SEP]'] = 3
     id_to_word = {val: key for key, val in word_to_id.items()}
     next_vocab_id = len(word_to_id)
     for word, freq in frequency.items():
-        if word not in word_to_id:
+        if word not in word_to_id and freq >= min_frequency:
             word_to_id[word] = next_vocab_id
             id_to_word[next_vocab_id] = word
             next_vocab_id += 1
@@ -99,6 +101,8 @@ def main(
 
     norm_freq: Counter[str] = Counter()
     for doc in tqdm(corpus, desc='Counting UNKs'):
+        if conserve_RAM:
+            doc.text = None
         for sent in doc.sentences:
             norm_freq.update(sent.underscored_tokens)
     cumulative_freq = sum(freq for freq in norm_freq.values())
@@ -111,7 +115,7 @@ def main(
         if val >= min_frequency:
             UNK_filtered_freq[key] = val
         else:
-            UNK_filtered_freq['<UNK>'] += val
+            UNK_filtered_freq['[UNK]'] += val
     print(f'Filtered vocabulary size = {len(UNK_filtered_freq):,}', file=preview)
     assert sum(freq for freq in norm_freq.values()) == cumulative_freq
 
@@ -132,19 +136,20 @@ def main(
         'right-center': 2,
         'right': 2}
     cono_freq: DefaultDict[str, List] = DefaultDict(lambda: [0, 0, 0])
-    party_cumulative: Counter[int] = Counter()
-    # Subsampling & filter by mix/max sentence length
-    keep_prob = subsampling(UNK_filtered_freq, subsample_heuristic, subsample_threshold)
+    # party_cumulative: Counter[int] = Counter()
+    # Subsampling & filter by min/max sentence length
+    keep_prob = subsampling(
+        UNK_filtered_freq, subsample_heuristic, subsample_threshold)
     final_freq: Counter[str] = Counter()
     for doc in tqdm(corpus, desc='Subsampling frequent words'):
         for sent in doc.sentences:
             for token in sent.underscored_tokens:
                 if token not in UNK_filtered_freq:
-                    token = '<UNK>'
+                    token = '[UNK]'
                 if random.random() < keep_prob[token]:
                     sent.subsampled_tokens.append(token)
                 cono_freq[token][numericalize_cono[doc.party]] += 1
-                party_cumulative[numericalize_cono[doc.party]] += 1
+                # party_cumulative[numericalize_cono[doc.party]] += 1
             # End looping tokens
 
             if len(sent.subsampled_tokens) >= min_sent_len:
@@ -181,20 +186,21 @@ def main(
             if conserve_RAM:
                 sent.subsampled_tokens = None
 
-    # Compute PMI
-    def prob(count: int) -> float:
-        return count / cumulative_freq  # presampled frequency
+    # # Compute PMI
+    # def prob(count: int) -> float:
+    #     return count / cumulative_freq  # presampled frequency
 
+    # Prepare grounding for intrinsic evaluation
     ground: Dict[str, GroundedWord] = {}
-    cono_labels = set(numericalize_cono.values())
+    # cono_labels = set(numericalize_cono.values())
     for word in tqdm(word_to_id.keys(), desc='Computing PMIs (-∞ are okay)'):
         cono = np.array(cono_freq[word])
-        cono_ratio = cono / np.sum(cono)
-        PMI = np.log2([  # can be -inf if freq = 0
-            prob(cono[party_id])
-            / (prob(norm_freq[word]) * prob(party_cumulative[party_id]))
-            for party_id in cono_labels])
-        ground[word] = GroundedWord(word, word_to_id[word], cono, cono_ratio, PMI)
+        # cono_ratio = cono / np.sum(cono)
+        # PMI = np.log2([  # can be -inf if freq = 0
+        #     prob(cono[party_id])
+        #     / (prob(norm_freq[word]) * prob(party_cumulative[party_id]))
+        #     for party_id in cono_labels])
+        ground[word] = GroundedWord(text=word, deno=None, cono=cono)
 
     # Helper for negative sampling
     cumulative_freq = sum(freq ** 0.75 for freq in final_freq.values())

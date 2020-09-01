@@ -100,7 +100,7 @@ def process_sentences(session: int) -> List[LabeledDoc]:
 
         docs.append(
             LabeledDoc(
-                uid=f'{session}_{uid}',
+                uid=speech.speech_id,
                 title=None,
                 url=None,
                 party=cono,
