@@ -282,8 +282,8 @@ def faux_sent_tokenize(
 
 def main(
         sessions: Iterable[int],
-        out_dir: Path,
         in_dir: Path,
+        out_dir: Path,
         subsampling_implementation: Optional[str],
         subsampling_threshold: float,
         min_word_freq: int,
@@ -472,13 +472,13 @@ def main(
 
 if __name__ == '__main__':
     main(
-        sessions=(111, ), #range(97, 112),
-        out_dir=Path(f'../../data/processed/CR_skip/debug'),
+        sessions=range(97, 112),
         in_dir=Path('../../data/interim/underscored_corpora'),
+        out_dir=Path(f'../../data/ready/CR_skip'),
         subsampling_implementation='paper',
         subsampling_threshold=1e-5,
         min_word_freq=15,
         min_sent_len=5,
         fixed_sent_len=20,
-        conserve_RAM=False
+        conserve_RAM=True
     )

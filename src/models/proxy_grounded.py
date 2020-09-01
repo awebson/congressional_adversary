@@ -1,18 +1,17 @@
 import argparse
+import pickle
 import random
 from copy import copy
 from pathlib import Path
 from dataclasses import dataclass
-from typing import Tuple, Dict, Optional
+from typing import Tuple, List, Iterable, Dict, Optional
 
 import torch
 from torch import nn
 from torch.nn import functional as F
 from tqdm import tqdm
 
-from models.dual_grounded import Decomposer, Recomposer
-
-
+from models.ideal_grounded import Decomposer, Recomposer
 from data import Sentence, LabeledDoc, GroundedWord
 from evaluations.word_similarity import all_wordsim as word_sim
 from utils.experiment import Experiment
@@ -398,7 +397,7 @@ class ProxyGroundedRecomposer(nn.Module):
 
     def __init__(
             self,
-            config: 'RecomposerConfig',
+            config: 'ProxyGroundedConfig',
             data: 'LabeledDocuments'):
         super().__init__()
         self.delta = config.deno_delta
@@ -511,7 +510,7 @@ class LabeledDocuments(torch.utils.data.IterableDataset):
 
         corpus_path = config.input_dir / 'train.pickle'
         print(f'Loading {corpus_path}', flush=True)
-        with open(corpus_path, 'rb') as corpus_file:
+        with open(config.corpus_path, 'rb') as corpus_file:
             preprocessed = pickle.load(corpus_file)
         self.word_to_id: Dict[str, int] = preprocessed['word_to_id']
         self.id_to_word: Dict[int, str] = preprocessed['id_to_word']
@@ -519,8 +518,8 @@ class LabeledDocuments(torch.utils.data.IterableDataset):
         self.documents: List[LabeledDoc] = preprocessed['documents']
         self.negative_sampling_probs: Vector = torch.tensor(
             preprocessed['negative_sampling_probs'])
-        assert preprocessed['numericalize_cono'] == config.numericalize_cono
 
+        random.shuffle(self.documents)
         self.estimated_len = (
             sum([len(sent.numerical_tokens)
                  for doc in self.documents
@@ -532,7 +531,7 @@ class LabeledDocuments(torch.utils.data.IterableDataset):
         self.worker_start: Optional[int] = None
         self.worker_end: Optional[int] = None
 
-    # def __len__(self) -> int:  # print warnings when estimates are off
+    # def __len__(self) -> int:  # throws warnings when estimates are off
     #     return self.estimated_len
 
     def __iter__(self) -> Iterable[Tuple]:
@@ -541,7 +540,6 @@ class LabeledDocuments(torch.utils.data.IterableDataset):
         Connotation: (a sentence of word_ids, cono_label)
         """
         documents = self.documents[self.worker_start:self.worker_end]
-        random.shuffle(documents)
         batch_seq: List[Vector] = []
         batch_cono: List[int] = []
         batch_center: List[int] = []
@@ -572,7 +570,6 @@ class LabeledDocuments(torch.utils.data.IterableDataset):
                         seq[center_index + 1:right_index + 1])
                     context_word_ids += context_word_id
                     center_word_ids += [center_word_id] * len(context_word_id)
-                # yield seq, center_word_ids, context_word_ids, cono_label  # regular batching
                 batch_seq.append(torch.tensor(seq))
                 batch_cono.append(cono_label)
                 batch_center += center_word_ids
@@ -591,9 +588,9 @@ class LabeledDocuments(torch.utils.data.IterableDataset):
         #       f'range({dataset.worker_start}, {dataset.worker_end})')
 
 
-class RecomposerExperiment(Experiment):
+class ProxyGroundedExperiment(Experiment):
 
-    def __init__(self, config: 'RecomposerConfig'):
+    def __init__(self, config: 'ProxyGroundedConfig'):
         super().__init__(config)
         self.data = LabeledDocuments(config)
         self.dataloader = torch.utils.data.DataLoader(
@@ -793,7 +790,7 @@ class RecomposerExperiment(Experiment):
 
 
 @dataclass
-class RecomposerConfig():
+class ProxyGroundedConfig():
     # Essential
     input_dir: Path = Path('../data/ready/3bin')
     output_dir: Path = Path('../results/debug')
@@ -931,8 +928,8 @@ class RecomposerConfig():
 
 
 def main() -> None:
-    config = RecomposerConfig()
-    black_box = RecomposerExperiment(config)
+    config = ProxyGroundedConfig()
+    black_box = ProxyGroundedExperiment(config)
     with black_box as auto_save_wrapped:
         auto_save_wrapped.train()
 

@@ -227,7 +227,7 @@ class Recomposer(nn.Module):
 
     def __init__(
             self,
-            config: 'DualGroundedConfig',
+            config: 'IdealGroundedConfig',
             data: 'LabeledSentences'):
         super().__init__()
         self.device = config.device
@@ -348,7 +348,7 @@ class Recomposer(nn.Module):
 
 class LabeledSentences(torch.utils.data.Dataset):
 
-    def __init__(self, config: 'DualGroundedConfig'):
+    def __init__(self, config: 'IdealGroundedConfig'):
         super().__init__()
         with open(config.corpus_path, 'rb') as corpus_file:
             preprocessed = pickle.load(corpus_file)
@@ -408,9 +408,9 @@ class LabeledSentences(torch.utils.data.Dataset):
             cono_labels)
 
 
-class DualGroundedExperiment(Experiment):
+class IdealGroundedExperiment(Experiment):
 
-    def __init__(self, config: 'DualGroundedConfig'):
+    def __init__(self, config: 'IdealGroundedConfig'):
         super().__init__(config)
         self.data = LabeledSentences(config)
         self.dataloader = torch.utils.data.DataLoader(
@@ -604,7 +604,7 @@ class DualGroundedExperiment(Experiment):
 
 
 @dataclass
-class DualGroundedConfig():
+class IdealGroundedConfig():
     corpus_path: Path = Path('../../data/processed/bill_mentions/topic_deno/train_data.pickle')
     num_deno_classes: int = 41
     num_cono_classes: int = 2
@@ -804,8 +804,8 @@ class DualGroundedConfig():
 
 
 def main() -> None:
-    config = DualGroundedConfig()
-    black_box = DualGroundedExperiment(config)
+    config = IdealGroundedConfig()
+    black_box = IdealGroundedExperiment(config)
     with black_box as auto_save_wrapped:
         auto_save_wrapped.train()
 

@@ -234,10 +234,10 @@ def main(
 if __name__ == '__main__':
     main(
         in_dir=Path('../../data/interim/news'),
-        out_dir=Path('../../data/ready/debug'),
+        out_dir=Path('../../data/ready/PN_skip'),
         min_frequency=30,
         min_sent_len=5,
         max_sent_len=20,
         subsample_heuristic='paper',
         subsample_threshold=1e-5,
-        conserve_RAM=False)
+        conserve_RAM=True)
