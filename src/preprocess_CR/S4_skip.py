@@ -357,9 +357,7 @@ def main(
             for word in faux_sent:
                 if word not in ground:
                     ground[word] = GroundedWord(
-                        text=word,
-                        deno=None,
-                        cono=Counter({doc.party: 1}))
+                        text=word, deno=None, cono=Counter({doc.party: 1}))
                 else:
                     ground[word].cono[doc.party] += 1
 

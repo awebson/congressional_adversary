@@ -120,24 +120,8 @@ def main(
     assert sum(freq for freq in norm_freq.values()) == cumulative_freq
 
 
-    # Count connotation grounding prior to subsampling trick
-    # numericalize_cono = {
-    #     'left': 0,
-    #     'left-center': 1,
-    #     'least': 2,
-    #     'right-center': 3,
-    #     'right': 4}
-    # cono_freq: DefaultDict[str, List] = DefaultDict(lambda: [0, 0, 0, 0, 0])
-    # NOTE
-    numericalize_cono = {
-        'left': 0,
-        'left-center': 0,
-        'least': 1,
-        'right-center': 2,
-        'right': 2}
-    cono_freq: DefaultDict[str, List] = DefaultDict(lambda: [0, 0, 0])
-    # party_cumulative: Counter[int] = Counter()
     # Subsampling & filter by min/max sentence length
+    ground: Dict[str, GroundedWord] = {}
     keep_prob = subsampling(
         UNK_filtered_freq, subsample_heuristic, subsample_threshold)
     final_freq: Counter[str] = Counter()
@@ -148,16 +132,18 @@ def main(
                     token = '[UNK]'
                 if random.random() < keep_prob[token]:
                     sent.subsampled_tokens.append(token)
-                cono_freq[token][numericalize_cono[doc.party]] += 1
-                # party_cumulative[numericalize_cono[doc.party]] += 1
             # End looping tokens
 
             if len(sent.subsampled_tokens) >= min_sent_len:
-                if len(sent.subsampled_tokens) <= max_sent_len:
-                    final_freq.update(sent.subsampled_tokens)
-                else:  # NOTE truncate long sentences
+                if len(sent.subsampled_tokens) > max_sent_len:
                     sent.subsampled_tokens = sent.subsampled_tokens[:max_sent_len]
-                    final_freq.update(sent.subsampled_tokens)
+                final_freq.update(sent.subsampled_tokens)
+                for word in sent.subsampled_tokens:
+                    if word not in ground:
+                        ground[word] = GroundedWord(
+                            text=word, deno=None, cono=Counter({doc.party: 1}))
+                    else:
+                        ground[word].cono[doc.party] += 1
             else:  # discard short sentences
                 sent.subsampled_tokens = None
             if conserve_RAM:
@@ -191,16 +177,18 @@ def main(
     #     return count / cumulative_freq  # presampled frequency
 
     # Prepare grounding for intrinsic evaluation
-    ground: Dict[str, GroundedWord] = {}
-    # cono_labels = set(numericalize_cono.values())
-    for word in tqdm(word_to_id.keys(), desc='Computing PMIs (-∞ are okay)'):
-        cono = np.array(cono_freq[word])
-        # cono_ratio = cono / np.sum(cono)
-        # PMI = np.log2([  # can be -inf if freq = 0
-        #     prob(cono[party_id])
-        #     / (prob(norm_freq[word]) * prob(party_cumulative[party_id]))
-        #     for party_id in cono_labels])
-        ground[word] = GroundedWord(text=word, deno=None, cono=cono)
+    for gw in ground.values():
+        gw.majority_cono = gw.cono.most_common(1)[0][0]
+    # ground: Dict[str, GroundedWord] = {}
+    # # cono_labels = set(numericalize_cono.values())
+    # for word in tqdm(word_to_id.keys(), desc='Computing PMIs (-∞ are okay)'):
+    #     cono = np.array(cono_freq[word])
+    #     # cono_ratio = cono / np.sum(cono)
+    #     # PMI = np.log2([  # can be -inf if freq = 0
+    #     #     prob(cono[party_id])
+    #     #     / (prob(norm_freq[word]) * prob(party_cumulative[party_id]))
+    #     #     for party_id in cono_labels])
+    #     ground[word] = GroundedWord(text=word, deno=None, cono=cono)
 
     # Helper for negative sampling
     cumulative_freq = sum(freq ** 0.75 for freq in final_freq.values())
@@ -216,7 +204,6 @@ def main(
     cucumbers = {
         'word_to_id': word_to_id,
         'id_to_word': id_to_word,
-        'numericalize_cono': numericalize_cono,
         'ground': ground,
         'negative_sampling_probs': negative_sampling_probs,
         'documents': corpus}
@@ -237,9 +224,9 @@ def main(
         else:
             print(sent.numerical_tokens, file=preview)
             # print(vars(doc), end='\n\n', file=preview)
-    preview.write('\n\nword\tsubsampled_freq\tconnotation\tword_id\n')
+    preview.write('\n\nfinal_freq\tword\n')
     for key, val in final_freq.most_common():
-        print(f'{val:,}:\t{key}\t{ground[key]}', file=preview)
+        print(f'{val:,}\t{ground[key]}', file=preview)
     preview.close()
     print('All set!')
 
@@ -253,4 +240,4 @@ if __name__ == '__main__':
         max_sent_len=20,
         subsample_heuristic='paper',
         subsample_threshold=1e-5,
-        conserve_RAM=True)
+        conserve_RAM=False)
