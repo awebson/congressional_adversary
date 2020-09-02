@@ -62,26 +62,20 @@ class Decomposer(nn.Module):
 
         deno_logits = self.deno_probe(seq_repr)
         deno_log_prob = F.log_softmax(deno_logits, dim=1)
-        proper_deno_loss = F.nll_loss(deno_log_prob, deno_labels)
+        deno_probe_loss = F.nll_loss(deno_log_prob, deno_labels)
 
         cono_logits = self.cono_probe(seq_repr)
         cono_log_prob = F.log_softmax(cono_logits, dim=1)
-        proper_cono_loss = F.nll_loss(cono_log_prob, cono_labels)
+        cono_probe_loss = F.nll_loss(cono_log_prob, cono_labels)
 
         if self.preserve == 'deno':  # DS removing connotation (gamma < 0)
             uniform_dist = torch.full_like(cono_log_prob, 1 / self.num_cono_classes)
-            adversary_cono_loss = F.kl_div(cono_log_prob, uniform_dist, reduction='batchmean')
-            decomposer_loss = torch.sigmoid(proper_deno_loss) + torch.sigmoid(adversary_cono_loss)
-            adversary_deno_loss = 0  # placeholder
+            cono_adversary_loss = F.kl_div(cono_log_prob, uniform_dist, reduction='batchmean')
+            return deno_probe_loss, cono_probe_loss, cono_adversary_loss, seq_word_vecs
         else:  # CS removing denotation
             uniform_dist = torch.full_like(deno_log_prob, 1 / self.num_deno_classes)
-            adversary_deno_loss = F.kl_div(deno_log_prob, uniform_dist, reduction='batchmean')
-            decomposer_loss = torch.sigmoid(adversary_deno_loss) + torch.sigmoid(proper_cono_loss)
-            adversary_cono_loss = 0
-
-        return (decomposer_loss,
-                proper_deno_loss, adversary_deno_loss,
-                proper_cono_loss, adversary_cono_loss, seq_word_vecs)
+            deno_adversary_loss = F.kl_div(deno_log_prob, uniform_dist, reduction='batchmean')
+            return deno_probe_loss, deno_adversary_loss, cono_probe_loss, seq_word_vecs
 
     def predict(self, seq_word_ids: Vector) -> Vector:
         self.eval()
@@ -272,18 +266,26 @@ class Recomposer(nn.Module):
             deno_labels: Vector,
             cono_labels: Vector
             ) -> Tuple[Scalar, ...]:
-        L_DS, DS_dp, DS_da, DS_cp, DS_ca, deno_vecs = self.deno_space(
+        # Denotation Space
+        DS_deno_probe, DS_cono_probe, DS_cono_adver, deno_vecs = self.deno_space(
             seq_word_ids, deno_labels, cono_labels)
-        L_CS, CS_dp, CS_da, CS_cp, CS_ca, cono_vecs = self.cono_space(
-            seq_word_ids, deno_labels, cono_labels)
+        DS_decomp = torch.sigmoid(DS_deno_probe) + torch.sigmoid(DS_cono_adver)
 
+        # Connotation Space
+        CS_deno_probe, CS_deno_adver, CS_cono_probe, cono_vecs = self.cono_space(
+            seq_word_ids, deno_labels, cono_labels)
+        CS_decomp = torch.sigmoid(CS_deno_adver) + torch.sigmoid(CS_cono_probe)
+
+        # Recomposed Space
         # recomposed = self.recomposer(torch.cat((deno_vecs, cono_vecs), dim=-1))
         recomposed = deno_vecs + cono_vecs  # cosine similarity ignores magnitude
         pretrained = self.pretrained_embed(seq_word_ids)
         L_R = 1 - F.cosine_similarity(recomposed, pretrained, dim=-1).mean()
 
-        L_joint = L_DS + L_CS + self.rho * L_R
-        return L_joint, L_R, DS_dp, DS_cp, DS_ca, L_CS, CS_dp, CS_da, CS_cp
+        L_joint = DS_decomp + CS_decomp + self.rho * L_R
+        return (L_joint, L_R,
+                DS_decomp, DS_deno_probe, DS_cono_probe, DS_cono_adver,
+                CS_decomp, CS_deno_probe, CS_deno_adver, CS_cono_probe)
 
     def predict(self, seq_word_ids: Vector) -> Tuple[Vector, ...]:
         DS_deno_conf, DS_cono_conf = self.deno_space.predict(seq_word_ids)
@@ -424,9 +426,16 @@ class IdealGroundedExperiment(Experiment):
         # for name, param in self.model.named_parameters():
         #     if param.requires_grad:
         #         print(name)  # param.data)
-        self.DS_decomp_optimizer = config.optimizer(
-            model.deno_space.decomposed.parameters(),
+        self.joint_optimizer = config.optimizer(
+            list(model.deno_space.decomposed.parameters()) +
+            # list(model.deno_space.deno_probe.parameters()) +
+            list(model.cono_space.decomposed.parameters()),
+            # list(model.cono_space.cono_probe.parameters()),
             lr=config.learning_rate)
+
+        # self.DS_decomp_optimizer = config.optimizer(
+        #     model.deno_space.decomposed.parameters(),
+        #     lr=config.learning_rate)
         self.DS_deno_optimizer = config.optimizer(
             model.deno_space.deno_probe.parameters(),
             lr=config.learning_rate)
@@ -434,9 +443,9 @@ class IdealGroundedExperiment(Experiment):
             model.deno_space.cono_probe.parameters(),
             lr=config.learning_rate)
 
-        self.CS_decomp_optimizer = config.optimizer(
-            model.cono_space.decomposed.parameters(),
-            lr=config.learning_rate)
+        # self.CS_decomp_optimizer = config.optimizer(
+        #     model.cono_space.decomposed.parameters(),
+        #     lr=config.learning_rate)
         self.CS_deno_optimizer = config.optimizer(
             model.cono_space.deno_probe.parameters(),
             lr=config.learning_rate)
@@ -466,48 +475,50 @@ class IdealGroundedExperiment(Experiment):
         deno_labels = batch[1].to(self.device)
         cono_labels = batch[2].to(self.device)
 
+        # Update probes with proper (non-adversarial) losses
         model.zero_grad()
-        L_joint, L_R, DS_dp, DS_cp, DS_ca, L_CS, CS_dp, CS_da, CS_cp = model(
+        DS_deno_probe, DS_cono_probe, DS_cono_adver, _ = model.deno_space(
             seq_word_ids, deno_labels, cono_labels)
-        L_joint.backward()
-        self.DS_decomp_optimizer.step()
-        self.CS_decomp_optimizer.step()
-
-        # Update probes with proper losses
-        # TODO test reordering
-        model.zero_grad()
-        L_DS, DS_dp, DS_da, DS_cp, DS_ca, _ = model.deno_space(
-            seq_word_ids, deno_labels, cono_labels)
-        DS_dp.backward(retain_graph=True)
+        DS_deno_probe.backward(retain_graph=True)
+        DS_cono_probe.backward()
         self.DS_deno_optimizer.step()
-        # model.zero_grad()
-        DS_cp.backward()
         self.DS_cono_optimizer.step()
 
         model.zero_grad()
-        L_CS, CS_dp, CS_da, CS_cp, CS_ca, _ = model.cono_space(
+        CS_deno_probe, CS_deno_adver, CS_cono_probe, _ = model.cono_space(
             seq_word_ids, deno_labels, cono_labels)
-        CS_dp.backward(retain_graph=True)
+        CS_deno_probe.backward(retain_graph=True)
+        CS_cono_probe.backward()
         self.CS_deno_optimizer.step()
-        # model.zero_grad()
-        CS_cp.backward()
         self.CS_cono_optimizer.step()
+
+        model.zero_grad()
+        (L_joint, L_R,
+            DS_decomp, DS_deno_probe, DS_cono_probe, DS_cono_adver,
+            CS_decomp, CS_deno_probe, CS_deno_adver, CS_cono_probe) = model(
+            seq_word_ids, deno_labels, cono_labels)
+        L_joint.backward()
+        self.joint_optimizer.step()
+        # self.DS_decomp_optimizer.step()
+        # self.CS_decomp_optimizer.step()
+        # self.DS_deno_optimizer.step()
+        # self.CS_cono_optimizer.step()
 
         if batch_index % self.config.update_tensorboard == 0:
             D_deno_acc, D_cono_acc, C_deno_acc, C_cono_acc = model.accuracy(
                 seq_word_ids, deno_labels, cono_labels)
             self.update_tensorboard({
-                'Denotation Decomposer/deno_loss': DS_dp,
-                'Denotation Decomposer/cono_loss_proper': DS_cp,
-                'Denotation Decomposer/cono_loss_adversary': DS_ca,
-                'Denotation Decomposer/combined loss': L_DS,
+                'Denotation Decomposer/deno_loss': DS_deno_probe,
+                'Denotation Decomposer/cono_loss_proper': DS_cono_probe,
+                'Denotation Decomposer/cono_loss_adversary': DS_cono_adver,
+                'Denotation Decomposer/combined loss': DS_decomp,
                 'Denotation Decomposer/accuracy_train_deno': D_deno_acc,
                 'Denotation Decomposer/accuracy_train_cono': D_cono_acc,
 
-                'Connotation Decomposer/cono_loss': CS_cp,
-                'Connotation Decomposer/deno_loss_proper': CS_dp,
-                'Connotation Decomposer/deno_loss_adversary': CS_da,
-                'Connotation Decomposer/combined_loss': L_CS,
+                'Connotation Decomposer/cono_loss': CS_cono_probe,
+                'Connotation Decomposer/deno_loss_proper': CS_deno_probe,
+                'Connotation Decomposer/deno_loss_adversary': CS_deno_adver,
+                'Connotation Decomposer/combined_loss': CS_decomp,
                 'Connotation Decomposer/accuracy_train_deno': C_deno_acc,
                 'Connotation Decomposer/accuracy_train_cono': C_cono_acc,
 
@@ -659,10 +670,10 @@ class IdealGroundedConfig():
     update_tensorboard: int = 1000  # per batch
     print_stats: Optional[int] = 10_000  # per batch
     eval_dev_set: int = 100_000  # per batch
-    progress_bar_refresh_rate: int = 5  # per second
+    progress_bar_refresh_rate: int = 1  # per second
     clear_tensorboard_log_in_output_dir: bool = True
     delete_all_exisiting_files_in_output_dir: bool = False
-    auto_save_per_epoch: Optional[int] = 10
+    auto_save_per_epoch: Optional[int] = None
     auto_save_if_interrupted: bool = False
 
     def __post_init__(self) -> None:

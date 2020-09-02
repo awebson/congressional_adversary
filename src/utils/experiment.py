@@ -96,7 +96,7 @@ class Experiment(ABC):
             interim_save = False
         final_save = epoch_index == self.config.num_epochs
         if interim_save or final_save:
-            self.save_state_dict(
+            self.save_everything(
                 self.config.output_dir / f'epoch{epoch_index}.pt')
 
     @no_type_check
