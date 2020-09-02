@@ -18,9 +18,6 @@ from evaluations.word_similarity import all_wordsim as word_sim
 from utils.experiment import Experiment
 from utils.improvised_typing import Scalar, Vector, Matrix, R3Tensor
 
-random.seed(42)
-torch.manual_seed(42)
-
 
 class ProxyGroundedDecomposer(Decomposer):
 
@@ -664,12 +661,12 @@ class ProxyGroundedConfig():
     architecture: str = 'L4R'
     batch_size: int = 4096
     embed_size: int = 300
-    num_epochs: int = 10
+    num_epochs: int = 30
 
     skip_gram_window_radius: int = 5
-    num_negative_samples: int = 5
+    num_negative_samples: int = 10
     optimizer: torch.optim.Optimizer = torch.optim.Adam
-    learning_rate: float = 1e-3
+    learning_rate: float = 1e-4
     # momentum: float = 0.5
     # lr_scheduler: torch.optim.lr_scheduler._LRScheduler
     # num_prediction_classes: int = 5
@@ -679,12 +676,12 @@ class ProxyGroundedConfig():
     # export_error_analysis: Optional[int] = 1  # per epoch
     update_tensorboard: int = 1000  # per batch
     print_stats: Optional[int] = 10_000  # per batch
-    eval_dev_set: int = 1000_000  # per batch  # NOTE
+    eval_dev_set: int = 100_000  # per batch  # NOTE
     progress_bar_refresh_rate: int = 1  # per second
     num_dataloader_threads: int = 0
     clear_tensorboard_log_in_output_dir: bool = True
     delete_all_exisiting_files_in_output_dir: bool = False
-    auto_save_per_epoch: Optional[int] = 1
+    auto_save_per_epoch: Optional[int] = 2
     auto_save_if_interrupted: bool = False
 
     def __post_init__(self) -> None:
@@ -770,4 +767,7 @@ def main() -> None:
 
 
 if __name__ == '__main__':
+    torch.manual_seed(42)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
     main()
