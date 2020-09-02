@@ -352,7 +352,7 @@ class RecomposerConfig():
     encoder_update_cycle: int = 1  # per batch
     decoder_update_cycle: int = 1  # per batch
 
-    pretrained_embedding: Optional[Path] = Path(new_base_path + 'data/pretrained_word2vec/bill_mentions_HS.txt')
+    pretrained_embedding: Optional[Path] = Path(new_base_path + 'data/pretrained_word2vec/for_real_SGNS.txt')
     freeze_embedding: bool = False
     optimizer: torch.optim.Optimizer = torch.optim.Adam
     # optimizer: torch.optim.Optimizer = torch.optim.SGD
@@ -533,6 +533,8 @@ def main() -> None:
     
     connotation_experiment = False
     
+    print("number of query words", len(w2id.keys()))
+    
     for query_word in w2id.keys():
     
         id = w2id[query_word]
@@ -551,13 +553,16 @@ def main() -> None:
                 continue
             try:
                 this_word_posset = master_pos_dict[query_word.lower()]
+                if len(this_word_posset) != 1:
+                    continue
                 found_count += 1
             except KeyError:
-                this_word_posset = set()
+                #this_word_posset = set()
+                continue
         
-            alt_set = word_cat(query_word)
-            if alt_set:
-                this_word_posset.add(alt_set)
+            #alt_set = word_cat(query_word)
+            #if alt_set:
+            #    this_word_posset.add(alt_set)
                 
             for idx, pos in enumerate(global_pos_list_l):
                 if pos in this_word_posset:
@@ -574,7 +579,7 @@ def main() -> None:
     if True: # Transform embedding matrix
         use_pca = True
         if use_pca:
-            ca = PCA(n_components=9)
+            ca = PCA()
         else:
             ca = FastICA()
         ca.fit(filtered_embeddings)
@@ -597,7 +602,7 @@ def main() -> None:
         #plt.ylabel("Component 284 from PCA")
         #plt.show()
     else:
-        num_pca_components_displayed = len(global_pos_list_l)
+        num_pca_components_displayed = 10
         correlation_matrix = [[] for i in range(num_pca_components_displayed)]
         for row_idx, matrix_row in enumerate(correlation_matrix):
             # Each row is PCA vec
@@ -606,9 +611,23 @@ def main() -> None:
                 rval, pval = stats.pointbiserialr(pos_one_hot[col_idx], filtered_embeddings[:,row_idx])
                 matrix_row.append(rval)
         correlation_matrix = np.array(correlation_matrix)
+        np.nan_to_num(correlation_matrix, copy=False)
         print(correlation_matrix)
         
         print("min", correlation_matrix.min(), "max", correlation_matrix.max())
+        
+        pcalabels = ["PCA" + str(i) for i in range(num_pca_components_displayed)]
+        poslabels = global_pos_list_l
+        
+        
+        fig, ax = plt.subplots()
+
+        im, cbar = heatmap(correlation_matrix, pcalabels, poslabels, ax=ax,
+                           cmap="RdYlBu", cbarlabel="Correlation", vmin=-1.0, vmax=1.0)
+        #texts = annotate_heatmap(im, valfmt="{x:.2f}")
+
+        fig.tight_layout()
+        plt.show()
 
 if __name__ == '__main__':
     main()

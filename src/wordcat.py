@@ -204,7 +204,7 @@ if __name__ == "__main__":
     fig, ax = plt.subplots()
 
     im, cbar = heatmap(harvest, vegetables, farmers, ax=ax,
-                       cmap="YlGn", cbarlabel="harvest [t/year]")
+                       cmap="RdYlBu", cbarlabel="harvest [t/year]")
     texts = annotate_heatmap(im, valfmt="{x:.1f} t")
 
     fig.tight_layout()

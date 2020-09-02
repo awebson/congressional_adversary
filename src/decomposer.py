@@ -489,7 +489,7 @@ class DecomposerConfig():
     encoder_update_cycle: int = 1  # per batch
     decoder_update_cycle: int = 1  # per batch
 
-    pretrained_embedding: Optional[Path] = Path(new_base_path + 'data/pretrained_word2vec/bill_mentions_HS.txt')
+    pretrained_embedding: Optional[Path] = Path(new_base_path + 'data/pretrained_word2vec/for_real_SGNS.txt')
     freeze_embedding: bool = False
     # window_radius: int = 5
     # num_negative_samples: int = 10
