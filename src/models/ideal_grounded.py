@@ -68,6 +68,7 @@ class Decomposer(nn.Module):
         cono_log_prob = F.log_softmax(cono_logits, dim=1)
         cono_probe_loss = F.nll_loss(cono_log_prob, cono_labels)
 
+        # TODO  move unif dist to self
         if self.preserve == 'deno':  # DS removing connotation (gamma < 0)
             uniform_dist = torch.full_like(cono_log_prob, 1 / self.num_cono_classes)
             cono_adversary_loss = F.kl_div(cono_log_prob, uniform_dist, reduction='batchmean')

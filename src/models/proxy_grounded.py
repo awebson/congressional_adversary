@@ -57,23 +57,25 @@ class ProxyGroundedDecomposer(Decomposer):
         seq_word_vecs: R3Tensor = self.decomposed(seq_word_ids)
         seq_repr: Matrix = torch.mean(seq_word_vecs, dim=1)
 
+        proxy_deno_loss = self.skip_gram_loss(center_word_ids, true_context_ids)
+
         cono_logits = self.cono_probe(seq_repr)
         cono_log_prob = F.log_softmax(cono_logits, dim=1)
-        proper_cono_loss = F.nll_loss(cono_log_prob, cono_labels)
-
-        deno_loss = self.skip_gram_loss(center_word_ids, true_context_ids)
+        cono_probe_loss = F.nll_loss(cono_log_prob, cono_labels)
 
         if self.preserve == 'deno':  # DS removing connotation (gamma < 0)
             uniform_dist = torch.full_like(cono_log_prob, 1 / self.num_cono_classes)
-            adversary_cono_loss = F.kl_div(cono_log_prob, uniform_dist, reduction='batchmean')
-            decomposer_loss = torch.sigmoid(deno_loss) + torch.sigmoid(adversary_cono_loss)
+            cono_adversary_loss = F.kl_div(cono_log_prob, uniform_dist, reduction='batchmean')
+            # decomposer_loss = torch.sigmoid(proxy_deno_loss) + torch.sigmoid(cono_adversary_loss)
+            return proxy_deno_loss, cono_probe_loss, cono_adversary_loss, seq_word_vecs
         else:  # CS removing denotation
-            decomposer_loss = (1 - torch.sigmoid(deno_loss)
-                               + torch.sigmoid(proper_cono_loss))
-            adversary_cono_loss = 0  # placeholder
+            # decomposer_loss = (1 - torch.sigmoid(proxy_deno_loss)
+            #                    + torch.sigmoid(cono_probe_loss))
+            # cono_adversary_loss = 0  # placeholder
+            return proxy_deno_loss, cono_probe_loss, seq_word_vecs
 
-        return (decomposer_loss, deno_loss,
-                proper_cono_loss, adversary_cono_loss, seq_word_vecs)
+        # return (decomposer_loss, proxy_deno_loss,
+        #         cono_probe_loss, cono_adversary_loss, seq_word_vecs)
 
     def skip_gram_loss(
             self,
@@ -238,18 +240,27 @@ class ProxyGroundedRecomposer(Recomposer):
             seq_word_ids: Matrix,
             cono_labels: Vector,
             ) -> Tuple[Scalar, ...]:
-        L_DS, DS_d, DS_cp, DS_ca, deno_vecs = self.deno_space(
+        # Denotation Space
+        DS_deno, DS_cono_probe, DS_cono_adver, deno_vecs = self.deno_space(
             center_word_ids, context_word_ids, seq_word_ids, cono_labels)
-        L_CS, CS_d, CS_cp, CS_ca, cono_vecs = self.cono_space(
-            center_word_ids, context_word_ids, seq_word_ids, cono_labels)
+        L_DS = torch.sigmoid(DS_deno) + torch.sigmoid(DS_cono_adver)
 
+        # Connotation Space
+        CS_deno, CS_cono_probe, cono_vecs = self.cono_space(
+            center_word_ids, context_word_ids, seq_word_ids, cono_labels)
+        L_CS = 1 - torch.sigmoid(CS_deno) + torch.sigmoid(CS_cono_probe)
+
+        # Recomposer
         # recomposed = self.recomposer(torch.cat((deno_vecs, cono_vecs), dim=-1))
         recomposed = deno_vecs + cono_vecs  # cosine similarity ignores magnitude
         pretrained = self.pretrained_embed(seq_word_ids)
         L_R = 1 - F.cosine_similarity(recomposed, pretrained, dim=-1).mean()
 
         L_joint = L_DS + L_CS + self.rho * L_R
-        return L_joint, L_R, L_DS, DS_d, DS_cp, DS_ca, L_CS, CS_d, CS_cp, CS_ca
+        return (L_joint, L_R,
+                L_DS, DS_deno, DS_cono_probe, DS_cono_adver,
+                L_CS, CS_deno, CS_cono_probe)
+
 
     def predict(self, seq_word_ids: Vector) -> Tuple[Vector, Vector]:
         DS_cono_conf = self.deno_space.predict(seq_word_ids)
@@ -331,11 +342,13 @@ class LabeledDocuments(torch.utils.data.IterableDataset):
 
         with open(config.dev_path) as file:
             self.dev_ids = torch.tensor(
-                [self.word_to_id[word.strip()] for word in file],
+                [self.word_to_id[word.strip()] for word in file
+                 if word.strip() in self.word_to_id],
                 device=config.device)
         with open(config.test_path) as file:
             self.test_ids = torch.tensor(
-                [self.word_to_id[word.strip()] for word in file],
+                [self.word_to_id[word.strip()] for word in file
+                 if word.strip() in self.word_to_id],
                 device=config.device)
         with open(config.rand_path) as file:
             self.rand_ids = torch.tensor(
@@ -425,15 +438,18 @@ class ProxyGroundedExperiment(Experiment):
 
         # self.D_decomp_params = model.deno_space.decomposed.parameters()
         # self.D_cono_params = model.deno_space.cono_probe.parameters()
-        self.DS_decomp_optimizer = config.optimizer(
-            model.deno_space.decomposed.parameters(), lr=config.learning_rate)
+        self.joint_params = (
+            list(model.deno_space.decomposed.parameters()) +
+            list(model.cono_space.decomposed.parameters()))
+        self.joint_optimizer = config.optimizer(
+            self.joint_params, lr=config.learning_rate)
         self.DS_cono_optimizer = config.optimizer(
             model.deno_space.cono_probe.parameters(), lr=config.learning_rate)
 
         # self.C_decomp_params = model.cono_space.decomposed.parameters()
         # self.C_cono_parms = model.cono_space.cono_probe.parameters()
-        self.CS_decomp_optimizer = config.optimizer(
-            model.cono_space.decomposed.parameters(), lr=config.learning_rate)
+        # self.CS_decomp_optimizer = config.optimizer(
+        #     model.cono_space.decomposed.parameters(), lr=config.learning_rate)
         self.CS_cono_optimizer = config.optimizer(
             model.cono_space.cono_probe.parameters(), lr=config.learning_rate)
 
@@ -452,52 +468,53 @@ class ProxyGroundedExperiment(Experiment):
 
     def train_step(self, batch_index: int, batch: Tuple) -> None:
         model = self.model
-        grad_clip = self.config.clip_grad_norm
+        clip = self.config.clip_grad_norm
         seq_word_ids = batch[0].to(self.device)
         center_word_ids = batch[1].to(self.device)
         context_word_ids = batch[2].to(self.device)
         cono_labels = batch[3].to(self.device)
 
+        # Update probes with proper (non-adversarial) losses
         model.zero_grad()
-        L_joint, L_R, L_DS, DS_d, DS_cp, DS_ca, L_CS, CS_d, CS_cp, CS_ca = model(
+        DS_proxy_deno, DS_cono_probe, DS_cono_adversary, _ = model.deno_space(
             center_word_ids, context_word_ids, seq_word_ids, cono_labels)
-        L_joint.backward()
-        nn.utils.clip_grad_norm_(model.deno_space.decomposed.parameters(), grad_clip)
-        nn.utils.clip_grad_norm_(model.cono_space.decomposed.parameters(), grad_clip)
-        self.DS_decomp_optimizer.step()
-        self.CS_decomp_optimizer.step()
-
-        # Update probes with proper losses
-        model.zero_grad()
-        L_DS, DS_d, DS_cp, DS_ca, _ = model.deno_space(
-            center_word_ids, context_word_ids, seq_word_ids, cono_labels)
-        DS_cp.backward()
-        nn.utils.clip_grad_norm_(model.deno_space.cono_probe.parameters(), grad_clip)
+        DS_cono_probe.backward()
+        nn.utils.clip_grad_norm_(model.deno_space.cono_probe.parameters(), clip)
         self.DS_cono_optimizer.step()
 
-        # TODO already updated?
-        # model.zero_grad()
-        # L_CS, CS_d, CS_cp, CS_ca, _ = model.cono_space(
-        #     center_word_ids, context_word_ids, seq_word_ids, cono_labels)
-        # CS_cp.backward()
-        # nn.utils.clip_grad_norm_(model.cono_space.cono_probe.parameters(), grad_clip)
-        # self.CS_cono_optimizer.step()
+        model.zero_grad()
+        CS_proxy_deno, CS_cono_probe, _ = model.cono_space(
+            center_word_ids, context_word_ids, seq_word_ids, cono_labels)
+        CS_cono_probe.backward()
+        nn.utils.clip_grad_norm_(model.cono_space.cono_probe.parameters(), clip)
+        self.CS_cono_optimizer.step()
+
+        model.zero_grad()
+        (L_joint, L_R,
+            L_DS, DS_deno_proxy, DS_cono_probe, DS_cono_adver,
+            L_CS, CS_deno_proxy, CS_cono_probe) = model(
+                center_word_ids, context_word_ids, seq_word_ids, cono_labels)
+        L_joint.backward(retain_graph=True)
+        nn.utils.clip_grad_norm_(self.joint_params, clip)
+        self.joint_optimizer.step()
+        # self.DS_decomp_optimizer.step()
+        # self.CS_decomp_optimizer.step()
 
         # # Recomposer
-        # nn.utils.clip_grad_norm_(self.recomp_params, grad_clip)
+        # nn.utils.clip_grad_norm_(self.recomp_params, clip)
         # self.R_optimizer.step()
 
         if batch_index % self.config.update_tensorboard == 0:
             DS_cono_acc, CS_cono_acc = model.accuracy(seq_word_ids, cono_labels)
             self.update_tensorboard({
-                'Denotation Decomposer/deno_loss': DS_d,
-                'Denotation Decomposer/cono_loss_proper': DS_cp,
-                'Denotation Decomposer/cono_loss_adversary': DS_ca,
+                'Denotation Decomposer/deno_loss': DS_deno_proxy,
+                'Denotation Decomposer/cono_loss_proper': DS_cono_probe,
+                'Denotation Decomposer/cono_loss_adversary': DS_cono_adver,
                 'Denotation Decomposer/combined_loss': L_DS,
                 'Denotation Decomposer/accuracy_train_cono': DS_cono_acc,
 
-                'Connotation Decomposer/deno_loss': CS_d,
-                'Connotation Decomposer/cono_loss_proper': CS_cp,
+                'Connotation Decomposer/deno_loss': CS_deno_proxy,
+                'Connotation Decomposer/cono_loss_proper': CS_cono_probe,
                 'Connotation Decomposer/combined_loss': L_CS,
                 'Connotation Decomposer/accuracy_train_cono': CS_cono_acc,
 
@@ -619,30 +636,35 @@ class ProxyGroundedExperiment(Experiment):
 
 @dataclass
 class ProxyGroundedConfig():
-    # Essential
-    corpus_path: Path = Path('../../data/ready/CR_skip/train.pickle')
-    numericalize_cono: Dict[str, int] = field(default_factory=lambda: {
-        'D': 0,
-        'R': 1})
-    num_cono_classes: int = 2
+    # Congressional Record
+    # corpus_path: Path = Path('../../data/ready/CR_skip/train.pickle')
+    # numericalize_cono: Dict[str, int] = field(default_factory=lambda: {
+    #     'D': 0,
+    #     'R': 1})
+    # num_cono_classes: int = 2
+    # rand_path: Path = Path('../../data/ellie/rand_sample.cr.txt')
+    # dev_path: Path = Path('../../data/ellie/partisan_sample_val.cr.txt')
+    # test_path: Path = Path('../../data/ellie/partisan_sample.cr.txt')
+    # pretrained_embed_path: Optional[Path] = Path(
+    #     '../../data/pretrained_word2vec/for_real.txt')
 
-    # corpus_path: Path = Path('../../data/ready/PN_skip')
-    # numericalize_cono: Dict[str, int] = {
-    #     'left': 0,
-    #     'left-center': 0,
-    #     'least': 1,
-    #     'right-center': 2,
-    #     'right': 2}
-    # num_cono_classes: int = 3
+    # # Partisan News
+    corpus_path: Path = Path('../../data/ready/PN_skip/train.pickle')
+    numericalize_cono: Dict[str, int] = field(default_factory=lambda: {
+        'left': 0,
+        'left-center': 0,
+        'least': 1,
+        'right-center': 2,
+        'right': 2})
+    num_cono_classes: int = 3
+    rand_path: Path = Path('../../data/ellie/rand_sample.hp.txt')
+    dev_path: Path = Path('../../data/ellie/partisan_sample_val.hp.txt')
+    test_path: Path = Path('../../data/ellie/partisan_sample.hp.txt')
+    pretrained_embed_path: Optional[Path] = Path(
+        '../../data/pretrained_word2vec/partisan_news_HS.txt')
 
     output_dir: Path = Path('../results/debug')
     device: torch.device = torch.device('cuda')
-
-    rand_path: Path = Path('../../data/ellie/rand_sample.cr.txt')
-    dev_path: Path = Path('../../data/ellie/partisan_sample_val.cr.txt')
-    test_path: Path = Path('../../data/ellie/partisan_sample.cr.txt')
-    pretrained_embed_path: Optional[Path] = Path(
-        '../../data/pretrained_word2vec/for_real.txt')
 
     # Denotation Decomposer
     deno_size: int = 300
@@ -676,7 +698,7 @@ class ProxyGroundedConfig():
     # export_error_analysis: Optional[int] = 1  # per epoch
     update_tensorboard: int = 1000  # per batch
     print_stats: Optional[int] = 10_000  # per batch
-    eval_dev_set: int = 100_000  # per batch  # NOTE
+    eval_dev_set: int = 10_000  # per batch  # NOTE
     progress_bar_refresh_rate: int = 1  # per second
     num_dataloader_threads: int = 0
     clear_tensorboard_log_in_output_dir: bool = True
