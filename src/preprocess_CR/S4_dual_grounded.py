@@ -1,13 +1,13 @@
 import pickle
-import random
-import os
-from typing import Tuple, List, Iterable, Dict, DefaultDict, Counter
+from pathlib import Path
+from typing import Tuple, List, Iterable, Dict, Counter
 from dataclasses import dataclass
 
 from nltk.corpus import stopwords
 from tqdm import tqdm
 
-random.seed(42)
+from data import GroundedWord
+
 
 procedural_words = {
     'yield', 'motion', 'order', 'ordered', 'quorum', 'roll', 'unanimous',
@@ -16,7 +16,7 @@ procedural_words = {
     'today', 'rise', 'rise today', 'pleased_to_introduce',
     'introducing_today', 'would_like'
 }
-stop_words = set(stopwords.words('english')).union(procedural_words)
+discard = set(stopwords.words('english')).union(procedural_words)
 
 sessions = range(97, 112)  # scraped up to 93
 MIN_NUM_MENTIONS = 3
@@ -26,9 +26,9 @@ MIN_WORD_FREQ = 15
 DENO_LABEL = 'topic'
 NUM_CONTEXT_SPEECHES = 3
 MAX_DEV_HOLDOUT = 100  # faux speeches per session
-in_dir = '../../data/interim/bill_mentions/'
-out_dir = '../../data/processed/bill_mentions/topic_deno_context3'
-os.makedirs(out_dir, exist_ok=True)
+in_dir = Path('../../data/interim/bill_mentions/')
+out_dir = Path('../../data/ready/CR_topic_context3')
+Path.mkdir(out_dir, parents=True, exist_ok=True)
 print('Minimum number of mentions per bill =', MIN_NUM_MENTIONS)
 
 
@@ -37,14 +37,11 @@ class Sentence():
     words: List[str]
     deno: str
     cono: str
-    # word_ids: List[int] = None
-    # deno_id: int = None
-    # cono_id: int = None
 
 
 def faux_sent_tokenize(line: str) -> Iterable[List[str]]:
     """discard procedural words and punctuations"""
-    words = [w for w in line.split() if w not in stop_words]
+    words = [w for w in line.split() if w not in discard]
     start_index = 0
     while (start_index + FIXED_SENT_LEN) < (len(words) - 1):
         yield words[start_index:start_index + FIXED_SENT_LEN]
@@ -56,7 +53,7 @@ def faux_sent_tokenize(line: str) -> Iterable[List[str]]:
 
 
 def process_sentences(session: int) -> Tuple[List[Sentence], List[Sentence]]:
-    in_path = os.path.join(in_dir, f'underscored_{session}.pickle')
+    in_path = in_dir / f'underscored_{session}.pickle'
     with open(in_path, 'rb') as in_file:
         speeches, num_mentions = pickle.load(in_file)
 
@@ -69,9 +66,8 @@ def process_sentences(session: int) -> Tuple[List[Sentence], List[Sentence]]:
             continue
 
         per_session_mention += 1
-        # NOTE hardcoded context_size
-        # for i in range(speech_index - 2, speech_index + 8):
-        for i in range(speech_index + 1, speech_index + NUM_CONTEXT_SPEECHES):
+        for i in range(speech_index + 1,
+                       speech_index + 1 + NUM_CONTEXT_SPEECHES):
             try:
                 speeches[i].bill = speech.bill
             except IndexError:
@@ -80,7 +76,6 @@ def process_sentences(session: int) -> Tuple[List[Sentence], List[Sentence]]:
     # Chop up sentences
     train_sent: List[Sentence] = []
     dev_sent: List[Sentence] = []
-    random.shuffle(speeches)
     for speech in speeches:
         if speech.bill is None:
             continue
@@ -112,13 +107,19 @@ def process_sentences(session: int) -> Tuple[List[Sentence], List[Sentence]]:
 
 def build_vocabulary(
         frequency: Counter,
-        min_frequency: int
+        min_frequency: int,
+        add_special_tokens: bool
         ) -> Tuple[
         Dict[str, int],
         Dict[int, str]]:
     word_to_id: Dict[str, int] = {}
-    id_to_word: Dict[int, str] = {}
-    next_vocab_id = 0
+    if add_special_tokens:
+        word_to_id['[PAD]'] = 0
+        word_to_id['[UNK]'] = 1
+        word_to_id['[CLS]'] = 2
+        word_to_id['[SEP]'] = 3
+    id_to_word = {val: key for key, val in word_to_id.items()}
+    next_vocab_id = len(word_to_id)
     for word, freq in frequency.items():
         if word not in word_to_id and freq >= min_frequency:
             word_to_id[word] = next_vocab_id
@@ -135,36 +136,35 @@ for train, dev in map(process_sentences, sessions):
     dev_sent += [s for s in dev]
 print(f'len dev faux sent = {len(dev_sent)}')
 
-
-random.shuffle(train_sent)
 word_freq = Counter((w for sent in train_sent for w in sent.words))
 sent_deno_freq = Counter((sent.deno for sent in train_sent))
 
-grounding: Dict[str, Counter[str]] = DefaultDict(Counter)  # word -> Counter[deno/cono]
-counts: Dict[str, Counter[str]] = DefaultDict(Counter)  # deno/cono -> Counter[word]
+ground: Dict[str, GroundedWord] = {}
 for sent in train_sent:
     for word in sent.words:
-        counts[sent.deno][word] += 1
-        counts[sent.cono][word] += 1
-        grounding[word][sent.deno] += 1
-        grounding[word][sent.cono] += 1
-counts['freq'] = word_freq
+        if word not in ground:
+            ground[word] = GroundedWord(
+                text=word,
+                deno=Counter({sent.deno: 1}),
+                cono=Counter({sent.cono: 1}))
+        else:
+            ground[word].deno[sent.deno] += 1
+            ground[word].cono[sent.cono] += 1
 
-for word, ground in grounding.items():
-    majority_deno = ground.most_common(3)  # HACK
-    for guess, _ in majority_deno:
-        if guess not in ('D', 'R'):
-            ground['majority_deno'] = guess  # type: ignore
-            break
-    assert ground['D'] + ground['R'] == word_freq[word]
-    ground['freq'] = word_freq[word]
-    ground['R_ratio'] = ground['R'] / word_freq[word]  # type: ignore
+for gw in ground.values():
+    gw.majority_deno = gw.deno.most_common(1)[0][0]
+    gw.majority_cono = gw.cono.most_common(1)[0][0]
 
-word_to_id, id_to_word = build_vocabulary(word_freq, MIN_WORD_FREQ)
-deno_to_id, id_to_deno = build_vocabulary(sent_deno_freq, MIN_NUM_MENTIONS)
+word_to_id, id_to_word = build_vocabulary(
+    word_freq, MIN_WORD_FREQ, add_special_tokens=True)
+deno_to_id, id_to_deno = build_vocabulary(
+    sent_deno_freq, MIN_NUM_MENTIONS, add_special_tokens=False)
 cono_to_id = {
     'D': 0,
     'R': 1}
+
+# TODO filter UNK?
+
 
 def wrap(sentences):
     sent_word_ids: List[List[int]] = []
@@ -191,15 +191,13 @@ cucumbers = {
     'id_to_word': id_to_word,
     'deno_to_id': deno_to_id,
     'id_to_deno': id_to_deno,
-    # 'word_freq': word_freq,
-    'grounding': grounding,
-    'counts': counts
+    'ground': ground
 }
-out_path = os.path.join(out_dir, 'train_data.pickle')
+out_path = out_dir / 'train_data.pickle'
 with open(out_path, 'wb') as out_file:
     pickle.dump(cucumbers, out_file, protocol=-1)
 
-inspect_label_path = os.path.join(out_dir, 'sentence_deno_freq.txt')
+inspect_label_path = out_dir / 'sentence_deno_freq.txt'
 with open(inspect_label_path, 'w') as file:
     file.write('freq\tdeno_label\n')
     for d, f in sorted(sent_deno_freq.items(), key=lambda t: t[1], reverse=True):

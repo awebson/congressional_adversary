@@ -2,7 +2,6 @@ import pickle
 import random
 import os
 from typing import Tuple, List, Iterable, Dict, DefaultDict, Counter
-from dataclasses import dataclass
 
 from nltk.corpus import stopwords
 from tqdm import tqdm
@@ -18,35 +17,12 @@ procedural_words = {
     'today', 'rise', 'rise today', 'pleased_to_introduce',
     'introducing_today', 'would_like'
 }
-stop_words = set(stopwords.words('english')).union(procedural_words)
-
-sessions = range(97, 112)  # scraped up to 93
-MIN_NUM_MENTIONS = 3
-FIXED_SENT_LEN = 15
-MIN_SENT_LEN = 5
-MIN_WORD_FREQ = 15
-DENO_LABEL = 'topic'
-NUM_CONTEXT_SPEECHES = 3
-MAX_DEV_HOLDOUT = 100  # faux speeches per session
-in_dir = '../../data/interim/bill_mentions/'
-out_dir = '../../data/processed/bill_mentions/debug'
-os.makedirs(out_dir, exist_ok=True)
-print('Minimum number of mentions per bill =', MIN_NUM_MENTIONS)
-
-
-# @dataclass
-# class Sentence():
-#     words: List[str]
-#     deno: str
-#     cono: str
-#     # word_ids: List[int] = None
-#     # deno_id: int = None
-#     # cono_id: int = None
+discard = set(stopwords.words('english')).union(procedural_words)
 
 
 def faux_sent_tokenize(line: str) -> Iterable[List[str]]:
     """discard procedural words and punctuations"""
-    words = [w for w in line.split() if w not in stop_words]
+    words = [w for w in line.split() if w not in discard]
     start_index = 0
     while (start_index + FIXED_SENT_LEN) < (len(words) - 1):
         yield words[start_index:start_index + FIXED_SENT_LEN]
@@ -55,70 +31,6 @@ def faux_sent_tokenize(line: str) -> Iterable[List[str]]:
     trailing_words = words[start_index:-1]
     if len(trailing_words) >= MIN_SENT_LEN:
         yield trailing_words
-
-
-def process_sentences(session: int) -> List[LabeledDoc]:
-    in_path = os.path.join(in_dir, f'underscored_{session}.pickle')
-    with open(in_path, 'rb') as in_file:
-        speeches, num_mentions = pickle.load(in_file)
-
-    # Mark context speeches with bill denotation
-    mentions_per_session = 0
-    for speech_index, speech in enumerate(speeches):
-        if speech.mentions_bill is False:
-            continue
-        if num_mentions[speech.bill.title] < MIN_NUM_MENTIONS:
-            continue
-
-        mentions_per_session += 1
-        for i in range(speech_index + 1,
-                       speech_index + 1 + NUM_CONTEXT_SPEECHES):
-            try:
-                speeches[i].bill = speech.bill
-            except IndexError:
-                continue
-
-    # Chop up sentences
-    random.shuffle(speeches)
-    docs: List[LabeledDoc] = []
-    uid = 0
-    for speech in speeches:
-        if speech.bill is None:
-            continue
-        if num_mentions[speech.bill.title] < MIN_NUM_MENTIONS:
-            continue
-
-        deno = getattr(speech.bill, DENO_LABEL)  # either 'topic' or 'title'
-        cono = speech.speaker.party
-        if cono != 'D' and cono != 'R':  # skip independent members for now
-            continue
-
-        # if len(dev_sent) < MAX_DEV_HOLDOUT:
-        #     dev_sent += [
-        #         Sentence(faux_sent, deno, cono)
-        #         for faux_sent in faux_sent_tokenize(speech.text)]
-
-        docs.append(
-            LabeledDoc(
-                uid=speech.speech_id,
-                title=None,
-                url=None,
-                party=cono,
-                referent=deno,
-                text=None,
-                date=None,
-                sentences=[Sentence(tokens=faux_sent)
-                           for faux_sent in faux_sent_tokenize(speech.text)]
-            ))
-        uid += 1
-
-    check = sum([m for m in num_mentions.values() if m > 2])
-    tqdm.write(
-        f'Session {session}: '
-        # f'{mentions_per_session} =?= {check} mentions above min, '
-        # f'{len(docs):,} faux sentences')  {len(dev_sent)} dev holdout')
-    )
-    return docs
 
 
 def build_vocabulary(
@@ -150,10 +62,67 @@ def main(
         ) -> None:
     docs: List[LabeledDoc] = []
     # dev_sent: List[Sentence] = []
-    for train in map(process_sentences, sessions):
-        docs += [s for s in train]
-        # dev_sent += [s for s in dev]
-    # print(f'len dev faux sent = {len(dev_sent)}')
+    for session in sessions:
+        in_path = in_dir / f'underscored_{session}.pickle'
+        with open(in_path, 'rb') as in_file:
+            speeches, num_mentions = pickle.load(in_file)
+
+        # Mark context speeches with bill denotation
+        mentions_per_session = 0
+        for speech_index, speech in enumerate(speeches):
+            if speech.mentions_bill is False:
+                continue
+            if num_mentions[speech.bill.title] < MIN_NUM_MENTIONS:
+                continue
+
+            mentions_per_session += 1
+            for i in range(speech_index + 1,
+                           speech_index + 1 + NUM_CONTEXT_SPEECHES):
+                try:
+                    speeches[i].bill = speech.bill
+                except IndexError:
+                    continue
+
+        # Chop up sentences
+        uid = 0
+        for speech in speeches:
+            if speech.bill is None:
+                continue
+            if num_mentions[speech.bill.title] < MIN_NUM_MENTIONS:
+                continue
+
+            deno = getattr(speech.bill, DENO_LABEL)  # either 'topic' or 'title'
+            cono = speech.speaker.party
+            if cono != 'D' and cono != 'R':  # skip independent members for now
+                continue
+
+            # if len(dev_sent) < MAX_DEV_HOLDOUT:
+            #     dev_sent += [
+            #         Sentence(faux_sent, deno, cono)
+            #         for faux_sent in faux_sent_tokenize(speech.text)]
+
+            docs.append(
+                LabeledDoc(
+                    uid=speech.speech_id,
+                    title=None,
+                    url=None,
+                    party=cono,
+                    referent=deno,
+                    text=None,
+                    date=None,
+                    sentences=[Sentence(tokens=faux_sent)
+                            for faux_sent in faux_sent_tokenize(speech.text)]
+                ))
+            uid += 1
+
+        check = sum([m for m in num_mentions.values() if m > 2])
+        tqdm.write(
+            f'Session {session}: '
+            # f'{mentions_per_session} =?= {check} mentions above min, '
+            # f'{len(docs):,} faux sentences')  {len(dev_sent)} dev holdout')
+        )
+            # dev_sent += [s for s in dev]
+        # print(f'len dev faux sent = {len(dev_sent)}')
 
 
     random.shuffle(docs)
@@ -161,14 +130,21 @@ def main(
         (w for doc in docs for sent in doc.sentences for w in sent.tokens))
     sent_deno_freq = Counter((doc.title for doc in docs))
 
-    grounding: Dict[str, Counter[str]] = DefaultDict(Counter)  # word -> Counter[deno/cono]
+    # grounding: Dict[str, Counter[str]] = DefaultDict(Counter)  # word -> Counter[deno/cono]
+    ground: Dict[str, GroundedWord] = {}
     for sent in docs:
         for word in sent.tokens:
-            grounding[word][sent.deno] += 1
-            grounding[word][sent.cono] += 1
+            # grounding[word][sent.deno] += 1
+            # grounding[word][sent.cono] += 1
+            if word not in ground:
+                ground[word] = GroundedWord(
+                    text=word,
+                    deno=Counter({sent.deno: 1}),
+                    cono=Counter({doc.party: 1}))
+            else:
+                ground[word].cono[doc.party] += 1
     # # counts['freq'] = word_freq
 
-    ground: Dict[str, GroundedWord] = {}
 
     # for word, ground in grounding.items():
     #     majority_deno = ground.most_common(3)  # HACK
@@ -229,4 +205,17 @@ def main(
 
 
 if __name__ == "__main__":
+    sessions = range(97, 112)  # scraped up to 93
+    MIN_NUM_MENTIONS = 3
+    FIXED_SENT_LEN = 15
+    MIN_SENT_LEN = 5
+    MIN_WORD_FREQ = 15
+    DENO_LABEL = 'topic'
+    NUM_CONTEXT_SPEECHES = 3
+    MAX_DEV_HOLDOUT = 100  # faux speeches per session
+    in_dir = '../../data/interim/bill_mentions/'
+    out_dir = '../../data/processed/bill_mentions/debug'
+    os.makedirs(out_dir, exist_ok=True)
+    print('Minimum number of mentions per bill =', MIN_NUM_MENTIONS)
+
     main(conserve_RAM=True)

@@ -12,6 +12,7 @@ from torch.nn.utils import rnn
 from tqdm import tqdm
 import editdistance
 
+from data import GroundedWord
 from utils.experiment import Experiment
 from utils.improvised_typing import Scalar, Vector, Matrix, R3Tensor
 
@@ -25,7 +26,7 @@ class Decomposer(nn.Module):
             deno_probe: nn.Module,
             cono_probe: nn.Module,
             id_to_word: Dict[int, str],
-            grounding: Dict[str, Dict[str, Any]],
+            ground: Dict[str, GroundedWord],
             device: torch.device):
         """
         Denotation Loss: bill title or policy topic classifier
@@ -49,7 +50,7 @@ class Decomposer(nn.Module):
         # self.id_to_deno = data.id_to_deno  # for error analysis
         # self.word_to_id = data.word_to_id
         self.id_to_word = id_to_word
-        self.grounding = grounding
+        self.ground = ground
 
     def forward(
             self,
@@ -162,24 +163,6 @@ class Decomposer(nn.Module):
             else:  # excludes the first neighbor, which is always the query itself
                 return neighbor_ids[:, 1:]
 
-    def ground(
-            self,
-            word: str
-            ) -> Tuple[str, int]:  # TODO
-        deno_label = self.grounding[word]['majority_deno']
-        cono_continuous = self.grounding[word]['R_ratio']
-        if cono_continuous < 0.5:
-            cono_discrete = 0
-        else:
-            cono_discrete = 1
-        # if cono_continuous < 0.2:
-        #     cono_discrete = 0
-        # elif cono_continuous < 0.8:
-        #     cono_discrete = 1
-        # else:
-        #     cono_discrete = 2
-        return deno_label, cono_discrete
-
     def homogeneity(
             self,
             query_ids: Vector,
@@ -203,13 +186,15 @@ class Decomposer(nn.Module):
                 # raise RuntimeWarning
                 continue
 
-            query_deno, query_cono = self.ground(query_word)
+            query_deno = self.ground[query_word].majority_deno
+            query_cono = self.ground[query_word].majority_cono
             same_deno = 0
             same_cono = 0
             for nid in neighbor_ids:
                 try:
                     neighbor_word = self.id_to_word[nid]
-                    neighbor_deno, neighbor_cono = self.ground(neighbor_word)
+                    neighbor_deno = self.ground[neighbor_word].majority_deno
+                    neighbor_cono = self.ground[neighbor_word].majority_cono
                     if neighbor_deno == query_deno:
                         same_deno += 1
                     if neighbor_cono == query_cono:
@@ -240,7 +225,7 @@ class Recomposer(nn.Module):
             deno_probe=config.deno_probe,
             cono_probe=config.cono_probe,
             id_to_word=data.id_to_word,
-            grounding=data.grounding,
+            ground=data.ground,
             device=self.device)
 
         self.cono_space = Decomposer(
@@ -249,7 +234,7 @@ class Recomposer(nn.Module):
             deno_probe=config.deno_probe,
             cono_probe=config.cono_probe,
             id_to_word=data.id_to_word,
-            grounding=data.grounding,
+            ground=data.ground,
             device=self.device)
 
         # Recomposer
@@ -259,7 +244,7 @@ class Recomposer(nn.Module):
 
         self.word_to_id = data.word_to_id
         self.id_to_word = data.id_to_word
-        self.grounding = data.grounding
+        self.ground = data.ground
 
     def forward(
             self,
@@ -357,10 +342,7 @@ class LabeledSentences(torch.utils.data.Dataset):
         self.id_to_word = preprocessed['id_to_word']
         self.deno_to_id = preprocessed['deno_to_id']
         self.id_to_deno = preprocessed['id_to_deno']
-        # word -> Counter[deno/cono]
-        self.grounding: Dict[str, Dict[str, Any]] = preprocessed['grounding']
-        # deno/cono -> Counter[word]
-        self.counts: Dict[str, Counter[str]] = preprocessed['counts']
+        self.ground: Dict[str, GroundedWord] = preprocessed['ground']
 
         self.train_seq: List[List[int]] = preprocessed['train_sent_word_ids']
         self.train_deno_labels: List[int] = preprocessed['train_deno_labels']
@@ -617,7 +599,7 @@ class IdealGroundedExperiment(Experiment):
 
 @dataclass
 class IdealGroundedConfig():
-    corpus_path: Path = Path('../../data/processed/bill_mentions/topic_deno/train_data.pickle')
+    corpus_path: Path = Path('../../data/ready/CR_topic_context3/train_data.pickle')
     num_deno_classes: int = 41
     num_cono_classes: int = 2
 
