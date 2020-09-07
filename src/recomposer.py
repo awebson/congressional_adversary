@@ -1,5 +1,6 @@
 import argparse
 import random
+import sys
 from copy import copy
 from pathlib import Path
 from dataclasses import dataclass
@@ -520,14 +521,15 @@ def main() -> None:
     p_embedding = black_box.model.deno_decomposer.embedding.weight.detach().cpu().numpy()
     print("pretrained embedding shape", p_embedding.shape)
     w2id = black_box.model.word_to_id
+    id2w = black_box.model.id_to_word
 
     # Experiment control knobs
-    connotation_experiment = False # Otherwise, POS experiment
-    use_avg_prec = False
-    transform_embeddings = False
-    use_pca = False # Otherwise, ICA. Only applies if transform_embeddings is True.
+    experiment_name = "sort" # One of: cono, pos, sort
+    use_avg_prec = True
+    transform_embeddings = True
+    use_pca = True # Otherwise, ICA. Only applies if transform_embeddings is True.
     
-    if not connotation_experiment:
+    if experiment_name == "pos":
         master_pos_dict = get_full_pos_dict()
         global_pos_list_l = list(global_pos_list)
         pos_one_hot = [[] for i in global_pos_list_l]
@@ -548,7 +550,7 @@ def main() -> None:
     
         id = w2id[query_word]
     
-        if connotation_experiment:
+        if experiment_name == "cono":
             #if "_" not in query_word:
             #    # Only use compound words
             #    continue
@@ -563,7 +565,7 @@ def main() -> None:
                 else:
                     query_denos[deno].append(0)
 
-        else:
+        elif experiment_name == "pos":
             # POS experiment
             if "_" in query_word:
                 # Skip compound words- won't be in dictionaries
@@ -604,7 +606,7 @@ def main() -> None:
         filtered_embeddings = ca.transform(filtered_embeddings)
         print("new embedding shape", filtered_embeddings.shape)
 
-    if connotation_experiment:
+    if experiment_name == "cono":
         rvals = []
         for emb_pos in range(filtered_embeddings.shape[1]):
             rval, ptail = stats.spearmanr(query_conos, filtered_embeddings[:,emb_pos])
@@ -632,7 +634,7 @@ def main() -> None:
         #plt.xlabel("Connotation Ratio")
         #plt.ylabel("Component 284 from PCA")
         #plt.show()
-    else: # POS experiment
+    elif experiment_name == "pos":
     
         for idx, pos in enumerate(global_pos_list_l):
             true_ratio = sum(pos_one_hot[idx]) / len(pos_one_hot[idx])
@@ -669,6 +671,22 @@ def main() -> None:
 
         fig.tight_layout()
         plt.show()
+    
+    else: # "sort"
+        
+        num_sort_components = 8 # Start at the left (might not be principal)
+        
+        sorted_idx = np.argsort(filtered_embeddings,axis=0)
+        
+        max_word_len = len(max(w2id.keys(), key=len))
+        
+        print("max word len", max_word_len)
+        
+        for r in sorted_idx:
+            for c in r[:num_sort_components]:
+                sys.stdout.write("{:20.20s} ".format(id2w[c]))
+            print("")
+        
 
 if __name__ == '__main__':
     main()
