@@ -17,6 +17,7 @@ from gcide import get_full_pos_dict, global_pos_list
 from wordcat import word_cat, annotate_heatmap, heatmap
 
 from sklearn.decomposition import PCA, FastICA
+from sklearn.metrics import average_precision_score
 from scipy import stats
 import numpy as np
 import matplotlib.pyplot as plt
@@ -519,42 +520,58 @@ def main() -> None:
     p_embedding = black_box.model.deno_decomposer.embedding.weight.detach().cpu().numpy()
     print("pretrained embedding shape", p_embedding.shape)
     w2id = black_box.model.word_to_id
+
+    # Experiment control knobs
+    connotation_experiment = False # Otherwise, POS experiment
+    use_avg_prec = False
+    transform_embeddings = False
+    use_pca = False # Otherwise, ICA. Only applies if transform_embeddings is True.
     
-    master_pos_dict = get_full_pos_dict()
-    global_pos_list_l = list(global_pos_list)
-    
-    pos_one_hot = [[] for i in global_pos_list_l]
-    
+    if not connotation_experiment:
+        master_pos_dict = get_full_pos_dict()
+        global_pos_list_l = list(global_pos_list)
+        pos_one_hot = [[] for i in global_pos_list_l]
     
     ground = black_box.model.deno_decomposer.grounding
     query_conos = []
     filtered_embeddings = []
     found_count = 0
     
-    connotation_experiment = False
+    deno_choices = black_box.model.deno_decomposer.deno_to_id.keys()
+    
+    query_denos = {d:[] for d in deno_choices}
     
     print("number of query words", len(w2id.keys()))
+    
     
     for query_word in w2id.keys():
     
         id = w2id[query_word]
     
         if connotation_experiment:
-            if "_" not in query_word:
-                # Only use compound words
-                continue
+            #if "_" not in query_word:
+            #    # Only use compound words
+            #    continue
 
             query_cono = ground[query_word]['R_ratio']
             query_conos.append(query_cono)
+            query_deno = ground[query_word]['majority_deno']
+            
+            for deno in deno_choices:
+                if deno == query_deno:
+                    query_denos[deno].append(1)
+                else:
+                    query_denos[deno].append(0)
+
         else:
             # POS experiment
             if "_" in query_word:
-                # Skip compound words
+                # Skip compound words- won't be in dictionaries
                 continue
             try:
                 this_word_posset = master_pos_dict[query_word.lower()]
                 if len(this_word_posset) != 1:
-                    continue
+                    continue # Only use words with a single definition
                 found_count += 1
             except KeyError:
                 #this_word_posset = set()
@@ -571,13 +588,13 @@ def main() -> None:
                     pos_one_hot[idx].append(0)
         
         filtered_embeddings.append(p_embedding[id])
+    
     filtered_embeddings = np.array(filtered_embeddings)
     
     print("pos found", found_count)
     print("global_pos_list", global_pos_list)
     
-    if True: # Transform embedding matrix
-        use_pca = True
+    if transform_embeddings:
         if use_pca:
             ca = PCA()
         else:
@@ -594,29 +611,53 @@ def main() -> None:
             rvals.append((rval, emb_pos, ptail))
     
         rvals.sort()
-        for rv in rvals:
-            print(rv)
+        print("min, max cono corr:", rvals[0], rvals[-1])
+
+        for deno in deno_choices:
+            rvals = []
+            for emb_pos in range(filtered_embeddings.shape[1]):
+                if use_avg_prec:
+                    avg_prec_pos = average_precision_score(query_denos[deno], filtered_embeddings[:,emb_pos])
+                    rvals.append((avg_prec_pos, emb_pos))
+                else:
+                    rval, pval = stats.pointbiserialr(query_denos[deno], filtered_embeddings[:,emb_pos])
+                    rvals.append((rval, emb_pos))
+            rvals.sort()
+            if use_avg_prec:
+                print("avg prec. deno corr ({:45s})".format(deno), rvals[-1])
+            else:
+                print("min, max deno corr ({:45s})".format(deno), rvals[0], rvals[-1])
 
         #plt.scatter(query_conos, filtered_embeddings[:,284], s=4)
         #plt.xlabel("Connotation Ratio")
         #plt.ylabel("Component 284 from PCA")
         #plt.show()
-    else:
+    else: # POS experiment
+    
+        for idx, pos in enumerate(global_pos_list_l):
+            true_ratio = sum(pos_one_hot[idx]) / len(pos_one_hot[idx])
+            print("{} True: {:.1f}%".format(pos, true_ratio * 100))
+    
         num_pca_components_displayed = 10
         correlation_matrix = [[] for i in range(num_pca_components_displayed)]
         for row_idx, matrix_row in enumerate(correlation_matrix):
             # Each row is PCA vec
             for col_idx, pos in enumerate(global_pos_list_l):
                 # Columns are POS
-                rval, pval = stats.pointbiserialr(pos_one_hot[col_idx], filtered_embeddings[:,row_idx])
-                matrix_row.append(rval)
+                if use_avg_prec:
+                    avg_prec = average_precision_score(pos_one_hot[col_idx], filtered_embeddings[:,row_idx])
+                    matrix_row.append(avg_prec)
+                else:
+                    rval, pval = stats.pointbiserialr(pos_one_hot[col_idx], filtered_embeddings[:,row_idx])
+                    matrix_row.append(rval)
         correlation_matrix = np.array(correlation_matrix)
         np.nan_to_num(correlation_matrix, copy=False)
         print(correlation_matrix)
         
         print("min", correlation_matrix.min(), "max", correlation_matrix.max())
         
-        pcalabels = ["PCA" + str(i) for i in range(num_pca_components_displayed)]
+        prefix = "PCA" if transform_embeddings else "W2V"
+        pcalabels = [prefix + str(i) for i in range(num_pca_components_displayed)]
         poslabels = global_pos_list_l
         
         
