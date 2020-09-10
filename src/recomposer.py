@@ -18,10 +18,12 @@ from gcide import get_full_pos_dict, global_pos_list
 from wordcat import word_cat, annotate_heatmap, heatmap
 
 from sklearn.decomposition import PCA, FastICA
+from sklearn.manifold import TSNE
 from sklearn.metrics import average_precision_score
 from scipy import stats
 import numpy as np
 import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
 
 random.seed(42)
 torch.manual_seed(42)
@@ -525,7 +527,7 @@ def main() -> None:
 
     # Experiment control knobs
     experiment_name = "sort" # One of: cono, pos, sort
-    use_avg_prec = True
+    use_avg_prec = False
     transform_embeddings = True
     use_pca = True # Otherwise, ICA. Only applies if transform_embeddings is True.
     
@@ -550,7 +552,7 @@ def main() -> None:
     
         id = w2id[query_word]
     
-        if experiment_name == "cono":
+        if experiment_name == "cono" or experiment_name == "sort":
             #if "_" not in query_word:
             #    # Only use compound words
             #    continue
@@ -596,15 +598,15 @@ def main() -> None:
     print("pos found", found_count)
     print("global_pos_list", global_pos_list)
     
+    unfiltered_embeddings = filtered_embeddings
     if transform_embeddings:
         if use_pca:
             ca = PCA()
         else:
             ca = FastICA()
         ca.fit(filtered_embeddings)
-        print("done with fit:", ca)
+        
         filtered_embeddings = ca.transform(filtered_embeddings)
-        print("new embedding shape", filtered_embeddings.shape)
 
     if experiment_name == "cono":
         rvals = []
@@ -682,11 +684,41 @@ def main() -> None:
         
         print("max word len", max_word_len)
         
-        for r in sorted_idx:
-            for c in r[:num_sort_components]:
-                sys.stdout.write("{:20.20s} ".format(id2w[c]))
-            print("")
+        #for r in sorted_idx:
+        #    for c in r[:num_sort_components]:
+        #        sys.stdout.write("{:20.20s} ".format(id2w[c]))
+        #    print("")
         
+        target_idx = 1 # PCA component offset
+        display_len = 3000
+        display_step = 20
+        
+        #idces = sorted_idx[0:display_len:display_step,target_idx]
+        idces = sorted_idx[:,target_idx]
+        
+        fig = plt.figure()
+        if True: # Experiment 1 i.e. one-hot vector
+            target_deno = 'Immigration'
+            #component0vals = filtered_embeddings[idces,target_idx]
+            component0vals = np.array(query_denos[target_deno])[idces]
+            ax = plt.axes()
+            N = 50 # Window sizse
+            ax.scatter(x=range(len(component0vals)), y=np.convolve(component0vals, np.ones((N,))/N, mode='same'))
+            ax.set_xlabel('Word ID')
+            ax.set_ylabel('Moving average of one-hot denotation vector')
+        else: #3D plot
+        
+            tsne_proj_eng = TSNE(n_components=3, random_state=0)
+            tsne_data = tsne_proj_eng.fit_transform(unfiltered_embeddings[idces[:display_len],:])
+        
+            cmhot = plt.get_cmap("RdYlGn")
+            ax = fig.add_subplot(111, projection='3d')
+            ax.scatter(tsne_data[:,0], 
+                       tsne_data[:,1],
+                       tsne_data[:,2],
+                       c=filtered_embeddings[idces[:display_len],target_idx], 
+                       cmap=cmhot)
+        plt.show()
 
 if __name__ == '__main__':
     main()
