@@ -4,7 +4,7 @@ import random
 from statistics import mean
 from pathlib import Path
 from dataclasses import dataclass, field
-from typing import Tuple, List, Iterable, Dict, Optional, Union
+from typing import Tuple, List, Iterable, Dict, Optional
 
 import torch
 from torch import nn
@@ -122,6 +122,7 @@ class ProxyGroundedDecomposer(Decomposer):
             ).squeeze()  # bn1 -> bn
         negative_objective = F.logsigmoid(-negative_objective)
         negative_objective = torch.sum(negative_objective, dim=1)  # bn -> b
+        # TODO normalize?
         return -torch.mean(objective + negative_objective)
 
     def predict(self, seq_word_ids: Vector) -> Vector:
@@ -191,6 +192,49 @@ class ProxyGroundedDecomposer(Decomposer):
             #     cono_homogeneity.append(-diveregence)
         return mean(cono_homogeneity)
 
+    def extra_homogeneity(
+            self,
+            query_ids: Vector,
+            top_k: int = 10
+            ) -> Tuple[float, float]:
+        # extra 5 top-k for excluding edit distance neighbors
+        top_neighbor_ids = self.nearest_neighbors(query_ids, top_k + 5)
+        deno_homogeneity = []
+        cono_homogeneity = []
+        for query_index, neighbor_ids in enumerate(top_neighbor_ids):
+            query_id = query_ids[query_index].item()
+            query_word = self.id_to_word[query_id]
+
+            neighbor_ids = [
+                nid for nid in neighbor_ids.tolist()
+                if editdistance.eval(query_word, self.id_to_word[nid]) > 3]
+            neighbor_ids = neighbor_ids[:top_k]
+            if len(neighbor_ids) == 0:
+                # print(query_word, [self.id_to_word[i.item()]
+                #                    for i in top_neighbor_ids[query_index]])
+                # raise RuntimeWarning
+                continue
+
+            query_deno = self.ground[query_word].majority_deno
+            query_cono = self.ground[query_word].majority_cono
+            same_deno = 0
+            same_cono = 0
+            for nid in neighbor_ids:
+                try:
+                    neighbor_word = self.id_to_word[nid]
+                    neighbor_deno = self.ground[neighbor_word].majority_deno
+                    neighbor_cono = self.ground[neighbor_word].majority_cono
+                    if neighbor_deno == query_deno:
+                        same_deno += 1
+                    if neighbor_cono == query_cono:
+                        same_cono += 1
+                except (KeyError, AttributeError):  # special tokens like [PAD] are ungrounded
+                    # print(neighbor_word)
+                    continue
+            deno_homogeneity.append(same_deno / len(neighbor_ids))
+            cono_homogeneity.append(same_cono / len(neighbor_ids))
+        return mean(deno_homogeneity), mean(cono_homogeneity)
+
 
 class ProxyGroundedRecomposer(Recomposer):
 
@@ -230,8 +274,10 @@ class ProxyGroundedRecomposer(Recomposer):
         self.rho = config.recomposer_rho
         self.to(self.device)
 
+        self.word_to_id = data.word_to_id
         self.id_to_word = data.id_to_word
         self.ground = data.ground
+        self.eval_deno = hasattr(config, "extra_grounding")
 
     def forward(
             self,
@@ -261,7 +307,6 @@ class ProxyGroundedRecomposer(Recomposer):
                 L_DS, DS_deno, DS_cono_probe, DS_cono_adver,
                 L_CS, CS_deno, CS_cono_probe)
 
-
     def predict(self, seq_word_ids: Vector) -> Tuple[Vector, Vector]:
         DS_cono_conf = self.deno_space.predict(seq_word_ids)
         CS_cono_conf = self.cono_space.predict(seq_word_ids)
@@ -286,8 +331,14 @@ class ProxyGroundedRecomposer(Recomposer):
         is added retroactively, call the parent class's homogeneity() method,
         which returns DS_Hdeno, DS_Hcono, CS_Hdeno, CS_Hcono
         """
-        if next(iter(self.ground.values())).deno is not None:
-            return super().homogeneity(query_ids, top_k)
+        if self.eval_deno:
+            # DS_Hdeno, DS_Hcono = Decomposer.homogeneity(
+            #     self.deno_space, query_ids, top_k=top_k)
+            # CS_Hdeno, CS_Hcono = Decomposer.homogeneity(
+            #     self.cono_space, query_ids, top_k=top_k)
+            DS_Hdeno, DS_Hcono = self.deno_space.extra_homogeneity(query_ids, top_k=top_k)
+            CS_Hdeno, CS_Hcono = self.cono_space.extra_homogeneity(query_ids, top_k=top_k)
+            return DS_Hdeno, DS_Hcono, CS_Hdeno, CS_Hcono
 
         DS_Hcono = self.deno_space.homogeneity(query_ids, top_k=top_k)
         CS_Hcono = self.cono_space.homogeneity(query_ids, top_k=top_k)
@@ -333,6 +384,15 @@ class LabeledDocuments(torch.utils.data.IterableDataset):
         self.negative_sampling_probs: Vector = torch.tensor(
             preprocessed['negative_sampling_probs'])
 
+        if hasattr(config, "extra_grounding"):
+            with open(config.extra_grounding, 'rb') as extra_file:
+                preprocessed = pickle.load(extra_file)
+            deno_ground = preprocessed['ground']
+            for word in deno_ground.values():
+                if word.text in self.ground:
+                    self.ground[word.text].deno = word.deno
+                    self.ground[word.text].majority_deno = word.majority_deno
+
         random.shuffle(self.documents)
         self.estimated_len = (
             sum([len(sent.numerical_tokens)
@@ -340,21 +400,22 @@ class LabeledDocuments(torch.utils.data.IterableDataset):
                  for sent in doc.sentences])
             * self.window_radius // self.batch_size)
 
-        with open(config.dev_path) as file:
-            self.dev_ids = torch.tensor(
-                [self.word_to_id[word.strip()] for word in file
-                 if word.strip() in self.word_to_id],
-                device=config.device)
-        with open(config.test_path) as file:
-            self.test_ids = torch.tensor(
-                [self.word_to_id[word.strip()] for word in file
-                 if word.strip() in self.word_to_id],
-                device=config.device)
-        with open(config.rand_path) as file:
-            self.rand_ids = torch.tensor(
-                [self.word_to_id[word.strip()] for word in file
-                 if word.strip() in self.word_to_id],
-                device=config.device)
+        def load_eval_words(path: Path) -> Vector:
+            in_vocab = []
+            with open(path) as file:
+                for line in file:
+                    word = line.strip()
+                    if word in self.word_to_id:
+                        in_vocab.append(word)
+            if hasattr(config, "extra_grounding"):
+                in_vocab = [w for w in in_vocab if w in deno_ground]
+            print(f'Loaded {len(in_vocab)} in-vocab eval words from {path}')
+            return torch.tensor(
+                [self.word_to_id[w] for w in in_vocab], device=config.device)
+
+        self.dev_ids = load_eval_words(config.dev_path)
+        self.test_ids = load_eval_words(config.test_path)
+        self.rand_ids = load_eval_words(config.rand_path)
 
         # Set up multiprocessing
         self.total_workload = len(self.documents)
@@ -456,14 +517,27 @@ class ProxyGroundedExperiment(Experiment):
         # self.recomp_params = model.recomposer.parameters()
         # self.R_optimizer = config.optimizer(self.recomp_params, lr=config.learning_rate)
 
-        dev_Hc = model.deno_space.homogeneity(self.data.dev_ids)
-        test_Hc = model.deno_space.homogeneity(self.data.test_ids)
-        rand_Hc = model.deno_space.homogeneity(self.data.rand_ids)
-        model.PE_homogeneity = {
-            'dev Hc': dev_Hc,
-            'test Hc': test_Hc,
-            'rand Hc': rand_Hc,
-        }
+        if not model.eval_deno:
+            dev_Hc = model.deno_space.homogeneity(self.data.dev_ids)
+            test_Hc = model.deno_space.homogeneity(self.data.test_ids)
+            rand_Hc = model.deno_space.homogeneity(self.data.rand_ids)
+            model.PE_homogeneity = {
+                'dev Hc': dev_Hc,
+                'test Hc': test_Hc,
+                'rand Hc': rand_Hc,
+            }
+        else:
+            dev_Hd, dev_Hc = model.deno_space.extra_homogeneity(self.data.dev_ids)
+            test_Hd, test_Hc = model.deno_space.extra_homogeneity(self.data.test_ids)
+            rand_Hd, rand_Hc = model.deno_space.extra_homogeneity(self.data.rand_ids)
+            model.PE_homogeneity = {
+                'dev Hd': dev_Hd,
+                'dev Hc': dev_Hc,
+                'test Hd': test_Hd,
+                'test Hc': test_Hc,
+                'rand Hd': rand_Hd,
+                'rand Hc': rand_Hc,
+            }
         print(model.PE_homogeneity)
 
     def train_step(self, batch_index: int, batch: Tuple) -> None:
@@ -479,14 +553,14 @@ class ProxyGroundedExperiment(Experiment):
         DS_proxy_deno, DS_cono_probe, DS_cono_adversary, _ = model.deno_space(
             center_word_ids, context_word_ids, seq_word_ids, cono_labels)
         DS_cono_probe.backward()
-        nn.utils.clip_grad_norm_(model.deno_space.cono_probe.parameters(), clip)
+        # nn.utils.clip_grad_norm_(model.deno_space.cono_probe.parameters(), clip)
         self.DS_cono_optimizer.step()
 
         model.zero_grad()
         CS_proxy_deno, CS_cono_probe, _ = model.cono_space(
             center_word_ids, context_word_ids, seq_word_ids, cono_labels)
         CS_cono_probe.backward()
-        nn.utils.clip_grad_norm_(model.cono_space.cono_probe.parameters(), clip)
+        # nn.utils.clip_grad_norm_(model.cono_space.cono_probe.parameters(), clip)
         self.CS_cono_optimizer.step()
 
         model.zero_grad()
@@ -494,8 +568,8 @@ class ProxyGroundedExperiment(Experiment):
             L_DS, DS_deno_proxy, DS_cono_probe, DS_cono_adver,
             L_CS, CS_deno_proxy, CS_cono_probe) = model(
                 center_word_ids, context_word_ids, seq_word_ids, cono_labels)
-        L_joint.backward(retain_graph=True)
-        nn.utils.clip_grad_norm_(self.joint_params, clip)
+        L_joint.backward()
+        # nn.utils.clip_grad_norm_(self.joint_params, clip)
         self.joint_optimizer.step()
         # self.DS_decomp_optimizer.step()
         # self.CS_decomp_optimizer.step()
@@ -518,89 +592,90 @@ class ProxyGroundedExperiment(Experiment):
                 'Connotation Decomposer/combined_loss': L_CS,
                 'Connotation Decomposer/accuracy_train_cono': CS_cono_acc,
 
-                'Joint/loss': L_joint,
-                'Joint/Recomposer': L_R
+                'Recomposer/joint loss': L_joint,
+                'Recomposer/recomposition loss': L_R
             })
         if batch_index % self.config.eval_dev_set == 0:
             self.eval_step()
 
     def eval_step(self) -> None:
-        PE = self.model.PE_homogeneity
-        DS_Hc, CS_Hc = self.model.homogeneity(self.data.dev_ids)
+        model = self.model
+        PE = model.PE_homogeneity
+        if not model.eval_deno:
+            DS_Hc, CS_Hc = model.homogeneity(self.data.dev_ids)
+            self.update_tensorboard({
+                'Homogeneity Diff Dev/DS Hcono': DS_Hc - PE['dev Hc'],
+                'Homogeneity Diff Dev/CS Hcono': CS_Hc - PE['dev Hc'],
+            })
+            DS_Hc, CS_Hc = model.homogeneity(self.data.test_ids)
+            self.update_tensorboard({
+                'Homogeneity Diff Test/DS Hcono': DS_Hc - PE['test Hc'],
+                'Homogeneity Diff Test/CS Hcono': CS_Hc - PE['test Hc'],
+            })
+            DS_Hc, CS_Hc = model.homogeneity(self.data.rand_ids)
+            self.update_tensorboard({
+                'Homogeneity Diff Random/DS Hcono': DS_Hc - PE['rand Hc'],
+                'Homogeneity Diff Random/CS Hcono': CS_Hc - PE['rand Hc'],
+            })
+        else:
+            DS_Hd, DS_Hc, CS_Hd, CS_Hc = model.homogeneity(self.data.dev_ids)
+            self.update_tensorboard({
+                'Homogeneity Diff Dev/DS Hdeno': DS_Hd - PE['dev Hd'],
+                'Homogeneity Diff Dev/DS Hcono': DS_Hc - PE['dev Hc'],
+                'Homogeneity Diff Dev/CS Hdeno': CS_Hd - PE['dev Hd'],
+                'Homogeneity Diff Dev/CS Hcono': CS_Hc - PE['dev Hc'],
+            })
+            DS_Hd, DS_Hc, CS_Hd, CS_Hc = model.homogeneity(self.data.test_ids)
+            self.update_tensorboard({
+                'Homogeneity Diff Test/DS Hdeno': DS_Hd - PE['test Hd'],
+                'Homogeneity Diff Test/DS Hcono': DS_Hc - PE['test Hc'],
+                'Homogeneity Diff Test/CS Hdeno': CS_Hd - PE['test Hd'],
+                'Homogeneity Diff Test/CS Hcono': CS_Hc - PE['test Hc'],
+            })
+            DS_Hd, DS_Hc, CS_Hd, CS_Hc = model.homogeneity(self.data.rand_ids)
+            self.update_tensorboard({
+                'Homogeneity Diff Random/DS Hdeno': DS_Hd - PE['rand Hd'],
+                'Homogeneity Diff Random/DS Hcono': DS_Hc - PE['rand Hc'],
+                'Homogeneity Diff Random/CS Hdeno': CS_Hd - PE['rand Hd'],
+                'Homogeneity Diff Random/CS Hcono': CS_Hc - PE['rand Hc'],
+            })
+
+        mean_delta, abs_rhos = word_sim.mean_delta(
+            model.deno_space.decomposed.weight, model.pretrained_embed.weight,
+            model.id_to_word, reduce=False)
+        cos_sim = F.cosine_similarity(
+            model.deno_space.decomposed.weight, model.pretrained_embed.weight).mean()
         self.update_tensorboard({
-            'Homogeneity Diff Dev/DS Hcono': DS_Hc - PE['dev Hc'],
-            'Homogeneity Diff Dev/CS Hcono': CS_Hc - PE['dev Hc'],
+            # 'Denotation Decomposer/rho difference cf pretrained': mean_delta,
+            'Denotation Decomposer/MTurk-771': abs_rhos[0],
+            'Denotation Decomposer/cosine similarity': cos_sim
         })
-        DS_Hc, CS_Hc = self.model.homogeneity(self.data.test_ids)
+
+        mean_delta, abs_rhos = word_sim.mean_delta(
+            model.cono_space.decomposed.weight, model.pretrained_embed.weight,
+            model.id_to_word, reduce=False)
+        cos_sim = F.cosine_similarity(
+            model.cono_space.decomposed.weight, model.pretrained_embed.weight).mean()
         self.update_tensorboard({
-            'Homogeneity Diff Test/DS Hcono': DS_Hc - PE['test Hc'],
-            'Homogeneity Diff Test/CS Hcono': CS_Hc - PE['test Hc'],
+            'Connotation Decomposer/MTurk-771': abs_rhos[0],
+            'Connotation Decomposer/cosine similarity': cos_sim
         })
-        DS_Hc, CS_Hc = self.model.homogeneity(self.data.rand_ids)
+
+        with torch.no_grad():
+            # sample = torch.randint(
+            #     D_model.decomposed.num_embeddings, size=(25_000,), device=self.device)
+            sample = torch.arange(model.pretrained_embed.num_embeddings, device=self.device)
+            recomposed = model.deno_space.decomposed(sample) + model.cono_space.decomposed(sample)
+
+        mean_delta, abs_rhos = word_sim.mean_delta(
+            recomposed, model.pretrained_embed.weight,
+            model.id_to_word, reduce=False)
+        cos_sim = F.cosine_similarity(recomposed, model.pretrained_embed.weight).mean()
         self.update_tensorboard({
-            'Homogeneity Diff Random/DS Hcono': DS_Hc - PE['rand Hc'],
-            'Homogeneity Diff Random/CS Hcono': CS_Hc - PE['rand Hc'],
+            # 'Recomposer/rho difference cf pretrained': mean_delta,
+            'Recomposer/MTurk-771': abs_rhos[0],
+            'Recomposer/cosine similarity': cos_sim
         })
-
-        # model = self.model
-        # D_model = model.deno_space
-        # DS_Hdeno, DS_Hcono = D_model.homemade_homogeneity(D_model.dev_ids)
-        # _, DS_Hcono_SP = D_model.SciPy_homogeneity(D_model.dev_ids)
-
-        # mean_delta, abs_rhos = word_sim.mean_delta(
-        #     D_model.decomposed.weight, D_model.pretrained_embed.weight,
-        #     model.id_to_word, reduce=False)
-        # cos_sim = F.cosine_similarity(
-        #     D_model.decomposed.weight, D_model.pretrained_embed.weight).mean()
-        # self.update_tensorboard({
-        #     'Denotation Space/Neighbor Overlap': DS_Hdeno,
-        #     'Denotation Space/Party Homogeneity': DS_Hcono,
-        #     'Denotation Space/Party Homogeneity SciPy': DS_Hcono_SP,
-        #     'Denotation Space/Overlap - Party': DS_Hdeno - DS_Hcono,
-
-        #     'Denotation Space/rho difference cf pretrained': mean_delta,
-        #     'Denotation Space/MTurk-771': abs_rhos[0],
-        #     'Denotation Space/cosine cf pretrained': cos_sim
-        # })
-
-        # C_model = model.cono_space
-        # CS_Hdeno, CS_Hcono = C_model.homemade_homogeneity(C_model.dev_ids)
-        # _, CS_Hcono_SP = C_model.SciPy_homogeneity(C_model.dev_ids)
-        # mean_delta, abs_rhos = word_sim.mean_delta(
-        #     C_model.decomposed.weight, C_model.pretrained_embed.weight,
-        #     model.id_to_word, reduce=False)
-        # cos_sim = F.cosine_similarity(
-        #     C_model.decomposed.weight, C_model.pretrained_embed.weight).mean()
-        # self.update_tensorboard({
-        #     'Connotation Space/Neighbor Overlap': CS_Hdeno,
-        #     'Connotation Space/Party Homogeneity': CS_Hcono,
-        #     'Connotation Space/Party Homogeneity SciPy': CS_Hcono_SP,
-        #     'Connotation Space/Party - Overlap': CS_Hcono - CS_Hdeno,
-
-        #     'Connotation Space/rho difference cf pretrained': mean_delta,
-        #     'Connotation Space/MTurk-771': abs_rhos[0],
-        #     'Connotation Space/cosine cf pretrained': cos_sim
-        # })
-
-        # with torch.no_grad():
-        #     # sample = torch.randint(
-        #     #     D_model.decomposed.num_embeddings, size=(25_000,), device=self.device)
-        #     sample = torch.arange(D_model.decomposed.num_embeddings, device=self.device)
-        #     recomposed = D_model.decomposed(sample) + C_model.decomposed(sample)
-
-        # mean_delta, abs_rhos = word_sim.mean_delta(
-        #     recomposed,
-        #     D_model.pretrained_embed.weight,
-        #     model.id_to_word,
-        #     reduce=False)
-        # self.update_tensorboard({
-        #     'Recomposer/mean IntraSpace quality': ((DS_Hdeno - DS_Hcono) + (CS_Hcono - CS_Hdeno)) / 2,
-
-        #     'Recomposer/rho difference cf pretrained': mean_delta,
-        #     'Recomposer/MTurk-771': abs_rhos[0],
-        #     'Recomposer/cosine similarity':
-        #         F.cosine_similarity(recomposed, D_model.pretrained_embed(sample), dim=1).mean()
-        # })
 
 
     def train(self) -> None:
@@ -637,31 +712,33 @@ class ProxyGroundedExperiment(Experiment):
 @dataclass
 class ProxyGroundedConfig():
     # Congressional Record
-    # corpus_path: Path = Path('../../data/ready/CR_skip/train.pickle')
-    # numericalize_cono: Dict[str, int] = field(default_factory=lambda: {
-    #     'D': 0,
-    #     'R': 1})
-    # num_cono_classes: int = 2
-    # rand_path: Path = Path('../../data/ellie/rand_sample.cr.txt')
-    # dev_path: Path = Path('../../data/ellie/partisan_sample_val.cr.txt')
-    # test_path: Path = Path('../../data/ellie/partisan_sample.cr.txt')
-    # pretrained_embed_path: Optional[Path] = Path(
-    #     '../../data/pretrained_word2vec/for_real.txt')
+    corpus_path: Path = Path('../../data/ready/CR_skip/train.pickle')
+    numericalize_cono: Dict[str, int] = field(default_factory=lambda: {
+        'D': 0,
+        'R': 1})
+    num_cono_classes: int = 2
+    rand_path: Path = Path('../../data/ellie/rand_sample.cr.txt')
+    dev_path: Path = Path('../../data/ellie/partisan_sample_val.cr.txt')
+    test_path: Path = Path('../../data/ellie/partisan_sample.cr.txt')
+    pretrained_embed_path: Optional[Path] = Path(
+        '../../data/pretrained_word2vec/CR_97_SGNS.txt')
+    extra_grounding: Path = Path(
+        '../../data/ready/CR_topic_context3/train_data.pickle')
 
     # # Partisan News
-    corpus_path: Path = Path('../../data/ready/PN_skip/train.pickle')
-    numericalize_cono: Dict[str, int] = field(default_factory=lambda: {
-        'left': 0,
-        'left-center': 0,
-        'least': 1,
-        'right-center': 2,
-        'right': 2})
-    num_cono_classes: int = 3
-    rand_path: Path = Path('../../data/ellie/rand_sample.hp.txt')
-    dev_path: Path = Path('../../data/ellie/partisan_sample_val.hp.txt')
-    test_path: Path = Path('../../data/ellie/partisan_sample.hp.txt')
-    pretrained_embed_path: Optional[Path] = Path(
-        '../../data/pretrained_word2vec/partisan_news_HS.txt')
+    # corpus_path: Path = Path('../../data/ready/PN_skip/train.pickle')
+    # numericalize_cono: Dict[str, int] = field(default_factory=lambda: {
+    #     'left': 0,
+    #     'left-center': 0,
+    #     'least': 1,
+    #     'right-center': 2,
+    #     'right': 2})
+    # num_cono_classes: int = 3
+    # rand_path: Path = Path('../../data/ellie/rand_sample.hp.txt')
+    # dev_path: Path = Path('../../data/ellie/partisan_sample_val.hp.txt')
+    # test_path: Path = Path('../../data/ellie/partisan_sample.hp.txt')
+    # pretrained_embed_path: Optional[Path] = Path(
+    #     '../../data/pretrained_word2vec/partisan_news_HS.txt')
 
     output_dir: Path = Path('../results/debug')
     device: torch.device = torch.device('cuda')

@@ -11,7 +11,8 @@ from sklearn.manifold import TSNE
 from sklearn.decomposition import PCA
 
 from data import GroundedWord
-from models.ideal_grounded import Decomposer, Recomposer
+# from models.ideal_grounded import Decomposer, Recomposer
+from models.proxy_grounded import ProxyGroundedDecomposer, ProxyGroundedRecomposer
 
 random.seed(42)
 np.random.seed(42)
@@ -34,7 +35,7 @@ def plot(
     for coord, w in zip(coordinates, words):
         ax.annotate(w.text, coord, fontsize=8)
     with open(path, 'wb') as file:
-        fig.savefig(file, dpi=300)
+        fig.savefig(file, dpi=200)
     plt.close(fig)
 
 
@@ -58,7 +59,7 @@ def plot_categorical(
     for coord, w in zip(coordinates, words):
         ax.annotate(w.text, coord, fontsize=8)
     with open(path, 'wb') as file:
-        fig.savefig(file, dpi=300)
+        fig.savefig(file, dpi=200)
     plt.close(fig)
 
 
@@ -66,10 +67,7 @@ def graph_en_masse(
         spaces: Dict[str, torch.tensor],
         out_dir: Path,
         reduction: str,  # 'PCA', 'TSNE', or 'both'
-        # word_ids: List[int],
         words: List[GroundedWord],
-        # hues: Union[List[float], List[int]],
-        # sizes: List[int],
         color_code: str,
         perplexity: Optional[int] = None,
         ) -> None:
@@ -82,17 +80,21 @@ def graph_en_masse(
         elif reduction == 'TSNE':
             assert perplexity is not None
             visual = TSNE(
-                perplexity=perplexity, learning_rate=10,
+                perplexity=perplexity, learning_rate=1,
                 n_iter=5000, n_iter_without_progress=1000).fit_transform(space)
         elif reduction == 'both':
             assert perplexity is not None
             space = PCA(n_components=30).fit_transform(space)
             visual = TSNE(
-                perplexity=perplexity, learning_rate=10,
+                perplexity=perplexity, learning_rate=1,
                 n_iter=5000, n_iter_without_progress=1000).fit_transform(space)
         else:
             raise ValueError('unknown dimension reduction method')
-        if color_code == 'deno':
+
+        if color_code == 'both':
+            plot_categorical(visual, words, out_dir / f'topic {name}.png')
+            plot(visual, words, out_dir / f'party {name}.png')
+        elif color_code == 'deno':
             plot_categorical(visual, words, out_dir / f'{name}.png')
         elif color_code == 'cono':
             plot(visual, words, out_dir / f'{name}.png')
@@ -101,18 +103,48 @@ def graph_en_masse(
 
 
 def main():
-    in_path = Path('../../results/replica/CR_topic/new ground/epoch100.pt')
+    # in_path = Path('../../results/replica/CR_topic/ctx5/epoch100.pt')
+    # in_path = Path('../../results/replica/CR_bill/new ground/epoch50.pt')
+    # in_path = Path('../../results/replica/CR_skip/clip none extra/epoch6.pt')
+    # in_path = Path('../../results/replica/CR_skip/clip none extra B8k/epoch12.pt')
+    in_path = Path('../../results/replica/CR_skip/PE SGNS 97/epoch2.pt')
+    # in_path = Path('../../results/replica/PN_skip/clip all/epoch20.pt')
     out_dir = in_path.parent
     model = torch.load(in_path, map_location='cpu')
+    # model.word_to_id = {v: k for k, v in model.id_to_word.items()}
 
     query_words = [
-        'government', 'washington',
+        # CR
+        'federal_government', 'washington',
         'estate_tax', 'death_tax',
         'public_option', 'governmentrun',
         'foreign_trade', 'international_trade',
-        # 'cut_taxes', 'supply_side' #'trickledown'
         'undocumented', 'illegal_aliens',
-        'capitalism', 'free_market'
+        'capitalism', 'free_market',
+
+        'trickledown', 'cut_taxes',
+        'voodoo', 'supplyside',
+        'tax_expenditures', 'spending_programs',
+        'waterboarding', 'interrogation',
+        'socialized_medicine', 'singlepayer',
+        'political_speech', 'campaign_spending',
+        'star_wars', 'strategic_defense_initiative',
+        'nuclear_option', 'constitutional_option'
+
+        # # PN
+        # 'government', 'washington',
+        # 'estate_tax', 'death_tax',
+        # 'public_option', 'government_run',
+        # 'foreign_trade', 'international_trade',
+        # 'undocumented_workers', 'illegal_aliens',
+        # 'capitalism', 'free_market',
+
+        # 'cut_taxes', 'voodoo', 'supply_side',  # 'trickledown',
+        # 'tax_expenditures', 'spending_programs',
+        # 'waterboarding', 'interrogation',
+        # 'socialized_medicine', 'single_payer',
+        # 'political_speech', 'campaign_spending',
+
     ]
     query_ids = torch.tensor([model.word_to_id[w] for w in query_words])
     spaces = {
@@ -124,14 +156,16 @@ def main():
     grounded_words = [model.ground[w] for w in query_words]
     for w in grounded_words:
         w.init_plotting()
+        # print(w)
 
     graph_en_masse(
-        spaces, out_dir=out_dir / 'topic/t-SNE p3', color_code='deno',
-        reduction='TSNE', perplexity=3, words=grounded_words)
+        spaces, out_dir=out_dir / 'PCA', color_code='both',
+        reduction='PCA', words=grounded_words)
 
-    graph_en_masse(
-        spaces, out_dir=out_dir / 'party/t-SNE p3', color_code='cono',
-        reduction='TSNE', perplexity=3, words=grounded_words)
+    for perplexity in (2, 4, 5, 6, 8, 10, 12):
+        graph_en_masse(
+            spaces, out_dir=out_dir / f't-SNE p{perplexity}', color_code='cono',
+            reduction='TSNE', perplexity=perplexity, words=grounded_words)
 
 if __name__ == "__main__":
     main()

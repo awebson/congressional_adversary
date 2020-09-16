@@ -16,7 +16,7 @@ procedural_words = {
     'today', 'rise', 'rise today', 'pleased_to_introduce',
     'introducing_today', 'would_like'}
 
-stop_words = set(stopwords.words('english')).union(procedural_words)
+discard = set(stopwords.words('english')).union(procedural_words)
 
 MIN_NUM_MENTIONS = 3
 MIN_SENT_LEN = 5
@@ -29,6 +29,7 @@ print('Minimum number of mentions per bill =', MIN_NUM_MENTIONS)
 
 total_num_words = 0
 out_file = open(out_path, 'w')
+vocab = set()
 for session in tqdm(sessions):
     in_path = os.path.join(in_dir, f'underscored_{session}.pickle')
     with open(in_path, 'rb') as in_file:
@@ -43,9 +44,8 @@ for session in tqdm(sessions):
             continue
 
         per_session_mention += 1
-        # NOTE hardcoded context_size
-        # for i in range(speech_index - 2, speech_index + 8):
-        for i in range(speech_index + 1, speech_index + NUM_CONTEXT_SPEECHES):
+        for i in range(speech_index + 1,
+                       speech_index + 1 + NUM_CONTEXT_SPEECHES):
             try:
                 speeches[i].bill = speech.bill
             except IndexError:
@@ -57,18 +57,17 @@ for session in tqdm(sessions):
             continue
         if num_mentions[speech.bill.title] < MIN_NUM_MENTIONS:
             continue
-
-        # deno = speech.bill.title
-        # deno = getattr(speech.bill, DENO_LABEL)  # either 'topic' or 'title'
         cono = speech.speaker.party
         if cono != 'D' and cono != 'R':  # skip independent members for now
             continue
 
-        words = [w for w in speech.text.split() if w not in stop_words]
+        words = [w for w in speech.text.split() if w not in discard]
         if len(words) < MIN_SENT_LEN:
             continue
+        vocab.update(words)
         total_num_words += len(words)
         print(' '.join(words), file=out_file)
 
 out_file.close()
+print(f'Unfiltered vocabulary size = {len(vocab):,}')
 print(f'Total number of words = {total_num_words:,}')

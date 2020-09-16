@@ -48,4 +48,9 @@ class GroundedWord():
     def init_plotting(self) -> None:
         """initialize some extra atributes for plotting"""
         self.freq = sum(self.cono.values())
+
+        # Congressional Record
         self.R_ratio = self.cono['R'] / self.freq
+
+        # # Partisan News
+        # self.R_ratio = (self.cono['right'] + self.cono['right-center']) / self.freq

@@ -599,22 +599,24 @@ class IdealGroundedExperiment(Experiment):
 
 @dataclass
 class IdealGroundedConfig():
-    corpus_path: Path = Path('../../data/ready/CR_topic_context3/train_data.pickle')
+    corpus_path: Path = Path('../../data/ready/CR_topic_context5/train_data.pickle')
     num_deno_classes: int = 41
     num_cono_classes: int = 2
 
-    # input_dir: str = '../../data/processed/bill_mentions/title_deno_context3'
+    # corpus_path: str = '../../data/ready/CR_bill_context3/train_data.pickle'
     # num_deno_classes: int = 1029
+    # num_cono_classes: int = 2
 
-    # input_dir: str = '../../data/processed/bill_mentions/title_deno_context5'
+    # corpus_path: str = '../../data/ready/CR_bill_context5/train_data.pickle'
     # num_deno_classes: int = 1027
-
-    # input_dir: str = '../../data/processed/bill_mentions/title_deno'
+    # num_cono_classes: int = 2
 
     rand_path: Path = Path('../../data/ellie/rand_sample.cr.txt')
     dev_path: Path = Path('../../data/ellie/partisan_sample_val.cr.txt')
     test_path: Path = Path('../../data/ellie/partisan_sample.cr.txt')
-    pretrained_embed_path: Optional[Path] = Path('../../data/pretrained_word2vec/CR_ctx3_HS.txt')
+    pretrained_embed_path: Optional[Path] = Path(
+        # '../../data/pretrained_word2vec/CR_ctx3_HS.txt')
+        '../../data/pretrained_word2vec/bill_mentions_HS.txt')
 
     output_dir: Path = Path('../../results/debug')
     device: torch.device = torch.device('cuda')
@@ -656,7 +658,7 @@ class IdealGroundedConfig():
     progress_bar_refresh_rate: int = 1  # per second
     clear_tensorboard_log_in_output_dir: bool = True
     delete_all_exisiting_files_in_output_dir: bool = False
-    auto_save_per_epoch: Optional[int] = None
+    auto_save_per_epoch: Optional[int] = 5
     auto_save_if_interrupted: bool = False
 
     def __post_init__(self) -> None:

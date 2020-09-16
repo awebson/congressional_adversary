@@ -24,10 +24,12 @@ FIXED_SENT_LEN = 15
 MIN_SENT_LEN = 5
 MIN_WORD_FREQ = 15
 DENO_LABEL = 'topic'
+# DENO_LABEL = 'title'
 NUM_CONTEXT_SPEECHES = 3
 MAX_DEV_HOLDOUT = 100  # faux speeches per session
 in_dir = Path('../../data/interim/bill_mentions/')
 out_dir = Path('../../data/ready/CR_topic_context3')
+# out_dir = Path('../../data/ready/CR_bill_context3')
 Path.mkdir(out_dir, parents=True, exist_ok=True)
 print('Minimum number of mentions per bill =', MIN_NUM_MENTIONS)
 
