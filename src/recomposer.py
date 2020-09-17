@@ -693,30 +693,30 @@ def main() -> None:
         display_len = 3000
         display_step = 20
         
-        #idces = sorted_idx[0:display_len:display_step,target_idx]
-        idces = sorted_idx[:,target_idx]
+        idces = sorted_idx[0:display_len:display_step,target_idx]
+        #idces = sorted_idx[:,target_idx]
         
         fig = plt.figure()
-        if True: # Experiment 1 i.e. one-hot vector
+        if False: # Experiment 2 i.e. one-hot vector
             target_deno = 'Immigration'
             #component0vals = filtered_embeddings[idces,target_idx]
             component0vals = np.array(query_denos[target_deno])[idces]
             ax = plt.axes()
-            N = 50 # Window sizse
+            N = 50 # Window size
             ax.scatter(x=range(len(component0vals)), y=np.convolve(component0vals, np.ones((N,))/N, mode='same'))
             ax.set_xlabel('Word ID')
             ax.set_ylabel('Moving average of one-hot denotation vector')
-        else: #3D plot
+        else: #3D plot of TSNE, experiment 3
         
             tsne_proj_eng = TSNE(n_components=3, random_state=0)
-            tsne_data = tsne_proj_eng.fit_transform(unfiltered_embeddings[idces[:display_len],:])
+            tsne_data = tsne_proj_eng.fit_transform(unfiltered_embeddings)
         
             cmhot = plt.get_cmap("RdYlGn")
             ax = fig.add_subplot(111, projection='3d')
-            ax.scatter(tsne_data[:,0], 
-                       tsne_data[:,1],
-                       tsne_data[:,2],
-                       c=filtered_embeddings[idces[:display_len],target_idx], 
+            ax.scatter(tsne_data[idces,0], 
+                       tsne_data[idces,1],
+                       tsne_data[idces,2],
+                       c=filtered_embeddings[idces,target_idx], 
                        cmap=cmhot)
         plt.show()
 
