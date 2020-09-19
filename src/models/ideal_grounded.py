@@ -238,7 +238,7 @@ class Recomposer(nn.Module):
             device=self.device)
 
         # Recomposer
-        # self.recomposer = nn.Linear(600, 300)
+        self.recomposer = nn.Linear(600, 300)
         self.rho = config.recomposer_rho
         self.to(self.device)
 
@@ -263,8 +263,8 @@ class Recomposer(nn.Module):
         CS_decomp = torch.sigmoid(CS_deno_adver) + torch.sigmoid(CS_cono_probe)
 
         # Recomposed Space
-        # recomposed = self.recomposer(torch.cat((deno_vecs, cono_vecs), dim=-1))
-        recomposed = deno_vecs + cono_vecs  # cosine similarity ignores magnitude
+        recomposed = self.recomposer(torch.cat((deno_vecs, cono_vecs), dim=-1))
+        # recomposed = deno_vecs + cono_vecs  # cosine similarity ignores magnitude
         pretrained = self.pretrained_embed(seq_word_ids)
         L_R = 1 - F.cosine_similarity(recomposed, pretrained, dim=-1).mean()
 
@@ -435,9 +435,9 @@ class IdealGroundedExperiment(Experiment):
         self.CS_cono_optimizer = config.optimizer(
             model.cono_space.cono_probe.parameters(),
             lr=config.learning_rate)
-        # self.R_optimizer = config.optimizer(
-        #     model.recomposer.parameters(),
-        #     lr=config.learning_rate)
+        self.R_optimizer = config.optimizer(
+            model.recomposer.parameters(),
+            lr=config.learning_rate)
 
         dev_Hd, dev_Hc = model.deno_space.homogeneity(self.data.dev_ids)
         test_Hd, test_Hc = model.deno_space.homogeneity(self.data.test_ids)
@@ -482,6 +482,7 @@ class IdealGroundedExperiment(Experiment):
             seq_word_ids, deno_labels, cono_labels)
         L_joint.backward()
         self.joint_optimizer.step()
+        self.R_optimizer.step()
         # self.DS_decomp_optimizer.step()
         # self.CS_decomp_optimizer.step()
         # self.DS_deno_optimizer.step()
@@ -599,7 +600,7 @@ class IdealGroundedExperiment(Experiment):
 
 @dataclass
 class IdealGroundedConfig():
-    corpus_path: Path = Path('../../data/ready/CR_topic_context5/train_data.pickle')
+    corpus_path: Path = Path('../../data/ready/CR_topic_context3/train_data.pickle')
     num_deno_classes: int = 41
     num_cono_classes: int = 2
 
@@ -615,8 +616,8 @@ class IdealGroundedConfig():
     dev_path: Path = Path('../../data/ellie/partisan_sample_val.cr.txt')
     test_path: Path = Path('../../data/ellie/partisan_sample.cr.txt')
     pretrained_embed_path: Optional[Path] = Path(
-        # '../../data/pretrained_word2vec/CR_ctx3_HS.txt')
-        '../../data/pretrained_word2vec/bill_mentions_HS.txt')
+        '../../data/pretrained_word2vec/CR_ctx3_HS.txt')
+        # '../../data/pretrained_word2vec/bill_mentions_HS.txt')
 
     output_dir: Path = Path('../../results/debug')
     device: torch.device = torch.device('cuda')
@@ -658,7 +659,7 @@ class IdealGroundedConfig():
     progress_bar_refresh_rate: int = 1  # per second
     clear_tensorboard_log_in_output_dir: bool = True
     delete_all_exisiting_files_in_output_dir: bool = False
-    auto_save_per_epoch: Optional[int] = 5
+    auto_save_per_epoch: Optional[int] = 10
     auto_save_if_interrupted: bool = False
 
     def __post_init__(self) -> None:

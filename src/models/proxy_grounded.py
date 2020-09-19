@@ -125,6 +125,14 @@ class ProxyGroundedDecomposer(Decomposer):
         # TODO normalize?
         return -torch.mean(objective + negative_objective)
 
+    def HS_loss(
+            self,
+            center_word_ids: Vector,
+            true_context_ids: Vector
+            ) -> Scalar:
+        center = self.decomposed(center_word_ids)
+        return F.cross_entropy(self.context_pred(center), true_context_ids)
+
     def predict(self, seq_word_ids: Vector) -> Vector:
         self.eval()
         with torch.no_grad():
@@ -270,7 +278,7 @@ class ProxyGroundedRecomposer(Recomposer):
             device=self.device)
 
         # Recomposer
-        # self.recomposer = nn.Linear(600, 300)
+        self.recomposer = nn.Linear(600, 300)
         self.rho = config.recomposer_rho
         self.to(self.device)
 
@@ -297,8 +305,8 @@ class ProxyGroundedRecomposer(Recomposer):
         L_CS = 1 - torch.sigmoid(CS_deno) + torch.sigmoid(CS_cono_probe)
 
         # Recomposer
-        # recomposed = self.recomposer(torch.cat((deno_vecs, cono_vecs), dim=-1))
-        recomposed = deno_vecs + cono_vecs  # cosine similarity ignores magnitude
+        recomposed = self.recomposer(torch.cat((deno_vecs, cono_vecs), dim=-1))
+        # recomposed = deno_vecs + cono_vecs  # cosine similarity ignores magnitude
         pretrained = self.pretrained_embed(seq_word_ids)
         L_R = 1 - F.cosine_similarity(recomposed, pretrained, dim=-1).mean()
 
@@ -514,8 +522,8 @@ class ProxyGroundedExperiment(Experiment):
         self.CS_cono_optimizer = config.optimizer(
             model.cono_space.cono_probe.parameters(), lr=config.learning_rate)
 
-        # self.recomp_params = model.recomposer.parameters()
-        # self.R_optimizer = config.optimizer(self.recomp_params, lr=config.learning_rate)
+        self.recomp_params = model.recomposer.parameters()
+        self.R_optimizer = config.optimizer(self.recomp_params, lr=config.learning_rate)
 
         if not model.eval_deno:
             dev_Hc = model.deno_space.homogeneity(self.data.dev_ids)
@@ -574,9 +582,9 @@ class ProxyGroundedExperiment(Experiment):
         # self.DS_decomp_optimizer.step()
         # self.CS_decomp_optimizer.step()
 
-        # # Recomposer
+        # Recomposer
         # nn.utils.clip_grad_norm_(self.recomp_params, clip)
-        # self.R_optimizer.step()
+        self.R_optimizer.step()
 
         if batch_index % self.config.update_tensorboard == 0:
             DS_cono_acc, CS_cono_acc = model.accuracy(seq_word_ids, cono_labels)
@@ -665,7 +673,10 @@ class ProxyGroundedExperiment(Experiment):
             # sample = torch.randint(
             #     D_model.decomposed.num_embeddings, size=(25_000,), device=self.device)
             sample = torch.arange(model.pretrained_embed.num_embeddings, device=self.device)
-            recomposed = model.deno_space.decomposed(sample) + model.cono_space.decomposed(sample)
+            # recomposed = model.deno_space.decomposed(sample) + model.cono_space.decomposed(sample)
+            deno_vecs = model.deno_space.decomposed(sample)
+            cono_vecs = model.cono_space.decomposed(sample)
+            recomposed = model.recomposer(torch.cat((deno_vecs, cono_vecs), dim=-1))
 
         mean_delta, abs_rhos = word_sim.mean_delta(
             recomposed, model.pretrained_embed.weight,
@@ -676,7 +687,6 @@ class ProxyGroundedExperiment(Experiment):
             'Recomposer/MTurk-771': abs_rhos[0],
             'Recomposer/cosine similarity': cos_sim
         })
-
 
     def train(self) -> None:
         config = self.config
