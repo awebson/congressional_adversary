@@ -33,7 +33,9 @@ class ProxyGroundedDecomposer(Decomposer):
             device: torch.device):
         super(Decomposer, self).__init__()
         self.decomposed = nn.Embedding.from_pretrained(initial_space)
+        self.SGNS_context = nn.Embedding.from_pretrained(initial_space)
         self.decomposed.weight.requires_grad = True
+        self.SGNS_context.weight.requires_grad = True
         self.cono_probe = cono_probe
         self.num_cono_classes = cono_probe[-1].out_features
         self.device = device
@@ -105,8 +107,8 @@ class ProxyGroundedDecomposer(Decomposer):
         ).view(len(true_context_ids), self.num_negative_samples).to(self.device)
 
         center = self.decomposed(center_word_ids)
-        true_context = self.decomposed(true_context_ids)
-        negative_context = self.decomposed(negative_context_ids)
+        true_context = self.SGNS_context(true_context_ids)
+        negative_context = self.SGNS_context(negative_context_ids)
 
         # batch_size * embed_size
         objective = torch.sum(  # dot product
@@ -501,9 +503,9 @@ class ProxyGroundedExperiment(Experiment):
         self.model = ProxyGroundedRecomposer(config, self.data)
         model = self.model
 
-        # for name, param in model.named_parameters():
-        #     if param.requires_grad:
-        #         print(name)  # param.data)
+        for name, param in model.named_parameters():
+            if param.requires_grad:
+                print(name)  # param.data)
 
         # self.D_decomp_params = model.deno_space.decomposed.parameters()
         # self.D_cono_params = model.deno_space.cono_probe.parameters()
@@ -768,7 +770,7 @@ class ProxyGroundedConfig():
     dropout_p: float = 0.33
 
     architecture: str = 'L4R'
-    batch_size: int = 4096
+    batch_size: int = 8192
     embed_size: int = 300
     num_epochs: int = 30
 
