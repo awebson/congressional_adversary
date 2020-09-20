@@ -33,9 +33,11 @@ class ProxyGroundedDecomposer(Decomposer):
             device: torch.device):
         super(Decomposer, self).__init__()
         self.decomposed = nn.Embedding.from_pretrained(initial_space)
-        self.SGNS_context = nn.Embedding.from_pretrained(initial_space)
+        # self.SGNS_context = nn.Embedding.from_pretrained(initial_space)
         self.decomposed.weight.requires_grad = True
-        self.SGNS_context.weight.requires_grad = True
+        # self.SGNS_context.weight.requires_grad = True
+        vocab_size, embed_size = self.decomposed.weight.shape
+        self.simple_LM = nn.Linear(embed_size, vocab_size)
         self.cono_probe = cono_probe
         self.num_cono_classes = cono_probe[-1].out_features
         self.device = device
@@ -59,7 +61,10 @@ class ProxyGroundedDecomposer(Decomposer):
         seq_word_vecs: R3Tensor = self.decomposed(seq_word_ids)
         seq_repr: Matrix = torch.mean(seq_word_vecs, dim=1)
 
-        proxy_deno_loss = self.skip_gram_loss(center_word_ids, true_context_ids)
+        # proxy_deno_loss = self.skip_gram_loss(center_word_ids, true_context_ids)
+        proxy_deno_loss = F.cross_entropy(
+            self.simple_LM(self.decomposed(center_word_ids)),
+            true_context_ids)
 
         cono_logits = self.cono_probe(seq_repr)
         cono_log_prob = F.log_softmax(cono_logits, dim=1)
@@ -701,6 +706,8 @@ class ProxyGroundedExperiment(Experiment):
         else:
             epoch_pbar = tqdm(range(1, config.num_epochs + 1), desc='Epochs')
 
+        estimated_save = self.data.estimated_len // 10
+
         for epoch_index in epoch_pbar:
             if not config.print_stats:
                 batches = enumerate(self.dataloader)
@@ -714,6 +721,11 @@ class ProxyGroundedExperiment(Experiment):
             for batch_index, batch in batches:
                 self.train_step(batch_index, batch)
                 self.tb_global_step += 1
+                # HACK
+                if batch_index % estimated_save == 0:
+                    point = batch_index // estimated_save
+                    self.save_everything(
+                        self.config.output_dir / f'epoch{epoch_index}_{point}.pt')
             self.auto_save(epoch_index)
 
             self.data.estimated_len = batch_index
