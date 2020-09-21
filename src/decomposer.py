@@ -583,7 +583,7 @@ class DecomposerConfig():
     # num_negative_samples: int = 10
     optimizer: torch.optim.Optimizer = torch.optim.Adam
     # optimizer: torch.optim.Optimizer = torch.optim.SGD
-    learning_rate: float = 1e-5
+    learning_rate: float = 1e-4
     # momentum: float = 0.5
     # lr_scheduler: torch.optim.lr_scheduler._LRScheduler
     # num_prediction_classes: int = 5

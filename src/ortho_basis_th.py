@@ -20,22 +20,19 @@ class OrthoBasis(nn.Module):
         self.delta_size = int(delta * vec_size)
         self.gamma_size = vec_size - self.delta_size
 
+        self.blendgen = nn.Parameter(torch.randn((vec_size, vec_size), dtype=use_dtype) * 0.01)
         self.H = nn.Parameter(torch.randn((vec_size, vec_size), dtype=use_dtype) * 0.01)
 
     def forward(self, encoding_batch):
     
-        H_T = torch.transpose(self.H, 0, 1)
-
-        coeffs = torch.matmul(H_T, torch.transpose(encoding_batch, 0, 1))
+    
+        rotated = torch.matmul(encoding_batch, self.H)
+        blend_input = torch.matmul(rotated, self.blendgen)
+        blend_c = torch.sigmoid(blend_input)
+        blend_d = 1 - blend_c
         
-        coeffs_C = coeffs[:self.gamma_size,:]
-        coeffs_D = coeffs[self.gamma_size:,:]
-        
-        H_C = self.H[:,:self.gamma_size]
-        H_D = self.H[:,self.gamma_size:]
-        
-        c_vecs = torch.transpose(torch.matmul(H_C, coeffs_C), 0, 1)
-        d_vecs = torch.transpose(torch.matmul(H_D, coeffs_D), 0, 1)
+        c_vecs = rotated * blend_c
+        d_vecs = rotated * blend_d
         
         return c_vecs, d_vecs
     
