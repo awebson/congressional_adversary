@@ -10,7 +10,7 @@ from gensim.test.utils import datapath
 # Constants
 saved_lda = "ldamodel.bin"
 num_topics = 42
-desc_words_per_topic = 7
+desc_words_per_topic = 9
 
 def display_topic(lda, common_dict, topic_no):
     term_list = lda.get_topic_terms(topic_no, topn=desc_words_per_topic)
@@ -20,7 +20,7 @@ def display_topic(lda, common_dict, topic_no):
 
 def get_pn_corpus():
 
-    pick_file = '../my_data/pn_underscored_small.pickle'
+    pick_file = '../my_data/pn_underscored.pickle'
     vocab_file = "../newcong_ad_data/data/processed/bill_mentions/train_data.pickle"
 
     print("Loading pickle file...", pick_file)
@@ -45,8 +45,6 @@ def get_pn_corpus():
 
 text_only, word_to_id, pickdata = get_pn_corpus()
 
-
-
 # Create a corpus from a list of texts
 print("Creating dictionary...")
 common_dictionary = Dictionary(text_only)
@@ -64,14 +62,21 @@ else:
 
 
 # Pick several documents at random
-num_documents = 3
+num_documents = 8
 doc_ids = random.sample(range(len(common_corpus)), num_documents)
 for rndm_id in doc_ids:
     topic_list = lda.get_document_topics(common_corpus[rndm_id])
     title = pickdata[rndm_id]['title']
-    print("Topic list for title", title)
+    print("Topic list for title:")
+    print(title)
+    print("")
+    prob_topic_list = []
     for topic_no, prob in topic_list:
+        prob_topic_list.append((prob, topic_no))
+    prob_topic_list.sort(reverse=True)
+    for prob, topic_no in prob_topic_list:
         print("Topic no", topic_no, "prob", prob)
         display_topic(lda, common_dictionary, topic_no)
         print("")
+
     
