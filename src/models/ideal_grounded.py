@@ -409,35 +409,23 @@ class IdealGroundedExperiment(Experiment):
         # for name, param in self.model.named_parameters():
         #     if param.requires_grad:
         #         print(name)  # param.data)
+
+        self.DS_deno_optimizer = config.optimizer(
+            model.deno_space.deno_probe.parameters(), lr=config.learning_rate)
+        self.DS_cono_optimizer = config.optimizer(
+            model.deno_space.cono_probe.parameters(), lr=config.learning_rate)
+
+        self.CS_deno_optimizer = config.optimizer(
+            model.cono_space.deno_probe.parameters(), lr=config.learning_rate)
+        self.CS_cono_optimizer = config.optimizer(
+            model.cono_space.cono_probe.parameters(), lr=config.learning_rate)
+
         self.joint_optimizer = config.optimizer(
             list(model.deno_space.decomposed.parameters()) +
-            # list(model.deno_space.deno_probe.parameters()) +
             list(model.cono_space.decomposed.parameters()),
-            # list(model.cono_space.cono_probe.parameters()),
-            lr=config.learning_rate)
-
-        # self.DS_decomp_optimizer = config.optimizer(
-        #     model.deno_space.decomposed.parameters(),
-        #     lr=config.learning_rate)
-        self.DS_deno_optimizer = config.optimizer(
-            model.deno_space.deno_probe.parameters(),
-            lr=config.learning_rate)
-        self.DS_cono_optimizer = config.optimizer(
-            model.deno_space.cono_probe.parameters(),
-            lr=config.learning_rate)
-
-        # self.CS_decomp_optimizer = config.optimizer(
-        #     model.cono_space.decomposed.parameters(),
-        #     lr=config.learning_rate)
-        self.CS_deno_optimizer = config.optimizer(
-            model.cono_space.deno_probe.parameters(),
-            lr=config.learning_rate)
-        self.CS_cono_optimizer = config.optimizer(
-            model.cono_space.cono_probe.parameters(),
             lr=config.learning_rate)
         self.R_optimizer = config.optimizer(
-            model.recomposer.parameters(),
-            lr=config.learning_rate)
+            model.recomposer.parameters(), lr=config.learning_rate)
 
         dev_Hd, dev_Hc = model.deno_space.homogeneity(self.data.dev_ids)
         test_Hd, test_Hc = model.deno_space.homogeneity(self.data.test_ids)
@@ -483,10 +471,6 @@ class IdealGroundedExperiment(Experiment):
         L_joint.backward()
         self.joint_optimizer.step()
         self.R_optimizer.step()
-        # self.DS_decomp_optimizer.step()
-        # self.CS_decomp_optimizer.step()
-        # self.DS_deno_optimizer.step()
-        # self.CS_cono_optimizer.step()
 
         if batch_index % self.config.update_tensorboard == 0:
             D_deno_acc, D_cono_acc, C_deno_acc, C_cono_acc = model.accuracy(
@@ -600,13 +584,13 @@ class IdealGroundedExperiment(Experiment):
 
 @dataclass
 class IdealGroundedConfig():
-    corpus_path: Path = Path('../../data/ready/CR_topic_context3/train_data.pickle')
-    num_deno_classes: int = 41
-    num_cono_classes: int = 2
-
-    # corpus_path: str = '../../data/ready/CR_bill_context3/train_data.pickle'
-    # num_deno_classes: int = 1029
+    # corpus_path: Path = Path('../../data/ready/CR_topic_context3/train_data.pickle')
+    # num_deno_classes: int = 41
     # num_cono_classes: int = 2
+
+    corpus_path: str = '../../data/ready/CR_bill_context3/train_data.pickle'
+    num_deno_classes: int = 1029
+    num_cono_classes: int = 2
 
     # corpus_path: str = '../../data/ready/CR_bill_context5/train_data.pickle'
     # num_deno_classes: int = 1027

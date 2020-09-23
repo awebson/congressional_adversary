@@ -37,15 +37,21 @@ class ProxyGroundedDecomposer(Decomposer):
         self.decomposed.weight.requires_grad = True
         # self.SGNS_context.weight.requires_grad = True
         vocab_size, embed_size = self.decomposed.weight.shape
-        self.simple_LM = nn.Linear(embed_size, vocab_size)
+        self.deno_probe = nn.Linear(embed_size, vocab_size)
+        # self.deno_probe = nn.Sequential(
+        #         nn.Linear(embed_size, vocab_size),
+        #         nn.ReLU())
         self.cono_probe = cono_probe
         self.num_cono_classes = cono_probe[-1].out_features
         self.device = device
         self.to(self.device)
 
-        # for skip-gram loss
-        self.negative_sampling_probs = negative_sampling_probs
-        self.num_negative_samples = num_negative_samples
+        # for LM loss
+        self.vocab_size = vocab_size
+
+        # # for skip-gram loss
+        # self.negative_sampling_probs = negative_sampling_probs
+        # self.num_negative_samples = num_negative_samples
 
         self.preserve = preserve
         self.id_to_word = id_to_word
@@ -62,9 +68,12 @@ class ProxyGroundedDecomposer(Decomposer):
         seq_repr: Matrix = torch.mean(seq_word_vecs, dim=1)
 
         # proxy_deno_loss = self.skip_gram_loss(center_word_ids, true_context_ids)
-        proxy_deno_loss = F.cross_entropy(
-            self.simple_LM(self.decomposed(center_word_ids)),
-            true_context_ids)
+        # proxy_deno_loss = F.cross_entropy(
+        #     self.deno_probe(self.decomposed(center_word_ids)),
+        #     true_context_ids)
+        deno_logits = self.deno_probe(self.decomposed(center_word_ids))
+        deno_log_prob = F.log_softmax(deno_logits, dim=1)
+        deno_probe_loss = F.nll_loss(deno_log_prob, true_context_ids)
 
         cono_logits = self.cono_probe(seq_repr)
         cono_log_prob = F.log_softmax(cono_logits, dim=1)
@@ -73,13 +82,11 @@ class ProxyGroundedDecomposer(Decomposer):
         if self.preserve == 'deno':  # DS removing connotation (gamma < 0)
             uniform_dist = torch.full_like(cono_log_prob, 1 / self.num_cono_classes)
             cono_adversary_loss = F.kl_div(cono_log_prob, uniform_dist, reduction='batchmean')
-            # decomposer_loss = torch.sigmoid(proxy_deno_loss) + torch.sigmoid(cono_adversary_loss)
-            return proxy_deno_loss, cono_probe_loss, cono_adversary_loss, seq_word_vecs
+            return deno_probe_loss, cono_probe_loss, cono_adversary_loss, seq_word_vecs
         else:  # CS removing denotation
-            # decomposer_loss = (1 - torch.sigmoid(proxy_deno_loss)
-            #                    + torch.sigmoid(cono_probe_loss))
-            # cono_adversary_loss = 0  # placeholder
-            return proxy_deno_loss, cono_probe_loss, seq_word_vecs
+            uniform_dist = torch.full_like(deno_log_prob, 1 / self.vocab_size)
+            deno_adversary_loss = F.kl_div(deno_log_prob, uniform_dist, reduction='batchmean')
+            return deno_probe_loss, deno_adversary_loss, cono_probe_loss, seq_word_vecs
 
         # return (decomposer_loss, proxy_deno_loss,
         #         cono_probe_loss, cono_adversary_loss, seq_word_vecs)
@@ -129,7 +136,6 @@ class ProxyGroundedDecomposer(Decomposer):
             ).squeeze()  # bn1 -> bn
         negative_objective = F.logsigmoid(-negative_objective)
         negative_objective = torch.sum(negative_objective, dim=1)  # bn -> b
-        # TODO normalize?
         return -torch.mean(objective + negative_objective)
 
     def HS_loss(
@@ -302,14 +308,14 @@ class ProxyGroundedRecomposer(Recomposer):
             cono_labels: Vector,
             ) -> Tuple[Scalar, ...]:
         # Denotation Space
-        DS_deno, DS_cono_probe, DS_cono_adver, deno_vecs = self.deno_space(
+        DS_deno_probe, DS_cono_probe, DS_cono_adver, deno_vecs = self.deno_space(
             center_word_ids, context_word_ids, seq_word_ids, cono_labels)
-        L_DS = torch.sigmoid(DS_deno) + torch.sigmoid(DS_cono_adver)
+        DS_decomp = torch.sigmoid(DS_deno_probe) + torch.sigmoid(DS_cono_adver)
 
         # Connotation Space
-        CS_deno, CS_cono_probe, cono_vecs = self.cono_space(
+        CS_deno_probe, CS_deno_adver, CS_cono_probe, cono_vecs = self.cono_space(
             center_word_ids, context_word_ids, seq_word_ids, cono_labels)
-        L_CS = 1 - torch.sigmoid(CS_deno) + torch.sigmoid(CS_cono_probe)
+        CS_decomp = torch.sigmoid(CS_deno_adver) + torch.sigmoid(CS_cono_probe)
 
         # Recomposer
         recomposed = self.recomposer(torch.cat((deno_vecs, cono_vecs), dim=-1))
@@ -317,10 +323,10 @@ class ProxyGroundedRecomposer(Recomposer):
         pretrained = self.pretrained_embed(seq_word_ids)
         L_R = 1 - F.cosine_similarity(recomposed, pretrained, dim=-1).mean()
 
-        L_joint = L_DS + L_CS + self.rho * L_R
+        L_joint = DS_decomp + CS_decomp + self.rho * L_R
         return (L_joint, L_R,
-                L_DS, DS_deno, DS_cono_probe, DS_cono_adver,
-                L_CS, CS_deno, CS_cono_probe)
+                DS_decomp, DS_deno_probe, DS_cono_probe, DS_cono_adver,
+                CS_decomp, CS_deno_probe, CS_deno_adver, CS_cono_probe)
 
     def predict(self, seq_word_ids: Vector) -> Tuple[Vector, Vector]:
         DS_cono_conf = self.deno_space.predict(seq_word_ids)
@@ -512,25 +518,22 @@ class ProxyGroundedExperiment(Experiment):
             if param.requires_grad:
                 print(name)  # param.data)
 
-        # self.D_decomp_params = model.deno_space.decomposed.parameters()
-        # self.D_cono_params = model.deno_space.cono_probe.parameters()
-        self.joint_params = (
-            list(model.deno_space.decomposed.parameters()) +
-            list(model.cono_space.decomposed.parameters()))
-        self.joint_optimizer = config.optimizer(
-            self.joint_params, lr=config.learning_rate)
+        self.DS_deno_optimizer = config.optimizer(
+            model.deno_space.deno_probe.parameters(), lr=config.learning_rate)
         self.DS_cono_optimizer = config.optimizer(
             model.deno_space.cono_probe.parameters(), lr=config.learning_rate)
 
-        # self.C_decomp_params = model.cono_space.decomposed.parameters()
-        # self.C_cono_parms = model.cono_space.cono_probe.parameters()
-        # self.CS_decomp_optimizer = config.optimizer(
-        #     model.cono_space.decomposed.parameters(), lr=config.learning_rate)
+        self.CS_deno_optimizer = config.optimizer(
+            model.cono_space.deno_probe.parameters(), lr=config.learning_rate)
         self.CS_cono_optimizer = config.optimizer(
             model.cono_space.cono_probe.parameters(), lr=config.learning_rate)
 
-        self.recomp_params = model.recomposer.parameters()
-        self.R_optimizer = config.optimizer(self.recomp_params, lr=config.learning_rate)
+        self.joint_optimizer = config.optimizer(
+            list(model.deno_space.decomposed.parameters()) +
+            list(model.cono_space.decomposed.parameters()),
+            lr=config.learning_rate)
+        self.R_optimizer = config.optimizer(
+            model.recomposer.parameters(), lr=config.learning_rate)
 
         if not model.eval_deno:
             dev_Hc = model.deno_space.homogeneity(self.data.dev_ids)
@@ -557,7 +560,6 @@ class ProxyGroundedExperiment(Experiment):
 
     def train_step(self, batch_index: int, batch: Tuple) -> None:
         model = self.model
-        clip = self.config.clip_grad_norm
         seq_word_ids = batch[0].to(self.device)
         center_word_ids = batch[1].to(self.device)
         context_word_ids = batch[2].to(self.device)
@@ -565,46 +567,43 @@ class ProxyGroundedExperiment(Experiment):
 
         # Update probes with proper (non-adversarial) losses
         model.zero_grad()
-        DS_proxy_deno, DS_cono_probe, DS_cono_adversary, _ = model.deno_space(
+        DS_deno_probe, DS_cono_probe, DS_cono_adver, _ = model.deno_space(
             center_word_ids, context_word_ids, seq_word_ids, cono_labels)
+        DS_deno_probe.backward(retain_graph=True)
         DS_cono_probe.backward()
-        # nn.utils.clip_grad_norm_(model.deno_space.cono_probe.parameters(), clip)
+        self.DS_deno_optimizer.step()
         self.DS_cono_optimizer.step()
 
         model.zero_grad()
-        CS_proxy_deno, CS_cono_probe, _ = model.cono_space(
+        CS_deno_probe, CS_deno_adver, CS_cono_probe, _ = model.cono_space(
             center_word_ids, context_word_ids, seq_word_ids, cono_labels)
+        CS_deno_probe.backward(retain_graph=True)
         CS_cono_probe.backward()
-        # nn.utils.clip_grad_norm_(model.cono_space.cono_probe.parameters(), clip)
+        self.CS_deno_optimizer.step()
         self.CS_cono_optimizer.step()
 
         model.zero_grad()
         (L_joint, L_R,
-            L_DS, DS_deno_proxy, DS_cono_probe, DS_cono_adver,
-            L_CS, CS_deno_proxy, CS_cono_probe) = model(
-                center_word_ids, context_word_ids, seq_word_ids, cono_labels)
+            DS_decomp, DS_deno_probe, DS_cono_probe, DS_cono_adver,
+            CS_decomp, CS_deno_probe, CS_deno_adver, CS_cono_probe) = model(
+            center_word_ids, context_word_ids, seq_word_ids, cono_labels)
         L_joint.backward()
-        # nn.utils.clip_grad_norm_(self.joint_params, clip)
         self.joint_optimizer.step()
-        # self.DS_decomp_optimizer.step()
-        # self.CS_decomp_optimizer.step()
-
-        # Recomposer
-        # nn.utils.clip_grad_norm_(self.recomp_params, clip)
         self.R_optimizer.step()
 
         if batch_index % self.config.update_tensorboard == 0:
             DS_cono_acc, CS_cono_acc = model.accuracy(seq_word_ids, cono_labels)
             self.update_tensorboard({
-                'Denotation Decomposer/deno_loss': DS_deno_proxy,
+                'Denotation Decomposer/deno_loss': DS_deno_probe,
                 'Denotation Decomposer/cono_loss_proper': DS_cono_probe,
                 'Denotation Decomposer/cono_loss_adversary': DS_cono_adver,
-                'Denotation Decomposer/combined_loss': L_DS,
+                'Denotation Decomposer/combined_loss': DS_decomp,
                 'Denotation Decomposer/accuracy_train_cono': DS_cono_acc,
 
-                'Connotation Decomposer/deno_loss': CS_deno_proxy,
+                'Connotation Decomposer/deno_loss': CS_cono_probe,
                 'Connotation Decomposer/cono_loss_proper': CS_cono_probe,
-                'Connotation Decomposer/combined_loss': L_CS,
+                'Connotation Decomposer/deno_loss_adversary': CS_deno_adver,
+                'Connotation Decomposer/combined_loss': CS_decomp,
                 'Connotation Decomposer/accuracy_train_cono': CS_cono_acc,
 
                 'Recomposer/joint loss': L_joint,

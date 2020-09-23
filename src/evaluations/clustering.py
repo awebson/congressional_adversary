@@ -103,11 +103,10 @@ def graph_en_masse(
 
 
 def main():
-    # in_path = Path('../../results/replica/CR_topic/ctx5/epoch100.pt')
+    # in_path = Path('../../results/replica/CR_topic/LinRe/epoch100.pt')
     # in_path = Path('../../results/replica/CR_bill/new ground/epoch50.pt')
     # in_path = Path('../../results/replica/CR_skip/clip none extra/epoch6.pt')
-    # in_path = Path('../../results/replica/CR_skip/clip none extra B8k/epoch12.pt')
-    in_path = Path('../../results/replica/CR_skip/PE SGNS 97/epoch2.pt')
+    in_path = Path('../../results/replica/CR_skip/naive LM LR1e-3 NO/epoch1_4.pt')
     # in_path = Path('../../results/replica/PN_skip/clip all/epoch20.pt')
     out_dir = in_path.parent
     model = torch.load(in_path, map_location='cpu')
@@ -164,7 +163,7 @@ def main():
 
     for perplexity in (2, 4, 5, 6, 8, 10, 12):
         graph_en_masse(
-            spaces, out_dir=out_dir / f't-SNE p{perplexity}', color_code='cono',
+            spaces, out_dir=out_dir / f't-SNE p{perplexity}', color_code='both',
             reduction='TSNE', perplexity=perplexity, words=grounded_words)
 
 if __name__ == "__main__":
