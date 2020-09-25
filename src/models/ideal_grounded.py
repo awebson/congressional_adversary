@@ -328,6 +328,32 @@ class Recomposer(nn.Module):
         return {prefix + key + suffix: round(val, rounding)
                 for key, val in row.items()}
 
+    def cf_cos_sim(self, query1: str, query2: str) -> Tuple[float, ...]:
+        try:
+            query1_id = torch.tensor(self.word_to_id[query1])
+        except KeyError:
+            print(f'Out of vocabulary: {query1}')
+            return -1, -1, -1
+        try:
+            query2_id = torch.tensor(self.word_to_id[query2])
+        except KeyError:
+            print(f'Out of vocabulary: {query2}')
+            return -1, -1, -1
+
+        v1 = self.pretrained_embed(query1_id)
+        v2 = self.pretrained_embed(query2_id)
+        pre_sim = F.cosine_similarity(v1, v2, dim=0).item()
+
+        v1 = self.deno_space.decomposed(query1_id)
+        v2 = self.deno_space.decomposed(query2_id)
+        deno_sim = F.cosine_similarity(v1, v2, dim=0).item()
+
+        v1 = self.cono_space.decomposed(query1_id)
+        v2 = self.cono_space.decomposed(query2_id)
+        cono_sim = F.cosine_similarity(v1, v2, dim=0).item()
+
+        return pre_sim, deno_sim, cono_sim
+
     def export_embeddings(self, out_path: Path) -> Tuple[Matrix, Matrix]:
         raise NotImplementedError
 
@@ -584,24 +610,32 @@ class IdealGroundedExperiment(Experiment):
 
 @dataclass
 class IdealGroundedConfig():
-    # corpus_path: Path = Path('../../data/ready/CR_topic_context3/train_data.pickle')
-    # num_deno_classes: int = 41
+    corpus_path: Path = Path('../../data/ready/CR_topic_context5/train_data.pickle')
+    num_deno_classes: int = 41
+    num_cono_classes: int = 2
+
+    # corpus_path: str = '../../data/ready/CR_bill_context0/train_data.pickle'
+    # num_deno_classes: int = 1030
     # num_cono_classes: int = 2
 
-    corpus_path: str = '../../data/ready/CR_bill_context3/train_data.pickle'
-    num_deno_classes: int = 1029
-    num_cono_classes: int = 2
+    # corpus_path: str = '../../data/ready/CR_bill_context3/train_data.pickle'
+    # num_deno_classes: int = 1029
+    # num_cono_classes: int = 2
 
     # corpus_path: str = '../../data/ready/CR_bill_context5/train_data.pickle'
     # num_deno_classes: int = 1027
     # num_cono_classes: int = 2
 
     rand_path: Path = Path('../../data/ellie/rand_sample.cr.txt')
-    dev_path: Path = Path('../../data/ellie/partisan_sample_val.cr.txt')
-    test_path: Path = Path('../../data/ellie/partisan_sample.cr.txt')
+    # dev_path: Path = Path('../../data/ellie/partisan_sample_val.cr.txt')
+    # test_path: Path = Path('../../data/ellie/partisan_sample.cr.txt')
+    dev_path: Path = Path('../../data/ready/CR_bill_context0/0.7partisan_dev_words.txt')
+    test_path: Path = Path('../../data/ready/CR_bill_context0/0.7partisan_test_words.txt')
     pretrained_embed_path: Optional[Path] = Path(
-        '../../data/pretrained_word2vec/CR_ctx3_HS.txt')
-        # '../../data/pretrained_word2vec/bill_mentions_HS.txt')
+        # '../../data/pretrained_word2vec/CR_ctx0_HS.txt')
+        # '../../data/pretrained_word2vec/CR_ctx3_SGNS.txt')
+        # '../../data/pretrained_word2vec/CR_97_SGNS.txt')
+        '../../data/pretrained_word2vec/maybe ctx5/bill_mentions.txt')
 
     output_dir: Path = Path('../../results/debug')
     device: torch.device = torch.device('cuda')
@@ -627,7 +661,7 @@ class IdealGroundedConfig():
     architecture: str = 'L4R'
     batch_size: int = 512
     embed_size: int = 300
-    num_epochs: int = 100
+    num_epochs: int = 150
     # encoder_update_cycle: int = 1  # per batch
     # decoder_update_cycle: int = 1  # per batch
 
