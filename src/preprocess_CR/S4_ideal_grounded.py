@@ -36,8 +36,8 @@ EVAL_R_THRESHOLD = 0.55
 EVAL_D_THRESHOLD = 1 - EVAL_R_THRESHOLD
 
 in_dir = Path('../../data/interim/bill_mentions/')
-# out_dir = Path('../../data/ready/CR_topic_context0')
-out_dir = Path('../../data/ready/CR_bill_context0')
+# out_dir = Path(f'../../data/ready/CR_topic_context{NUM_CONTEXT_SPEECHES}')
+out_dir = Path(f'../../data/ready/CR_bill_context{NUM_CONTEXT_SPEECHES}')
 Path.mkdir(out_dir, parents=True, exist_ok=True)
 print('Minimum number of mentions per bill =', MIN_NUM_MENTIONS)
 
@@ -108,10 +108,10 @@ def process_sentences(session: int) -> Tuple[List[Sentence], List[Sentence]]:
                 for faux_sent in faux_sent_tokenize(speech.text)]
 
     check = sum([m for m in num_mentions.values() if m > 2])
-    tqdm.write(
-        f'Session {session}: '
-        f'{per_session_mention} =?= {check} mentions above min, '
-        f'{len(train_sent):,} faux sentences, {len(dev_sent)} dev holdout')
+    # tqdm.write(
+    #     f'Session {session}: '
+    #     f'{per_session_mention} =?= {check} mentions above min, '
+    #     f'{len(train_sent):,} faux sentences, {len(dev_sent)} dev holdout')
     return train_sent, dev_sent
 
 
