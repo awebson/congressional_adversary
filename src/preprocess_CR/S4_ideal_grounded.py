@@ -25,21 +25,25 @@ MIN_NUM_MENTIONS = 3
 FIXED_SENT_LEN = 15
 MIN_SENT_LEN = 5
 MIN_WORD_FREQ = 15
+NUM_CONTEXT_SPEECHES = 3
+NUM_DEV_HOLDOUT = 100  # faux sentences per session
+
+EVAL_MIN_FREQ = 100
+EVAL_R_THRESHOLDS = (0.6, 0.7, 0.75, 0.8, 0.9)
+EVAL_NUM_RANDOM_SAMPLE = 500
+
 # DENO_LABEL = 'topic'
 DENO_LABEL = 'title'
-NUM_CONTEXT_SPEECHES = 0
-MAX_DEV_HOLDOUT = 20  # 100 faux speeches per session
-
-EVAL_NUM_SAMPLES = 1000
-EVAL_MIN_FREQ = 100
-EVAL_R_THRESHOLD = 0.55
-EVAL_D_THRESHOLD = 1 - EVAL_R_THRESHOLD
 
 in_dir = Path('../../data/interim/bill_mentions/')
 # out_dir = Path(f'../../data/ready/CR_topic_context{NUM_CONTEXT_SPEECHES}')
 out_dir = Path(f'../../data/ready/CR_bill_context{NUM_CONTEXT_SPEECHES}')
 Path.mkdir(out_dir, parents=True, exist_ok=True)
-print('Minimum number of mentions per bill =', MIN_NUM_MENTIONS)
+
+print('Writing to to ', out_dir)
+log = open(out_dir / 'log.txt', 'w')
+log.write(f'Num of context speeches per bill mention = {NUM_CONTEXT_SPEECHES}\n')
+log.write(f'Minimum number of mentions per bill = {MIN_NUM_MENTIONS}\n')
 
 
 @dataclass
@@ -84,8 +88,7 @@ def process_sentences(session: int) -> Tuple[List[Sentence], List[Sentence]]:
                 continue
 
     # Chop up sentences
-    train_sent: List[Sentence] = []
-    dev_sent: List[Sentence] = []
+    sentences: List[Sentence] = []
     for speech in speeches:
         if speech.bill is None:
             continue
@@ -98,21 +101,22 @@ def process_sentences(session: int) -> Tuple[List[Sentence], List[Sentence]]:
         if cono != 'D' and cono != 'R':  # skip independent members for now
             continue
 
-        if len(dev_sent) < MAX_DEV_HOLDOUT:
-            dev_sent += [
-                Sentence(faux_sent, deno, cono)
-                for faux_sent in faux_sent_tokenize(speech.text)]
-        else:
-            train_sent += [
-                Sentence(faux_sent, deno, cono)
-                for faux_sent in faux_sent_tokenize(speech.text)]
+        sentences += [
+            Sentence(faux_sent, deno, cono)
+            for faux_sent in faux_sent_tokenize(speech.text)]
+
+    random.shuffle(sentences)
+    dev = sentences[:NUM_DEV_HOLDOUT]
+    train = sentences[NUM_DEV_HOLDOUT:]
 
     check = sum([m for m in num_mentions.values() if m > 2])
-    # tqdm.write(
-    #     f'Session {session}: '
-    #     f'{per_session_mention} =?= {check} mentions above min, '
-    #     f'{len(train_sent):,} faux sentences, {len(dev_sent)} dev holdout')
-    return train_sent, dev_sent
+    progress = (
+        f'Session {session}: '
+        f'{per_session_mention} bill mentions above min, '
+        f'{len(train):,} sentences, {len(dev)} dev holdout')
+    print(progress)
+    print(progress, file=log)
+    return train, dev
 
 
 def build_vocabulary(
@@ -135,16 +139,18 @@ def build_vocabulary(
             word_to_id[word] = next_vocab_id
             id_to_word[next_vocab_id] = word
             next_vocab_id += 1
-    print(f'Vocabulary size = {len(word_to_id):,}')
+    print(f'Vocabulary size = {len(word_to_id):,}', file=log)
     return word_to_id, id_to_word
 
 
+# Sorry for the lack of main()
 train_sent: List[Sentence] = []
 dev_sent: List[Sentence] = []
 for train, dev in map(process_sentences, sessions):
     train_sent += [s for s in train]
     dev_sent += [s for s in dev]
-print(f'len dev faux sent = {len(dev_sent)}')
+print(f'Number of train sentences = {len(train_sent):,}', file=log)
+print(f'Number of dev sentences = {len(dev_sent):,}', file=log)
 
 word_freq = Counter((w for sent in train_sent for w in sent.words))
 sent_deno_freq = Counter((sent.deno for sent in train_sent))
@@ -164,109 +170,44 @@ for sent in train_sent:
 
 # EVAL_R_THRESHOLD = 0.55
 # EVAL_D_THRESHOLD = 1 - EVAL_R_THRESHOLD
-# partisan_eval_words = []
+random_eval_words = set()
 for gw in ground.values():
     gw.majority_deno = gw.deno.most_common(1)[0][0]
     gw.majority_cono = gw.cono.most_common(1)[0][0]
     gw.freq = sum(gw.cono.values())
     gw.R_ratio = gw.cono['R'] / gw.freq
-#     if gw.freq >= EVAL_MIN_FREQ:
-#         if gw.R_ratio >= EVAL_R_THRESHOLD or gw.R_ratio <= EVAL_D_THRESHOLD:
-#             partisan_eval_words.append(gw)
-# print(f'{len(partisan_eval_words)} partisan eval words '
-#       f'with R_threshold = {EVAL_R_THRESHOLD}')
-# with open(out_dir / f'partisan_eval_words {EVAL_R_THRESHOLD}.txt', 'w') as file:
-#     for gw in partisan_eval_words:
-#         print(gw.text, gw.freq, gw.R_ratio, file=file)
-
-
-# EVAL_R_THRESHOLD = 0.6
-# EVAL_D_THRESHOLD = 1 - EVAL_R_THRESHOLD
-# partisan_eval_words = []
-# for gw in ground.values():
-#     if gw.freq >= EVAL_MIN_FREQ:
-#         if gw.R_ratio >= EVAL_R_THRESHOLD or gw.R_ratio <= EVAL_D_THRESHOLD:
-#             partisan_eval_words.append(gw)
-# print(f'{len(partisan_eval_words)} partisan eval words '
-#       f'with R_threshold = {EVAL_R_THRESHOLD}')
-# with open(out_dir / f'partisan_eval_words {EVAL_R_THRESHOLD}.txt', 'w') as file:
-#     for gw in partisan_eval_words:
-#         print(gw.text, gw.freq, gw.R_ratio, file=file)
-
-
-EVAL_R_THRESHOLD = 0.7
-EVAL_D_THRESHOLD = 1 - EVAL_R_THRESHOLD
-partisan_eval_words = []
-for gw in ground.values():
     if gw.freq >= EVAL_MIN_FREQ:
-        if gw.R_ratio >= EVAL_R_THRESHOLD or gw.R_ratio <= EVAL_D_THRESHOLD:
-            partisan_eval_words.append(gw)
-print(f'{len(partisan_eval_words)} partisan eval words '
-      f'with R_threshold = {EVAL_R_THRESHOLD}')
-# with open(out_dir / f'partisan_eval_words {EVAL_R_THRESHOLD}.txt', 'w') as file:
-#     for gw in partisan_eval_words:
-#         print(gw.text, gw.freq, gw.R_ratio, file=file)
-
-random.shuffle(partisan_eval_words)
-mid = len(partisan_eval_words) // 2
-with open(out_dir / f'{EVAL_R_THRESHOLD}partisan_dev_words.txt', 'w') as file:
-    for gw in partisan_eval_words[:mid]:
-        print(gw.text, file=file)
-with open(out_dir / f'{EVAL_R_THRESHOLD}partisan_test_words.txt', 'w') as file:
-    for gw in partisan_eval_words[mid:]:
-        print(gw.text, file=file)
-
-# EVAL_R_THRESHOLD = 0.75
-# EVAL_D_THRESHOLD = 1 - EVAL_R_THRESHOLD
-# partisan_eval_words = []
-# for gw in ground.values():
-#     if gw.freq >= EVAL_MIN_FREQ:
-#         if gw.R_ratio >= EVAL_R_THRESHOLD or gw.R_ratio <= EVAL_D_THRESHOLD:
-#             partisan_eval_words.append(gw)
-# print(f'{len(partisan_eval_words)} partisan eval words '
-#       f'with R_threshold = {EVAL_R_THRESHOLD}')
-# with open(out_dir / f'partisan_eval_words {EVAL_R_THRESHOLD}.txt', 'w') as file:
-#     for gw in partisan_eval_words:
-#         print(gw.text, gw.freq, gw.R_ratio, file=file)
-
-# EVAL_R_THRESHOLD = 0.8
-# EVAL_D_THRESHOLD = 1 - EVAL_R_THRESHOLD
-# partisan_eval_words = []
-# for gw in ground.values():
-#     if gw.freq >= EVAL_MIN_FREQ:
-#         if gw.R_ratio >= EVAL_R_THRESHOLD or gw.R_ratio <= EVAL_D_THRESHOLD:
-#             partisan_eval_words.append(gw)
-# print(f'{len(partisan_eval_words)} partisan eval words '
-#       f'with R_threshold = {EVAL_R_THRESHOLD}')
-# with open(out_dir / f'partisan_eval_words {EVAL_R_THRESHOLD}.txt', 'w') as file:
-#     for gw in partisan_eval_words:
-#         print(gw.text, gw.freq, gw.R_ratio, file=file)
-
-# EVAL_R_THRESHOLD = 0.9
-# EVAL_D_THRESHOLD = 1 - EVAL_R_THRESHOLD
-# partisan_eval_words = []
-# for gw in ground.values():
-#     if gw.freq >= EVAL_MIN_FREQ:
-#         if gw.R_ratio >= EVAL_R_THRESHOLD or gw.R_ratio <= EVAL_D_THRESHOLD:
-#             partisan_eval_words.append(gw)
-# print(f'{len(partisan_eval_words)} partisan eval words '
-#       f'with R_threshold = {EVAL_R_THRESHOLD}')
-# with open(out_dir / f'partisan_eval_words {EVAL_R_THRESHOLD}.txt', 'w') as file:
-#     for gw in partisan_eval_words:
-#         print(gw.text, gw.freq, gw.R_ratio, file=file)
+        random_eval_words.add(gw.text)
+random_eval_words = random.sample(random_eval_words, EVAL_NUM_RANDOM_SAMPLE)
+with open(out_dir / f'eval_words_random.txt', 'w') as file:
+    # for word in random_eval_words:
+    file.write('\n'.join(random_eval_words))
 
 
+for R_threshold in EVAL_R_THRESHOLDS:
+    D_threshold = 1 - R_threshold
+    partisan_eval_words = []
+    for gw in ground.values():
+        if gw.freq >= EVAL_MIN_FREQ:
+            if gw.R_ratio >= R_threshold or gw.R_ratio <= D_threshold:
+                partisan_eval_words.append(gw)
+    print(f'{len(partisan_eval_words)} partisan eval words '
+          f'with R_threshold = {R_threshold}', file=log)
 
-# import IPython
-# IPython.embed()
+    out_path = out_dir / f'inspect_{R_threshold}_partisan.tsv'
+    with open(out_path, 'w') as file:
+        print('word\tfreq\tR_ratio', file=file)
+        for gw in partisan_eval_words:
+            print(gw.text, gw.freq, gw.R_ratio, file=file)
 
-# raise SystemExit
-# partisan_eval_words = random.sample(partisan_eval_words, EVAL_NUM_SAMPLES)
-# random_eval_words = random.sample(ground.values(), EVAL_NUM_SAMPLES)
-
-# with open(out_dir / 'partisan_eval_words.txt', 'w') as file:
-#     for gw in partisan_eval_words:
-#         print(gw, file=file)
+    random.shuffle(partisan_eval_words)
+    mid = len(partisan_eval_words) // 2
+    with open(out_dir / f'{R_threshold}partisan_dev_words.txt', 'w') as file:
+        for gw in partisan_eval_words[:mid]:
+            print(gw.text, file=file)
+    with open(out_dir / f'{R_threshold}partisan_test_words.txt', 'w') as file:
+        for gw in partisan_eval_words[mid:]:
+            print(gw.text, file=file)
 
 word_to_id, id_to_word = build_vocabulary(
     word_freq, MIN_WORD_FREQ, add_special_tokens=True)
@@ -276,7 +217,7 @@ cono_to_id = {
     'D': 0,
     'R': 1}
 
-# TODO filter UNK?
+# NOTE filter UNK here?
 
 def wrap(sentences):
     sent_word_ids: List[List[int]] = []
@@ -314,3 +255,5 @@ with open(inspect_label_path, 'w') as file:
     file.write('freq\tdeno_label\n')
     for d, f in sorted(sent_deno_freq.items(), key=lambda t: t[1], reverse=True):
         file.write(f'{f}\t{d}\n')
+
+log.close()
