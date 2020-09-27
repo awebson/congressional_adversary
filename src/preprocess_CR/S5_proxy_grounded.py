@@ -289,6 +289,9 @@ def main(
         min_word_freq: int,
         min_sent_len: int,
         fixed_sent_len: int,
+        eval_min_freq: int,
+        eval_R_thresholds: Iterable[float],
+        eval_num_random_samples: int,
         conserve_RAM: bool
         ) -> None:
     Path.mkdir(out_dir, parents=True, exist_ok=True)
@@ -381,8 +384,46 @@ def main(
                 sent.subsampled_tokens = None
 
     # Prepare grounding for intrinsic evaluation
+    random_eval_words = set()
     for gw in ground.values():
         gw.majority_cono = gw.cono.most_common(1)[0][0]
+        gw.freq = sum(gw.cono.values())
+        gw.R_ratio = gw.cono['R'] / gw.freq
+        if gw.freq >= eval_min_freq:
+            random_eval_words.add(gw.text)
+    random_eval_words = random.sample(random_eval_words, eval_num_random_samples)
+    with open(out_dir / f'eval_words_random.txt', 'w') as file:
+        file.write('\n'.join(random_eval_words))
+
+    for R_threshold in eval_R_thresholds:
+        D_threshold = 1 - R_threshold
+        partisan_eval_words = []
+        for gw in ground.values():
+            if gw.freq >= eval_min_freq:
+                if gw.R_ratio >= R_threshold or gw.R_ratio <= D_threshold:
+                    partisan_eval_words.append(gw)
+        print(f'{len(partisan_eval_words)} partisan eval words '
+              f'with R_threshold = {R_threshold}', file=preview)
+
+        out_path = out_dir / f'inspect_{R_threshold}_partisan.tsv'
+        with open(out_path, 'w') as file:
+            print('word\tfreq\tR_ratio', file=file)
+            for gw in partisan_eval_words:
+                print(gw.text, gw.freq, gw.R_ratio, sep='\t', file=file)
+
+        if len(partisan_eval_words) > 2 * eval_num_random_samples:
+            partisan_eval_words = random.sample(
+                partisan_eval_words, 2 * eval_num_random_samples)
+        else:
+            random.shuffle(partisan_eval_words)
+
+        mid = len(partisan_eval_words) // 2
+        with open(out_dir / f'{R_threshold}partisan_dev_words.txt', 'w') as file:
+            for gw in partisan_eval_words[:mid]:
+                print(gw.text, file=file)
+        with open(out_dir / f'{R_threshold}partisan_test_words.txt', 'w') as file:
+            for gw in partisan_eval_words[mid:]:
+                print(gw.text, file=file)
 
     # Helper for negative sampling
     cumulative_freq = sum(freq ** 0.75 for freq in final_freq.values())
@@ -474,11 +515,14 @@ if __name__ == '__main__':
     main(
         sessions=range(97, 112),
         in_dir=Path('../../data/interim/underscored_corpora'),
-        out_dir=Path(f'../../data/ready/CR_skip'),
+        out_dir=Path(f'../../data/ready/CR_proxy'),
         subsampling_implementation='paper',
         subsampling_threshold=1e-5,
         min_word_freq=15,
         min_sent_len=5,
         fixed_sent_len=20,
+        eval_min_freq=100,
+        eval_R_thresholds=(0.6, 0.7, 0.75, 0.8, 0.9),
+        eval_num_random_samples=500,
         conserve_RAM=True
     )

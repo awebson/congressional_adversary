@@ -180,7 +180,6 @@ for gw in ground.values():
         random_eval_words.add(gw.text)
 random_eval_words = random.sample(random_eval_words, EVAL_NUM_RANDOM_SAMPLE)
 with open(out_dir / f'eval_words_random.txt', 'w') as file:
-    # for word in random_eval_words:
     file.write('\n'.join(random_eval_words))
 
 
@@ -198,7 +197,7 @@ for R_threshold in EVAL_R_THRESHOLDS:
     with open(out_path, 'w') as file:
         print('word\tfreq\tR_ratio', file=file)
         for gw in partisan_eval_words:
-            print(gw.text, gw.freq, gw.R_ratio, file=file)
+            print(gw.text, gw.freq, gw.R_ratio, sep='\t', file=file)
 
     random.shuffle(partisan_eval_words)
     mid = len(partisan_eval_words) // 2
