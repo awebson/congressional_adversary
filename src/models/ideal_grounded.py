@@ -311,24 +311,36 @@ class Recomposer(nn.Module):
         PE = self.PE_homogeneity
         DS_Hd, DS_Hc, CS_Hd, CS_Hc = self.homogeneity(self.dev_ids)
         row.update({
-            'Dev DS Hdeno': DS_Hd - PE['dev Hd'],
-            'Dev DS Hcono': DS_Hc - PE['dev Hc'],
-            'Dev CS Hdeno': CS_Hd - PE['dev Hd'],
-            'Dev CS Hcono': CS_Hc - PE['dev Hc'],
+            'Dev DS Hdeno': DS_Hd,
+            'Dev DS Hcono': DS_Hc,
+            'Dev CS Hdeno': CS_Hd,
+            'Dev CS Hcono': CS_Hc,
+            'Dev DS Hdeno delta': DS_Hd - PE['dev Hd'],
+            'Dev DS Hcono delta': DS_Hc - PE['dev Hc'],
+            'Dev CS Hdeno delta': CS_Hd - PE['dev Hd'],
+            'Dev CS Hcono delta': CS_Hc - PE['dev Hc'],
         })
         DS_Hd, DS_Hc, CS_Hd, CS_Hc = self.homogeneity(self.test_ids)
         row.update({
-            'Test DS Hdeno': DS_Hd - PE['test Hd'],
-            'Test DS Hcono': DS_Hc - PE['test Hc'],
-            'Test CS Hdeno': CS_Hd - PE['test Hd'],
-            'Test CS Hcono': CS_Hc - PE['test Hc'],
+            'Test DS Hdeno': DS_Hd,
+            'Test DS Hcono': DS_Hc,
+            'Test CS Hdeno': CS_Hd,
+            'Test CS Hcono': CS_Hc,
+            'Test DS Hdeno delta': DS_Hd - PE['test Hd'],
+            'Test DS Hcono delta': DS_Hc - PE['test Hc'],
+            'Test CS Hdeno delta': CS_Hd - PE['test Hd'],
+            'Test CS Hcono delta': CS_Hc - PE['test Hc'],
         })
         DS_Hd, DS_Hc, CS_Hd, CS_Hc = self.homogeneity(self.rand_ids)
         row.update({
-            'Random DS Hdeno': DS_Hd - PE['rand Hd'],
-            'Random DS Hcono': DS_Hc - PE['rand Hc'],
-            'Random CS Hdeno': CS_Hd - PE['rand Hd'],
-            'Random CS Hcono': CS_Hc - PE['rand Hc'],
+            'Random DS Hdeno': DS_Hd,
+            'Random DS Hcono': DS_Hc,
+            'Random CS Hdeno': CS_Hd,
+            'Random CS Hcono': CS_Hc,
+            'Random DS Hdeno delta': DS_Hd - PE['rand Hd'],
+            'Random DS Hcono delta': DS_Hc - PE['rand Hc'],
+            'Random CS Hdeno delta': CS_Hd - PE['rand Hd'],
+            'Random CS Hcono delta': CS_Hc - PE['rand Hc'],
         })
         return {key: round(val, rounding) for key, val in row.items()}
 
@@ -528,7 +540,6 @@ class IdealGroundedExperiment(Experiment):
             })
 
         if batch_index % self.config.eval_dev_set == 0:
-            self.eval_step()
             D_deno_acc, D_cono_acc, C_deno_acc, C_cono_acc = model.accuracy(
                 self.data.dev_seq.to(self.device),
                 self.data.dev_deno_labels.to(self.device),
@@ -545,7 +556,7 @@ class IdealGroundedExperiment(Experiment):
             # self.update_tensorboard(
             #     model.tabulate(self.data.test_ids, prefix='Test Homogeneity/'))
 
-    def eval_step(self) -> None:
+    def eval_step(self, epoch_index: int) -> None:
         PE = self.model.PE_homogeneity
         DS_Hd, DS_Hc, CS_Hd, CS_Hc = self.model.homogeneity(self.data.dev_ids)
         self.update_tensorboard({
@@ -553,21 +564,21 @@ class IdealGroundedExperiment(Experiment):
             'Homogeneity Diff Dev/DS Hcono': DS_Hc - PE['dev Hc'],
             'Homogeneity Diff Dev/CS Hdeno': CS_Hd - PE['dev Hd'],
             'Homogeneity Diff Dev/CS Hcono': CS_Hc - PE['dev Hc'],
-        })
+            }, manual_step=epoch_index)
         DS_Hd, DS_Hc, CS_Hd, CS_Hc = self.model.homogeneity(self.data.test_ids)
         self.update_tensorboard({
             'Homogeneity Diff Test/DS Hdeno': DS_Hd - PE['test Hd'],
             'Homogeneity Diff Test/DS Hcono': DS_Hc - PE['test Hc'],
             'Homogeneity Diff Test/CS Hdeno': CS_Hd - PE['test Hd'],
             'Homogeneity Diff Test/CS Hcono': CS_Hc - PE['test Hc'],
-        })
+            }, manual_step=epoch_index)
         DS_Hd, DS_Hc, CS_Hd, CS_Hc = self.model.homogeneity(self.data.rand_ids)
         self.update_tensorboard({
             'Homogeneity Diff Random/DS Hdeno': DS_Hd - PE['rand Hd'],
             'Homogeneity Diff Random/DS Hcono': DS_Hc - PE['rand Hc'],
             'Homogeneity Diff Random/CS Hdeno': CS_Hd - PE['rand Hd'],
             'Homogeneity Diff Random/CS Hcono': CS_Hc - PE['rand Hc'],
-        })
+            }, manual_step=epoch_index)
 
     def train(self) -> None:
         config = self.config
@@ -599,6 +610,8 @@ class IdealGroundedExperiment(Experiment):
                 self.tb_global_step += 1
             self.auto_save(epoch_index)
 
+            self.eval_step(epoch_index)
+
             if config.print_stats:
                 self.print_timestamp(epoch_index)
             # if config.export_error_analysis:
@@ -617,24 +630,23 @@ class IdealGroundedExperiment(Experiment):
 
 @dataclass
 class IdealGroundedConfig():
-    corpus_path: Path = Path('../../data/ready/CR_topic_context3/train_data.pickle')
-    rand_path: Path = Path('../../data/ready/CR_topic_context3/eval_words_random.txt')
-    dev_path: Path = Path('../../data/ready/CR_topic_context3/0.7partisan_dev_words.txt')
-    test_path: Path = Path('../../data/ready/CR_topic_context3/0.7partisan_test_words.txt')
-    num_deno_classes: int = 41
+    # corpus_path: Path = Path('../../data/ready/CR_topic_context3/train_data.pickle')
+    # rand_path: Path = Path('../../data/ready/CR_topic_context3/eval_words_random.txt')
+    # dev_path: Path = Path('../../data/ready/CR_topic_context3/0.7partisan_dev_words.txt')
+    # test_path: Path = Path('../../data/ready/CR_topic_context3/0.7partisan_test_words.txt')
+    # num_deno_classes: int = 41
+    # num_cono_classes: int = 2
+
+    corpus_path: str = '../../data/ready/CR_bill_context3/train_data.pickle'
+    rand_path: Path = Path('../../data/ready/CR_bill_context3/eval_words_random.txt')
+    dev_path: Path = Path('../../data/ready/CR_bill_context3/0.7partisan_dev_words.txt')
+    test_path: Path = Path('../../data/ready/CR_bill_context3/0.7partisan_test_words.txt')
+    num_deno_classes: int = 1029
     num_cono_classes: int = 2
 
     # corpus_path: str = '../../data/ready/CR_bill_context0/train_data.pickle'
     # num_deno_classes: int = 1030
     # num_cono_classes: int = 2
-
-    # corpus_path: str = '../../data/ready/CR_bill_context3/train_data.pickle'
-    # rand_path: Path = Path('../../data/ready/CR_bill_context3/eval_words_random.txt')
-    # dev_path: Path = Path('../../data/ready/CR_bill_context3/0.7partisan_dev_words.txt')
-    # test_path: Path = Path('../../data/ready/CR_bill_context3/0.7partisan_test_words.txt')
-    # num_deno_classes: int = 1029
-    # num_cono_classes: int = 2
-
     # corpus_path: str = '../../data/ready/CR_bill_context5/train_data.pickle'
     # num_deno_classes: int = 1027
     # num_cono_classes: int = 2

@@ -514,9 +514,9 @@ class ProxyGroundedExperiment(Experiment):
         self.model = ProxyGroundedRecomposer(config, self.data)
         model = self.model
 
-        for name, param in model.named_parameters():
-            if param.requires_grad:
-                print(name)  # param.data)
+        # for name, param in model.named_parameters():
+        #     if param.requires_grad:
+        #         print(name)  # param.data)
 
         self.DS_deno_optimizer = config.optimizer(
             model.deno_space.deno_probe.parameters(), lr=config.learning_rate)
@@ -535,19 +535,22 @@ class ProxyGroundedExperiment(Experiment):
         self.R_optimizer = config.optimizer(
             model.recomposer.parameters(), lr=config.learning_rate)
 
+        model.dev_ids = self.data.dev_ids
+        model.test_ids = self.data.test_ids
+        model.rand_ids = self.data.rand_ids
         if not model.eval_deno:
-            dev_Hc = model.deno_space.homogeneity(self.data.dev_ids)
-            test_Hc = model.deno_space.homogeneity(self.data.test_ids)
-            rand_Hc = model.deno_space.homogeneity(self.data.rand_ids)
+            dev_Hc = model.deno_space.homogeneity(model.dev_ids)
+            test_Hc = model.deno_space.homogeneity(model.test_ids)
+            rand_Hc = model.deno_space.homogeneity(model.rand_ids)
             model.PE_homogeneity = {
                 'dev Hc': dev_Hc,
                 'test Hc': test_Hc,
                 'rand Hc': rand_Hc,
             }
         else:
-            dev_Hd, dev_Hc = model.deno_space.extra_homogeneity(self.data.dev_ids)
-            test_Hd, test_Hc = model.deno_space.extra_homogeneity(self.data.test_ids)
-            rand_Hd, rand_Hc = model.deno_space.extra_homogeneity(self.data.rand_ids)
+            dev_Hd, dev_Hc = model.deno_space.extra_homogeneity(model.dev_ids)
+            test_Hd, test_Hc = model.deno_space.extra_homogeneity(model.test_ids)
+            rand_Hd, rand_Hc = model.deno_space.extra_homogeneity(model.rand_ids)
             model.PE_homogeneity = {
                 'dev Hd': dev_Hd,
                 'dev Hc': dev_Hc,
@@ -609,10 +612,10 @@ class ProxyGroundedExperiment(Experiment):
                 'Recomposer/joint loss': L_joint,
                 'Recomposer/recomposition loss': L_R
             })
-        if batch_index % self.config.eval_dev_set == 0:
-            self.eval_step()
+        # if batch_index % self.config.eval_dev_set == 0:
+        #     self.eval_step()
 
-    def eval_step(self) -> None:
+    def eval_step(self, epoch_index: int) -> None:
         model = self.model
         PE = model.PE_homogeneity
         if not model.eval_deno:
@@ -620,17 +623,17 @@ class ProxyGroundedExperiment(Experiment):
             self.update_tensorboard({
                 'Homogeneity Diff Dev/DS Hcono': DS_Hc - PE['dev Hc'],
                 'Homogeneity Diff Dev/CS Hcono': CS_Hc - PE['dev Hc'],
-            })
+                }, manual_step=epoch_index)
             DS_Hc, CS_Hc = model.homogeneity(self.data.test_ids)
             self.update_tensorboard({
                 'Homogeneity Diff Test/DS Hcono': DS_Hc - PE['test Hc'],
                 'Homogeneity Diff Test/CS Hcono': CS_Hc - PE['test Hc'],
-            })
+                }, manual_step=epoch_index)
             DS_Hc, CS_Hc = model.homogeneity(self.data.rand_ids)
             self.update_tensorboard({
                 'Homogeneity Diff Random/DS Hcono': DS_Hc - PE['rand Hc'],
                 'Homogeneity Diff Random/CS Hcono': CS_Hc - PE['rand Hc'],
-            })
+                }, manual_step=epoch_index)
         else:
             DS_Hd, DS_Hc, CS_Hd, CS_Hc = model.homogeneity(self.data.dev_ids)
             self.update_tensorboard({
@@ -638,21 +641,21 @@ class ProxyGroundedExperiment(Experiment):
                 'Homogeneity Diff Dev/DS Hcono': DS_Hc - PE['dev Hc'],
                 'Homogeneity Diff Dev/CS Hdeno': CS_Hd - PE['dev Hd'],
                 'Homogeneity Diff Dev/CS Hcono': CS_Hc - PE['dev Hc'],
-            })
+                }, manual_step=epoch_index)
             DS_Hd, DS_Hc, CS_Hd, CS_Hc = model.homogeneity(self.data.test_ids)
             self.update_tensorboard({
                 'Homogeneity Diff Test/DS Hdeno': DS_Hd - PE['test Hd'],
                 'Homogeneity Diff Test/DS Hcono': DS_Hc - PE['test Hc'],
                 'Homogeneity Diff Test/CS Hdeno': CS_Hd - PE['test Hd'],
                 'Homogeneity Diff Test/CS Hcono': CS_Hc - PE['test Hc'],
-            })
+                }, manual_step=epoch_index)
             DS_Hd, DS_Hc, CS_Hd, CS_Hc = model.homogeneity(self.data.rand_ids)
             self.update_tensorboard({
                 'Homogeneity Diff Random/DS Hdeno': DS_Hd - PE['rand Hd'],
                 'Homogeneity Diff Random/DS Hcono': DS_Hc - PE['rand Hc'],
                 'Homogeneity Diff Random/CS Hdeno': CS_Hd - PE['rand Hd'],
                 'Homogeneity Diff Random/CS Hcono': CS_Hc - PE['rand Hc'],
-            })
+                }, manual_step=epoch_index)
 
         mean_delta, abs_rhos = word_sim.mean_delta(
             model.deno_space.decomposed.weight, model.pretrained_embed.weight,
@@ -663,7 +666,7 @@ class ProxyGroundedExperiment(Experiment):
             # 'Denotation Decomposer/rho difference cf pretrained': mean_delta,
             'Denotation Decomposer/MTurk-771': abs_rhos[0],
             'Denotation Decomposer/cosine similarity': cos_sim
-        })
+            }, manual_step=epoch_index)
 
         mean_delta, abs_rhos = word_sim.mean_delta(
             model.cono_space.decomposed.weight, model.pretrained_embed.weight,
@@ -673,7 +676,7 @@ class ProxyGroundedExperiment(Experiment):
         self.update_tensorboard({
             'Connotation Decomposer/MTurk-771': abs_rhos[0],
             'Connotation Decomposer/cosine similarity': cos_sim
-        })
+            }, manual_step=epoch_index)
 
         with torch.no_grad():
             # sample = torch.randint(
@@ -692,7 +695,7 @@ class ProxyGroundedExperiment(Experiment):
             # 'Recomposer/rho difference cf pretrained': mean_delta,
             'Recomposer/MTurk-771': abs_rhos[0],
             'Recomposer/cosine similarity': cos_sim
-        })
+            }, manual_step=epoch_index)
 
     def train(self) -> None:
         config = self.config
@@ -705,7 +708,7 @@ class ProxyGroundedExperiment(Experiment):
         else:
             epoch_pbar = tqdm(range(1, config.num_epochs + 1), desc='Epochs')
 
-        estimated_save = self.data.estimated_len // 10
+        # estimated_save = self.data.estimated_len // 10
 
         for epoch_index in epoch_pbar:
             if not config.print_stats:
@@ -720,13 +723,13 @@ class ProxyGroundedExperiment(Experiment):
             for batch_index, batch in batches:
                 self.train_step(batch_index, batch)
                 self.tb_global_step += 1
-                # HACK
-                if batch_index % estimated_save == 0:
-                    point = batch_index // estimated_save
-                    self.save_everything(
-                        self.config.output_dir / f'epoch{epoch_index}_{point}.pt')
+                # # For very long epochs
+                # if batch_index % estimated_save == 0:
+                #     point = batch_index // estimated_save
+                #     self.save_everything(
+                #         self.config.output_dir / f'epoch{epoch_index}_{point}.pt')
             self.auto_save(epoch_index)
-
+            self.eval_step(epoch_index)
             self.data.estimated_len = batch_index
             if config.print_stats:
                 self.print_timestamp(epoch_index)

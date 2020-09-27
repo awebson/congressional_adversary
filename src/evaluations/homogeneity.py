@@ -51,9 +51,9 @@ def main():
         model = torch.load(in_path, map_location=device)
         model.device = device
 
-        # row = {'path': in_path}
-        # row.update(model.tabulate())
-        # table.append(row)
+        row = {'path': in_path}
+        row.update(model.tabulate())
+        table.append(row)
 
         print(in_path, file=lf)
         deno_correct = 0
