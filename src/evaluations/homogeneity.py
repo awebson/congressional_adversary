@@ -1,9 +1,10 @@
+import csv
 import argparse
 from pathlib import Path
 
 import torch
+from tqdm import tqdm
 
-from data import GroundedWord
 from models.ideal_grounded import Decomposer, Recomposer
 from models.proxy_grounded import ProxyGroundedDecomposer, ProxyGroundedRecomposer
 
@@ -12,21 +13,25 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-i', '--in-dir', action='store', type=Path)
     args = parser.parse_args()
-    in_dir = args.in_dir
-    out_dir = in_dir
+    out_path = args.in_dir / 'summary.tsv'
+    luntz_path = args.in_dir / 'luntz.txt'
     device = 'cuda:0'
 
-    checkpoints = list(in_dir.glob('epoch*.pt'))
+    if not args.in_dir.exists():
+        raise FileNotFoundError("in_dir doesn't exist?")
 
-    # rand_path: Path = Path('../../data/ready/CR_topic_context3/eval_words_random.txt')
-    # dev_path: Path = Path('../../data/ready/CR_topic_context3/0.7partisan_dev_words.txt')
-    # test_path: Path = Path('../../data/ready/CR_topic_context3/0.7partisan_test_words.txt')
+    checkpoints = sorted(args.in_dir.glob('epoch*.pt'),
+                         key=lambda p: int(p.stem.lstrip('epoch')))
+    if len(checkpoints) == 0:
+        raise FileNotFoundError('No model with path pattern found at in_dir?')
 
-    rand_path: Path = Path('../../data/ready/CR_bill_context3/eval_words_random.txt')
-    dev_path: Path = Path('../../data/ready/CR_bill_context3/0.7partisan_dev_words.txt')
-    test_path: Path = Path('../../data/ready/CR_bill_context3/0.7partisan_test_words.txt')
+    rand_path: Path = Path('../../data/ready/CR_topic_context3/eval_words_random.txt')
+    dev_path: Path = Path('../../data/ready/CR_topic_context3/0.7partisan_dev_words.txt')
+    test_path: Path = Path('../../data/ready/CR_topic_context3/0.7partisan_test_words.txt')
 
-
+    # rand_path: Path = Path('../../data/ready/CR_bill_context3/eval_words_random.txt')
+    # dev_path: Path = Path('../../data/ready/CR_bill_context3/0.7partisan_dev_words.txt')
+    # test_path: Path = Path('../../data/ready/CR_bill_context3/0.7partisan_test_words.txt')
 
     with open(dev_path) as file:
         dev_words = [word for word in file]
@@ -35,22 +40,30 @@ def main():
     with open(rand_path) as file:
         rand_words = [word for word in file]
 
+    query_pairs = [
+        # CR Bill/Topic
+        ('undocumented', 'illegal_aliens'),
+        ('estate_tax', 'death_tax'),
+        ('capitalism', 'free_market'),
+        ('foreign_trade', 'international_trade'),
+        ('public_option', 'governmentrun'),
+        ('federal_government', 'washington'),
 
+        # # # CR Proxy
+        # ('trickledown', 'cut_taxes'),
+        # ('voodoo', 'supplyside'),
+        # ('tax_expenditures', 'spending_programs'),
+        # ('waterboarding', 'interrogation'),
+        # ('socialized_medicine', 'singlepayer'),
+        # ('political_speech', 'campaign_spending'),
+        # ('star_wars', 'strategic_defense_initiative'),
+        # ('nuclear_option', 'constitutional_option'),
+    ]
+    lf = open(luntz_path, 'w')
 
-    with open(test_path) as file:
-        test_ids = torch.tensor(
-            [model.word_to_id[word.strip()] for word in file],
-            device=device)
-    with open(rand_path) as file:
-        rand_ids = torch.tensor(
-            [model.word_to_id[word.strip()] for word in file],
-            # if word.strip() in model.word_to_id],
-            device=device)
-
-    for in_path in checkpoints:
+    table = []
+    for in_path in tqdm(checkpoints):
         model = torch.load(in_path, map_location=device)
-        print(in_path)
-
         dev_ids = torch.tensor(
             [model.word_to_id[word.strip()] for word in dev_words],
             device=device)
@@ -61,19 +74,35 @@ def main():
             [model.word_to_id[word.strip()] for word in rand_words],
             device=device)
 
-        dev_Hd, dev_Hc = model.deno_space.homogeneity(dev_ids)
-        test_Hd, test_Hc = model.deno_space.homogeneity(test_ids)
-        rand_Hd, rand_Hc = model.deno_space.homogeneity(rand_ids)
-        model.PE_homogeneity = {
-            'dev Hd': dev_Hd,
-            'dev Hc': dev_Hc,
-            'test Hd': test_Hd,
-            'test Hc': test_Hc,
-            'rand Hd': rand_Hd,
-            'rand Hc': rand_Hc,
-        }
+        row = {'path': in_path}
+        row.update(model.tabulate(dev_ids, test_ids, rand_ids))
+        table.append(row)
 
-    DS_Hd, DS_Hc, CS_Hd, CS_Hc = self.model.homogeneity(self.data.dev_ids)
+        print(in_path, file=lf)
+        deno_correct = 0
+        cono_correct = 0
+        for q1, q2 in query_pairs:
+            pre_sim, deno_sim, cono_sim = model.cf_cos_sim(q1, q2)
+            deno_delta = deno_sim - pre_sim
+            cono_delta = cono_sim - pre_sim
+            if deno_delta > 0:
+                deno_correct += 1
+            if cono_delta < 0:
+                cono_correct += 1
+            print(f'{pre_sim:.4f}',
+                  f'{deno_sim - pre_sim:+.4f}',
+                  f'{cono_sim - pre_sim:+.4f}',
+                  q1, q2, sep='\t', file=lf)
+        print(f'\t{deno_correct}\t{cono_correct}\n', file=lf)
+    lf.close()
+
+    print(model.PE_homogeneity)
+
+    columns = table[1].keys()
+    with open(out_path, 'w') as file:
+        writer = csv.DictWriter(file, fieldnames=columns, dialect=csv.excel_tab)
+        writer.writeheader()
+        writer.writerows(table)
 
 
 if __name__ == "__main__":
