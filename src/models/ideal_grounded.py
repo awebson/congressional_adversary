@@ -301,40 +301,45 @@ class Recomposer(nn.Module):
 
     def tabulate(
             self,
-            query_ids: Vector,
-            prefix: str = '',
-            suffix: str = '',
+            # dev_ids: Vector,
+            # test_ids: Vector,
+            # rand_ids: Vector,
             rounding: int = 4,
             top_k: int = 10
             ) -> Dict[str, float]:
         row = {}
-        DS_Hd, DS_Hc, CS_Hd, CS_Hc = self.homogeneity(query_ids, top_k=top_k)
-        row['DS Hdeno'] = DS_Hd
-        row['DS Hcono'] = DS_Hc
-        row['CS Hdeno'] = CS_Hd
-        row['CS Hcono'] = CS_Hc
-        # row['IntraDS Hd - Hc'] = DS_Hd - DS_Hc
-        # row['IntraCS Hc - Hd'] = CS_Hc - CS_Hd
-        # row['mean IntraS quality'] = (row['IntraDS Hd - Hc'] + row['IntraCS Hc - Hd']) / 2
-
-        # row['main diagnoal trace'] = (DS_Hd + CS_Hc) / 2  # max all preservation
-        # row['nondiagnoal entries negative sum'] = (-DS_Hc - CS_Hd) / 2  # min all discarded
-        # row['flattened weighted sum'] = row['main diagnoal trace'] + row['nondiagnoal entries negative sum']
-
-        # row['Inter DS Hd - CS Hd'] = DS_Hd - CS_Hd
-        # row['Inter CS Hc - DS Hc'] = CS_Hc - DS_Hc
-        # row['mean InterS quality'] = (row['Inter DS Hd - CS Hd'] + row['Inter CS Hc - DS Hc']) / 2
-        return {prefix + key + suffix: round(val, rounding)
-                for key, val in row.items()}
+        PE = self.PE_homogeneity
+        DS_Hd, DS_Hc, CS_Hd, CS_Hc = self.homogeneity(self.dev_ids)
+        row.update({
+            'Dev DS Hdeno': DS_Hd - PE['dev Hd'],
+            'Dev DS Hcono': DS_Hc - PE['dev Hc'],
+            'Dev CS Hdeno': CS_Hd - PE['dev Hd'],
+            'Dev CS Hcono': CS_Hc - PE['dev Hc'],
+        })
+        DS_Hd, DS_Hc, CS_Hd, CS_Hc = self.homogeneity(self.test_ids)
+        row.update({
+            'Test DS Hdeno': DS_Hd - PE['test Hd'],
+            'Test DS Hcono': DS_Hc - PE['test Hc'],
+            'Test CS Hdeno': CS_Hd - PE['test Hd'],
+            'Test CS Hcono': CS_Hc - PE['test Hc'],
+        })
+        DS_Hd, DS_Hc, CS_Hd, CS_Hc = self.homogeneity(self.rand_ids)
+        row.update({
+            'Random DS Hdeno': DS_Hd - PE['rand Hd'],
+            'Random DS Hcono': DS_Hc - PE['rand Hc'],
+            'Random CS Hdeno': CS_Hd - PE['rand Hd'],
+            'Random CS Hcono': CS_Hc - PE['rand Hc'],
+        })
+        return {key: round(val, rounding) for key, val in row.items()}
 
     def cf_cos_sim(self, query1: str, query2: str) -> Tuple[float, ...]:
         try:
-            query1_id = torch.tensor(self.word_to_id[query1])
+            query1_id = torch.tensor(self.word_to_id[query1], device=self.device)
         except KeyError:
             print(f'Out of vocabulary: {query1}')
             return -1, -1, -1
         try:
-            query2_id = torch.tensor(self.word_to_id[query2])
+            query2_id = torch.tensor(self.word_to_id[query2], device=self.device)
         except KeyError:
             print(f'Out of vocabulary: {query2}')
             return -1, -1, -1
@@ -452,6 +457,9 @@ class IdealGroundedExperiment(Experiment):
         self.R_optimizer = config.optimizer(
             model.recomposer.parameters(), lr=config.learning_rate)
 
+        model.dev_ids = self.data.dev_ids
+        model.test_ids = self.data.test_ids
+        model.rand_ids = self.data.rand_ids
         dev_Hd, dev_Hc = model.deno_space.homogeneity(self.data.dev_ids)
         test_Hd, test_Hc = model.deno_space.homogeneity(self.data.test_ids)
         rand_Hd, rand_Hc = model.deno_space.homogeneity(self.data.rand_ids)
@@ -621,6 +629,9 @@ class IdealGroundedConfig():
     # num_cono_classes: int = 2
 
     # corpus_path: str = '../../data/ready/CR_bill_context3/train_data.pickle'
+    # rand_path: Path = Path('../../data/ready/CR_bill_context3/eval_words_random.txt')
+    # dev_path: Path = Path('../../data/ready/CR_bill_context3/0.7partisan_dev_words.txt')
+    # test_path: Path = Path('../../data/ready/CR_bill_context3/0.7partisan_test_words.txt')
     # num_deno_classes: int = 1029
     # num_cono_classes: int = 2
 
@@ -629,12 +640,8 @@ class IdealGroundedConfig():
     # num_cono_classes: int = 2
 
     pretrained_embed_path: Optional[Path] = Path(
-        # '../../data/pretrained_word2vec/CR_ctx0_HS.txt')
-        '../../data/pretrained_word2vec/CR_ctx3_HS.txt')
-        # '../../data/pretrained_word2vec/CR_ctx3_SGNS.txt')
-        # '../../data/pretrained_word2vec/CR_97_SGNS.txt')
-        # '../../data/pretrained_word2vec/maybe ctx5/bill_mentions_HS.txt')
-        # '../../data/pretrained_word2vec/maybe ctx5/bill_mentions_SGNS.txt')
+        '../../data/pretrained_word2vec/CR_context3.txt')
+        # '../../data/pretrained_word2vec/CR_replica.txt')
 
     output_dir: Path = Path('../../results/debug')
     device: torch.device = torch.device('cuda')
@@ -780,7 +787,8 @@ class IdealGroundedConfig():
                 nn.Dropout(p=self.dropout_p),
                 nn.Linear(1024, 1024),
                 nn.ReLU(),
-                nn.Linear(1024, self.num_deno_classes))
+                nn.Linear(1024, self.num_deno_classes),
+                nn.ReLU())
             self.cono_probe = nn.Sequential(
                 nn.Linear(300, 300),
                 nn.ReLU(),
@@ -790,7 +798,8 @@ class IdealGroundedConfig():
                 nn.Dropout(p=self.dropout_p),
                 nn.Linear(300, 300),
                 nn.ReLU(),
-                nn.Linear(300, self.num_cono_classes))
+                nn.Linear(300, self.num_cono_classes),
+                nn.ReLU())
         elif self.architecture == 'L4S':
             self.deno_probe = nn.Sequential(
                 nn.Linear(300, 300),

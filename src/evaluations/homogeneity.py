@@ -25,21 +25,6 @@ def main():
     if len(checkpoints) == 0:
         raise FileNotFoundError('No model with path pattern found at in_dir?')
 
-    rand_path: Path = Path('../../data/ready/CR_topic_context3/eval_words_random.txt')
-    dev_path: Path = Path('../../data/ready/CR_topic_context3/0.7partisan_dev_words.txt')
-    test_path: Path = Path('../../data/ready/CR_topic_context3/0.7partisan_test_words.txt')
-
-    # rand_path: Path = Path('../../data/ready/CR_bill_context3/eval_words_random.txt')
-    # dev_path: Path = Path('../../data/ready/CR_bill_context3/0.7partisan_dev_words.txt')
-    # test_path: Path = Path('../../data/ready/CR_bill_context3/0.7partisan_test_words.txt')
-
-    with open(dev_path) as file:
-        dev_words = [word for word in file]
-    with open(test_path) as file:
-        test_words = [word for word in file]
-    with open(rand_path) as file:
-        rand_words = [word for word in file]
-
     query_pairs = [
         # CR Bill/Topic
         ('undocumented', 'illegal_aliens'),
@@ -64,19 +49,11 @@ def main():
     table = []
     for in_path in tqdm(checkpoints):
         model = torch.load(in_path, map_location=device)
-        dev_ids = torch.tensor(
-            [model.word_to_id[word.strip()] for word in dev_words],
-            device=device)
-        test_ids = torch.tensor(
-            [model.word_to_id[word.strip()] for word in test_words],
-            device=device)
-        rand_ids = torch.tensor(
-            [model.word_to_id[word.strip()] for word in rand_words],
-            device=device)
+        model.device = device
 
-        row = {'path': in_path}
-        row.update(model.tabulate(dev_ids, test_ids, rand_ids))
-        table.append(row)
+        # row = {'path': in_path}
+        # row.update(model.tabulate())
+        # table.append(row)
 
         print(in_path, file=lf)
         deno_correct = 0

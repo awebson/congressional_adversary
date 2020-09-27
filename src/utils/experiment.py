@@ -94,8 +94,9 @@ class Experiment(ABC):
             interim_save = epoch_index % self.config.auto_save_per_epoch == 0
         else:
             interim_save = False
+        initial_save = epoch_index == 1
         final_save = epoch_index == self.config.num_epochs
-        if interim_save or final_save:
+        if initial_save or interim_save or final_save:
             self.save_everything(
                 self.config.output_dir / f'epoch{epoch_index}.pt')
 
