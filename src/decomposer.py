@@ -477,19 +477,19 @@ class DecomposerConfig():
     num_dataloader_threads: int = 0
     pin_memory: bool = True
 
-    decomposed_size: int = 300
+    decomposed_size: int = 3000
     delta: float = 1  # denotation classifier weight 𝛿
     gamma: float = 1  # connotation classifier weight 𝛾
 
     architecture: str = 'L4'
     dropout_p: float = 0
     batch_size: int = 128
-    embed_size: int = 300
+    embed_size: int = 3000
     num_epochs: int = 50
     encoder_update_cycle: int = 1  # per batch
     decoder_update_cycle: int = 1  # per batch
 
-    pretrained_embedding: Optional[Path] = Path(new_base_path + 'data/pretrained_word2vec/for_real_SGNS.txt')
+    pretrained_embedding: Optional[Path] = Path(new_base_path + 'data/pretrained_word2vec/for_real_SGNS_method_A.txt')
     freeze_embedding: bool = False
     # window_radius: int = 5
     # num_negative_samples: int = 10

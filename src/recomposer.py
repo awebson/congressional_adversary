@@ -356,7 +356,7 @@ class RecomposerConfig():
     encoder_update_cycle: int = 1  # per batch
     decoder_update_cycle: int = 1  # per batch
 
-    pretrained_embedding: Optional[Path] = Path(new_base_path + 'data/pretrained_word2vec/for_real_SGNS.txt')
+    pretrained_embedding: Optional[Path] = Path(new_base_path + 'data/pretrained_word2vec/for_real_SGNS_method_A.txt')
     freeze_embedding: bool = False
     optimizer: torch.optim.Optimizer = torch.optim.Adam
     # optimizer: torch.optim.Optimizer = torch.optim.SGD
@@ -528,7 +528,7 @@ def main() -> None:
     # Experiment control knobs
     experiment_name = "sort" # One of: cono, pos, sort
     use_avg_prec = False
-    transform_embeddings = True
+    transform_embeddings = False
     use_pca = True # Otherwise, ICA. Only applies if transform_embeddings is True.
     
     if experiment_name == "pos":
@@ -678,17 +678,13 @@ def main() -> None:
         
         num_sort_components = 8 # Start at the left (might not be principal)
         
-        sorted_idx = np.argsort(filtered_embeddings,axis=0)
+        sorted_idx = np.argsort(-1.0 * filtered_embeddings,axis=0)
         
         max_word_len = len(max(w2id.keys(), key=len))
         
         print("max word len", max_word_len)
         
-        #for r in sorted_idx:
-        #    for c in r[:num_sort_components]:
-        #        sys.stdout.write("{:20.20s} ".format(id2w[c]))
-        #    print("")
-        
+
         target_idx = 1 # PCA component offset
         display_len = 3000
         display_step = 20
@@ -696,29 +692,43 @@ def main() -> None:
         idces = sorted_idx[0:display_len:display_step,target_idx]
         #idces = sorted_idx[:,target_idx]
         
-        fig = plt.figure()
-        if False: # Experiment 2 i.e. one-hot vector
-            target_deno = 'Immigration'
-            #component0vals = filtered_embeddings[idces,target_idx]
-            component0vals = np.array(query_denos[target_deno])[idces]
-            ax = plt.axes()
-            N = 50 # Window size
-            ax.scatter(x=range(len(component0vals)), y=np.convolve(component0vals, np.ones((N,))/N, mode='same'))
-            ax.set_xlabel('Word ID')
-            ax.set_ylabel('Moving average of one-hot denotation vector')
-        else: #3D plot of TSNE, experiment 3
+        if True: # Experiment 1 - sorted list display
         
-            tsne_proj_eng = TSNE(n_components=3, random_state=0)
-            tsne_data = tsne_proj_eng.fit_transform(unfiltered_embeddings)
+            if True: # Use variance to pick components
+                variance_list = np.var(filtered_embeddings, axis=0)
+                component_idces = np.argsort(variance_list)[-num_sort_components:]
+            else:
+                component_idces = range(num_sort_components)
+            print("Indices", component_idces)
         
-            cmhot = plt.get_cmap("RdYlGn")
-            ax = fig.add_subplot(111, projection='3d')
-            ax.scatter(tsne_data[idces,0], 
-                       tsne_data[idces,1],
-                       tsne_data[idces,2],
-                       c=filtered_embeddings[idces,target_idx], 
-                       cmap=cmhot)
-        plt.show()
+            for r in sorted_idx:
+                for c in r[component_idces]:
+                    sys.stdout.write("{:20.20s} ".format(id2w[c]))
+                print("")        
+        else:
+            fig = plt.figure()
+            if False: # Experiment 2 i.e. one-hot vector
+                target_deno = 'Immigration'
+                #component0vals = filtered_embeddings[idces,target_idx]
+                component0vals = np.array(query_denos[target_deno])[idces]
+                ax = plt.axes()
+                N = 50 # Window size
+                ax.scatter(x=range(len(component0vals)), y=np.convolve(component0vals, np.ones((N,))/N, mode='same'))
+                ax.set_xlabel('Word ID')
+                ax.set_ylabel('Moving average of one-hot denotation vector')
+            else: #3D plot of TSNE, experiment 3
+        
+                tsne_proj_eng = TSNE(n_components=3, random_state=0)
+                tsne_data = tsne_proj_eng.fit_transform(unfiltered_embeddings)
+        
+                cmhot = plt.get_cmap("RdYlGn")
+                ax = fig.add_subplot(111, projection='3d')
+                ax.scatter(tsne_data[idces,0], 
+                           tsne_data[idces,1],
+                           tsne_data[idces,2],
+                           c=filtered_embeddings[idces,target_idx], 
+                           cmap=cmhot)
+            plt.show()
 
 if __name__ == '__main__':
     main()
