@@ -33,25 +33,17 @@ class ProxyGroundedDecomposer(Decomposer):
             device: torch.device):
         super(Decomposer, self).__init__()
         self.decomposed = nn.Embedding.from_pretrained(initial_space)
-        # self.SGNS_context = nn.Embedding.from_pretrained(initial_space)
         self.decomposed.weight.requires_grad = True
+        # self.SGNS_context = nn.Embedding.from_pretrained(initial_space)
         # self.SGNS_context.weight.requires_grad = True
-        vocab_size, embed_size = self.decomposed.weight.shape
-        self.deno_probe = nn.Linear(embed_size, vocab_size)
-        # self.deno_probe = nn.Sequential(
-        #         nn.Linear(embed_size, vocab_size),
-        #         nn.ReLU())
         self.cono_probe = cono_probe
         self.num_cono_classes = cono_probe[-1].out_features
         self.device = device
         self.to(self.device)
 
-        # for LM loss
-        self.vocab_size = vocab_size
-
-        # # for skip-gram loss
-        # self.negative_sampling_probs = negative_sampling_probs
-        # self.num_negative_samples = num_negative_samples
+        # for skip-gram negative sampling loss
+        self.negative_sampling_probs = negative_sampling_probs
+        self.num_negative_samples = num_negative_samples
 
         self.preserve = preserve
         self.id_to_word = id_to_word
@@ -67,29 +59,18 @@ class ProxyGroundedDecomposer(Decomposer):
         seq_word_vecs: R3Tensor = self.decomposed(seq_word_ids)
         seq_repr: Matrix = torch.mean(seq_word_vecs, dim=1)
 
-        # proxy_deno_loss = self.skip_gram_loss(center_word_ids, true_context_ids)
-        # proxy_deno_loss = F.cross_entropy(
-        #     self.deno_probe(self.decomposed(center_word_ids)),
-        #     true_context_ids)
-        deno_logits = self.deno_probe(self.decomposed(center_word_ids))
-        deno_log_prob = F.log_softmax(deno_logits, dim=1)
-        deno_probe_loss = F.nll_loss(deno_log_prob, true_context_ids)
-
         cono_logits = self.cono_probe(seq_repr)
         cono_log_prob = F.log_softmax(cono_logits, dim=1)
         cono_probe_loss = F.nll_loss(cono_log_prob, cono_labels)
 
+        proxy_deno_loss = self.skip_gram_loss(center_word_ids, true_context_ids)
+
         if self.preserve == 'deno':  # DS removing connotation (gamma < 0)
             uniform_dist = torch.full_like(cono_log_prob, 1 / self.num_cono_classes)
             cono_adversary_loss = F.kl_div(cono_log_prob, uniform_dist, reduction='batchmean')
-            return deno_probe_loss, cono_probe_loss, cono_adversary_loss, seq_word_vecs
+            return proxy_deno_loss, cono_probe_loss, cono_adversary_loss, seq_word_vecs
         else:  # CS removing denotation
-            uniform_dist = torch.full_like(deno_log_prob, 1 / self.vocab_size)
-            deno_adversary_loss = F.kl_div(deno_log_prob, uniform_dist, reduction='batchmean')
-            return deno_probe_loss, deno_adversary_loss, cono_probe_loss, seq_word_vecs
-
-        # return (decomposer_loss, proxy_deno_loss,
-        #         cono_probe_loss, cono_adversary_loss, seq_word_vecs)
+            return proxy_deno_loss, cono_probe_loss, seq_word_vecs
 
     def skip_gram_loss(
             self,
@@ -119,8 +100,10 @@ class ProxyGroundedDecomposer(Decomposer):
         ).view(len(true_context_ids), self.num_negative_samples).to(self.device)
 
         center = self.decomposed(center_word_ids)
-        true_context = self.SGNS_context(true_context_ids)
-        negative_context = self.SGNS_context(negative_context_ids)
+        true_context = self.decomposed(true_context_ids)
+        negative_context = self.decomposed(negative_context_ids)
+        # true_context = self.SGNS_context(true_context_ids)
+        # negative_context = self.SGNS_context(negative_context_ids)
 
         # batch_size * embed_size
         objective = torch.sum(  # dot product
@@ -137,14 +120,6 @@ class ProxyGroundedDecomposer(Decomposer):
         negative_objective = F.logsigmoid(-negative_objective)
         negative_objective = torch.sum(negative_objective, dim=1)  # bn -> b
         return -torch.mean(objective + negative_objective)
-
-    def HS_loss(
-            self,
-            center_word_ids: Vector,
-            true_context_ids: Vector
-            ) -> Scalar:
-        center = self.decomposed(center_word_ids)
-        return F.cross_entropy(self.context_pred(center), true_context_ids)
 
     def predict(self, seq_word_ids: Vector) -> Vector:
         self.eval()
@@ -308,14 +283,14 @@ class ProxyGroundedRecomposer(Recomposer):
             cono_labels: Vector,
             ) -> Tuple[Scalar, ...]:
         # Denotation Space
-        DS_deno_probe, DS_cono_probe, DS_cono_adver, deno_vecs = self.deno_space(
+        DS_deno_proxy, DS_cono_probe, DS_cono_adver, deno_vecs = self.deno_space(
             center_word_ids, context_word_ids, seq_word_ids, cono_labels)
-        DS_decomp = torch.sigmoid(DS_deno_probe) + torch.sigmoid(DS_cono_adver)
+        DS_decomp = torch.sigmoid(DS_deno_proxy) + torch.sigmoid(DS_cono_adver)
 
         # Connotation Space
-        CS_deno_probe, CS_deno_adver, CS_cono_probe, cono_vecs = self.cono_space(
+        CS_deno_proxy, CS_cono_probe, cono_vecs = self.cono_space(
             center_word_ids, context_word_ids, seq_word_ids, cono_labels)
-        CS_decomp = torch.sigmoid(CS_deno_adver) + torch.sigmoid(CS_cono_probe)
+        CS_decomp = 1 - torch.sigmoid(CS_deno_proxy) + torch.sigmoid(CS_cono_probe)
 
         # Recomposer
         recomposed = self.recomposer(torch.cat((deno_vecs, cono_vecs), dim=-1))
@@ -325,8 +300,8 @@ class ProxyGroundedRecomposer(Recomposer):
 
         L_joint = DS_decomp + CS_decomp + self.rho * L_R
         return (L_joint, L_R,
-                DS_decomp, DS_deno_probe, DS_cono_probe, DS_cono_adver,
-                CS_decomp, CS_deno_probe, CS_deno_adver, CS_cono_probe)
+                DS_decomp, DS_deno_proxy, DS_cono_probe, DS_cono_adver,
+                CS_decomp, CS_deno_proxy, CS_cono_probe)
 
     def predict(self, seq_word_ids: Vector) -> Tuple[Vector, Vector]:
         DS_cono_conf = self.deno_space.predict(seq_word_ids)
@@ -518,13 +493,8 @@ class ProxyGroundedExperiment(Experiment):
         #     if param.requires_grad:
         #         print(name)  # param.data)
 
-        self.DS_deno_optimizer = config.optimizer(
-            model.deno_space.deno_probe.parameters(), lr=config.learning_rate)
         self.DS_cono_optimizer = config.optimizer(
             model.deno_space.cono_probe.parameters(), lr=config.learning_rate)
-
-        self.CS_deno_optimizer = config.optimizer(
-            model.cono_space.deno_probe.parameters(), lr=config.learning_rate)
         self.CS_cono_optimizer = config.optimizer(
             model.cono_space.cono_probe.parameters(), lr=config.learning_rate)
 
@@ -570,25 +540,21 @@ class ProxyGroundedExperiment(Experiment):
 
         # Update probes with proper (non-adversarial) losses
         model.zero_grad()
-        DS_deno_probe, DS_cono_probe, DS_cono_adver, _ = model.deno_space(
+        DS_deno_proxy, DS_cono_probe, DS_cono_adver, _ = model.deno_space(
             center_word_ids, context_word_ids, seq_word_ids, cono_labels)
-        DS_deno_probe.backward(retain_graph=True)
         DS_cono_probe.backward()
-        self.DS_deno_optimizer.step()
         self.DS_cono_optimizer.step()
 
         model.zero_grad()
-        CS_deno_probe, CS_deno_adver, CS_cono_probe, _ = model.cono_space(
+        CS_deno_proxy, CS_cono_probe, _ = model.cono_space(
             center_word_ids, context_word_ids, seq_word_ids, cono_labels)
-        CS_deno_probe.backward(retain_graph=True)
         CS_cono_probe.backward()
-        self.CS_deno_optimizer.step()
         self.CS_cono_optimizer.step()
 
         model.zero_grad()
         (L_joint, L_R,
-            DS_decomp, DS_deno_probe, DS_cono_probe, DS_cono_adver,
-            CS_decomp, CS_deno_probe, CS_deno_adver, CS_cono_probe) = model(
+            DS_decomp, DS_deno_proxy, DS_cono_probe, DS_cono_adver,
+            CS_decomp, CS_deno_proxy, CS_cono_probe) = model(
             center_word_ids, context_word_ids, seq_word_ids, cono_labels)
         L_joint.backward()
         self.joint_optimizer.step()
@@ -597,7 +563,7 @@ class ProxyGroundedExperiment(Experiment):
         if batch_index % self.config.update_tensorboard == 0:
             DS_cono_acc, CS_cono_acc = model.accuracy(seq_word_ids, cono_labels)
             self.update_tensorboard({
-                'Denotation Decomposer/deno_loss': DS_deno_probe,
+                'Denotation Decomposer/deno_loss': DS_deno_proxy,
                 'Denotation Decomposer/cono_loss_proper': DS_cono_probe,
                 'Denotation Decomposer/cono_loss_adversary': DS_cono_adver,
                 'Denotation Decomposer/combined_loss': DS_decomp,
@@ -605,7 +571,6 @@ class ProxyGroundedExperiment(Experiment):
 
                 'Connotation Decomposer/deno_loss': CS_cono_probe,
                 'Connotation Decomposer/cono_loss_proper': CS_cono_probe,
-                'Connotation Decomposer/deno_loss_adversary': CS_deno_adver,
                 'Connotation Decomposer/combined_loss': CS_decomp,
                 'Connotation Decomposer/accuracy_train_cono': CS_cono_acc,
 
@@ -743,9 +708,9 @@ class ProxyGroundedConfig():
         'D': 0,
         'R': 1})
     num_cono_classes: int = 2
-    rand_path: Path = Path('../../data/ellie/rand_sample.cr.txt')
-    dev_path: Path = Path('../../data/ellie/partisan_sample_val.cr.txt')
-    test_path: Path = Path('../../data/ellie/partisan_sample.cr.txt')
+    rand_path: Path = Path('../../data/ready/CR_proxy/eval_words_random.txt')
+    dev_path: Path = Path('../../data/ready/CR_proxy/0.7partisan_dev_words.txt')
+    test_path: Path = Path('../../data/ready/CR_proxy/0.7partisan_test_words.txt')
     pretrained_embed_path: Optional[Path] = Path(
         '../../data/pretrained_word2vec/CR_97_SGNS.txt')
     extra_grounding: Path = Path(
@@ -783,7 +748,7 @@ class ProxyGroundedConfig():
     recomposer_rho: float = 1
     dropout_p: float = 0.33
 
-    architecture: str = 'L4R'
+    architecture: str = 'MLP4'
     batch_size: int = 8192
     embed_size: int = 300
     num_epochs: int = 30
@@ -806,7 +771,7 @@ class ProxyGroundedConfig():
     num_dataloader_threads: int = 0
     clear_tensorboard_log_in_output_dir: bool = True
     delete_all_exisiting_files_in_output_dir: bool = False
-    auto_save_per_epoch: Optional[int] = 2
+    auto_save_per_epoch: Optional[int] = 1
     auto_save_if_interrupted: bool = False
 
     def __post_init__(self) -> None:
@@ -845,30 +810,25 @@ class ProxyGroundedConfig():
 
         if self.architecture == 'linear':
             self.cono_probe = nn.Linear(300, self.num_cono_classes)
-        elif self.architecture == 'L1':
+        elif self.architecture == 'MLP1':
             self.cono_probe = nn.Sequential(
+                nn.Linear(300, 300),
+                nn.ReLU(),
+                nn.Linear(300, self.num_cono_classes))
+        elif self.architecture == 'MLP2':
+            self.cono_probe = nn.Sequential(
+                nn.Linear(300, 300),
+                nn.ReLU(),
+                nn.Dropout(p=self.dropout_p),
+                nn.Linear(300, 300),
+                nn.ReLU(),
                 nn.Linear(300, self.num_cono_classes),
-                nn.SELU())
-        elif self.architecture == 'L2':
+                nn.ReLU())
+        elif self.architecture == 'MLP4':
             self.cono_probe = nn.Sequential(
                 nn.Linear(300, 300),
-                nn.SELU(),
-                nn.Linear(300, self.num_cono_classes),
-                nn.SELU())
-        elif self.architecture == 'L4':
-            self.cono_probe = nn.Sequential(
-                nn.Linear(300, 300),
-                nn.SELU(),
-                nn.AlphaDropout(p=self.dropout_p),
-                nn.Linear(300, 300),
-                nn.SELU(),
-                nn.AlphaDropout(p=self.dropout_p),
-                nn.Linear(300, 300),
-                nn.SELU(),
-                nn.Linear(300, self.num_cono_classes),
-                nn.SELU())
-        elif self.architecture == 'L4R':
-            self.cono_probe = nn.Sequential(
+                nn.ReLU(),
+                nn.Dropout(p=self.dropout_p),
                 nn.Linear(300, 300),
                 nn.ReLU(),
                 nn.Dropout(p=self.dropout_p),
