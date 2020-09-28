@@ -702,34 +702,34 @@ class ProxyGroundedExperiment(Experiment):
 
 @dataclass
 class ProxyGroundedConfig():
-    # Congressional Record
-    corpus_path: Path = Path('../../data/ready/CR_skip/train.pickle')
-    numericalize_cono: Dict[str, int] = field(default_factory=lambda: {
-        'D': 0,
-        'R': 1})
-    num_cono_classes: int = 2
-    rand_path: Path = Path('../../data/ready/CR_proxy/eval_words_random.txt')
-    dev_path: Path = Path('../../data/ready/CR_proxy/0.7partisan_dev_words.txt')
-    test_path: Path = Path('../../data/ready/CR_proxy/0.7partisan_test_words.txt')
-    pretrained_embed_path: Optional[Path] = Path(
-        '../../data/pretrained_word2vec/CR_97_SGNS.txt')
-    extra_grounding: Path = Path(
-        '../../data/ready/CR_topic_context3/train_data.pickle')
+    # # Congressional Record
+    # corpus_path: Path = Path('../../data/ready/CR_proxy/train.pickle')
+    # numericalize_cono: Dict[str, int] = field(default_factory=lambda: {
+    #     'D': 0,
+    #     'R': 1})
+    # num_cono_classes: int = 2
+    # rand_path: Path = Path('../../data/ready/CR_proxy/eval_words_random.txt')
+    # dev_path: Path = Path('../../data/ready/CR_proxy/0.7partisan_dev_words.txt')
+    # test_path: Path = Path('../../data/ready/CR_proxy/0.7partisan_test_words.txt')
+    # pretrained_embed_path: Optional[Path] = Path(
+    #     '../../data/pretrained_word2vec/CR_97_SGNS.txt')
+    # extra_grounding: Path = Path(
+    #     '../../data/ready/CR_topic_context3/train_data.pickle')
 
     # # Partisan News
-    # corpus_path: Path = Path('../../data/ready/PN_skip/train.pickle')
-    # numericalize_cono: Dict[str, int] = field(default_factory=lambda: {
-    #     'left': 0,
-    #     'left-center': 0,
-    #     'least': 1,
-    #     'right-center': 2,
-    #     'right': 2})
-    # num_cono_classes: int = 3
-    # rand_path: Path = Path('../../data/ellie/rand_sample.hp.txt')
-    # dev_path: Path = Path('../../data/ellie/partisan_sample_val.hp.txt')
-    # test_path: Path = Path('../../data/ellie/partisan_sample.hp.txt')
-    # pretrained_embed_path: Optional[Path] = Path(
-    #     '../../data/pretrained_word2vec/partisan_news_HS.txt')
+    corpus_path: Path = Path('../../data/ready/PN_proxy/train.pickle')
+    numericalize_cono: Dict[str, int] = field(default_factory=lambda: {
+        'left': 0,
+        'left-center': 0,
+        'least': 1,
+        'right-center': 2,
+        'right': 2})
+    num_cono_classes: int = 3
+    rand_path: Path = Path('../../data/ready/PN_proxy/eval_words_random.txt')
+    dev_path: Path = Path('../../data/ready/PN_proxy/0.7partisan_dev_words.txt')
+    test_path: Path = Path('../../data/ready/PN_proxy/0.7partisan_test_words.txt')
+    pretrained_embed_path: Optional[Path] = Path(
+        '../../data/pretrained_word2vec/PN_SGNS.txt')
 
     output_dir: Path = Path('../results/debug')
     device: torch.device = torch.device('cuda')

@@ -8,10 +8,44 @@ from tqdm import tqdm
 from models.ideal_grounded import Decomposer, Recomposer
 from models.proxy_grounded import ProxyGroundedDecomposer, ProxyGroundedRecomposer
 
+query_pairs = [
+    # CR Bill/Topic
+    ('undocumented', 'illegal_aliens'),
+    ('estate_tax', 'death_tax'),
+    ('capitalism', 'free_market'),
+    ('foreign_trade', 'international_trade'),
+    ('public_option', 'governmentrun'),
+    ('federal_government', 'washington'),
+
+    # CR Proxy
+    ('trickledown', 'cut_taxes'),
+    ('voodoo', 'supplyside'),
+    ('tax_expenditures', 'spending_programs'),
+    ('waterboarding', 'interrogation'),
+    ('socialized_medicine', 'singlepayer'),
+    ('political_speech', 'campaign_spending'),
+    ('star_wars', 'strategic_defense_initiative'),
+    ('nuclear_option', 'constitutional_option'),
+
+    # # PN Proxy
+    # ('undocumented_workers', 'illegal_aliens'),
+    # ('estate_tax', 'death_tax'),
+    # ('capitalism', 'free_market'),
+    # ('foreign_trade', 'international_trade'),
+    # ('public_option', 'government_run'),
+    # ('federal_government', 'washington'),
+    # ('supply_side', 'cut_taxes'),
+    # ('voodoo', 'supply_side'),
+    # ('tax_expenditures', 'spending_programs'),
+    # ('waterboarding', 'interrogation'),
+    # ('socialized_medicine', 'single_payer'),
+    # ('political_speech', 'campaign_spending')
+]
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-i', '--in-dir', action='store', type=Path)
+    parser.add_argument('-f', '--fast', action='store_true')
     args = parser.parse_args()
     out_path = args.in_dir / 'summary.tsv'
     luntz_path = args.in_dir / 'luntz.txt'
@@ -25,25 +59,6 @@ def main():
     if len(checkpoints) == 0:
         raise FileNotFoundError('No model with path pattern found at in_dir?')
 
-    query_pairs = [
-        # CR Bill/Topic
-        ('undocumented', 'illegal_aliens'),
-        ('estate_tax', 'death_tax'),
-        ('capitalism', 'free_market'),
-        ('foreign_trade', 'international_trade'),
-        ('public_option', 'governmentrun'),
-        ('federal_government', 'washington'),
-
-        # # # CR Proxy
-        # ('trickledown', 'cut_taxes'),
-        # ('voodoo', 'supplyside'),
-        # ('tax_expenditures', 'spending_programs'),
-        # ('waterboarding', 'interrogation'),
-        # ('socialized_medicine', 'singlepayer'),
-        # ('political_speech', 'campaign_spending'),
-        # ('star_wars', 'strategic_defense_initiative'),
-        # ('nuclear_option', 'constitutional_option'),
-    ]
     lf = open(luntz_path, 'w')
 
     table = []
@@ -51,9 +66,10 @@ def main():
         model = torch.load(in_path, map_location=device)
         model.device = device
 
-        row = {'path': in_path}
-        row.update(model.tabulate())
-        table.append(row)
+        if not args.fast:
+            row = {'path': in_path}
+            row.update(model.tabulate())
+            table.append(row)
 
         print(in_path, file=lf)
         deno_correct = 0
@@ -74,6 +90,9 @@ def main():
     lf.close()
 
     print(model.PE_homogeneity)
+
+    if args.fast:
+        return
 
     columns = table[1].keys()
     with open(out_path, 'w') as file:
