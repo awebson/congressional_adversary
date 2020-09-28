@@ -40,8 +40,8 @@ class Decomposer(nn.Module):
         self.decomposed.weight.requires_grad = True
         self.deno_probe = deno_probe
         self.cono_probe = cono_probe
-        self.num_deno_classes = deno_probe[-2].out_features
-        self.num_cono_classes = cono_probe[-2].out_features
+        self.num_deno_classes = deno_probe[-1].out_features
+        self.num_cono_classes = cono_probe[-1].out_features
         self.device = device
         self.to(self.device)
 
@@ -630,19 +630,19 @@ class IdealGroundedExperiment(Experiment):
 
 @dataclass
 class IdealGroundedConfig():
-    # corpus_path: Path = Path('../../data/ready/CR_topic_context3/train_data.pickle')
-    # rand_path: Path = Path('../../data/ready/CR_topic_context3/eval_words_random.txt')
-    # dev_path: Path = Path('../../data/ready/CR_topic_context3/0.7partisan_dev_words.txt')
-    # test_path: Path = Path('../../data/ready/CR_topic_context3/0.7partisan_test_words.txt')
-    # num_deno_classes: int = 41
-    # num_cono_classes: int = 2
-
-    corpus_path: str = '../../data/ready/CR_bill_context3/train_data.pickle'
-    rand_path: Path = Path('../../data/ready/CR_bill_context3/eval_words_random.txt')
-    dev_path: Path = Path('../../data/ready/CR_bill_context3/0.7partisan_dev_words.txt')
-    test_path: Path = Path('../../data/ready/CR_bill_context3/0.7partisan_test_words.txt')
-    num_deno_classes: int = 1029
+    corpus_path: Path = Path('../../data/ready/CR_topic_context3/train_data.pickle')
+    rand_path: Path = Path('../../data/ready/CR_topic_context3/eval_words_random.txt')
+    dev_path: Path = Path('../../data/ready/CR_topic_context3/0.7partisan_dev_words.txt')
+    test_path: Path = Path('../../data/ready/CR_topic_context3/0.7partisan_test_words.txt')
+    num_deno_classes: int = 41
     num_cono_classes: int = 2
+
+    # corpus_path: str = '../../data/ready/CR_bill_context3/train_data.pickle'
+    # rand_path: Path = Path('../../data/ready/CR_bill_context3/eval_words_random.txt')
+    # dev_path: Path = Path('../../data/ready/CR_bill_context3/0.7partisan_dev_words.txt')
+    # test_path: Path = Path('../../data/ready/CR_bill_context3/0.7partisan_test_words.txt')
+    # num_deno_classes: int = 1029
+    # num_cono_classes: int = 2
 
     # corpus_path: str = '../../data/ready/CR_bill_context0/train_data.pickle'
     # num_deno_classes: int = 1030
@@ -653,6 +653,7 @@ class IdealGroundedConfig():
 
     pretrained_embed_path: Optional[Path] = Path(
         '../../data/pretrained_word2vec/CR_context3.txt')
+        # '../../data/pretrained_word2vec/CR_ctx3_HS.txt')
         # '../../data/pretrained_word2vec/CR_replica.txt')
 
     output_dir: Path = Path('../../results/debug')
@@ -676,7 +677,7 @@ class IdealGroundedConfig():
     recomposer_rho: float = 1
     dropout_p: float = 0.33
 
-    architecture: str = 'L4'
+    architecture: str = 'MLP4'
     batch_size: int = 1024
     embed_size: int = 300
     num_epochs: int = 150
@@ -718,26 +719,23 @@ class IdealGroundedConfig():
             '-sv', '--auto-save-per-epoch', action='store', type=int)
         parser.parse_args(namespace=self)
 
-        if self.architecture == 'L1':
-            self.deno_probe = nn.Sequential(
-                nn.Linear(300, self.num_deno_classes),
-                nn.ReLU())
-            self.cono_probe = nn.Sequential(
-                nn.Linear(300, self.num_cono_classes),
-                nn.ReLU())
-        elif self.architecture == 'L2':
+        if self.architecture == 'linear':
+            self.deno_probe = nn.Linear(300, self.num_deno_classes)
+            self.cono_probe = nn.Linear(300, self.num_cono_classes)
+        if self.architecture == 'MLP1':
             self.deno_probe = nn.Sequential(
                 nn.Linear(300, 300),
-                nn.SELU(),
-                nn.Linear(300, self.num_deno_classes),
-                nn.SELU())
+                nn.ReLU(),
+                nn.Linear(300, self.num_deno_classes))
             self.cono_probe = nn.Sequential(
                 nn.Linear(300, 300),
-                nn.SELU(),
-                nn.Linear(300, self.num_cono_classes),
-                nn.SELU())
-        elif self.architecture == 'L2':
+                nn.ReLU(),
+                nn.Linear(300, self.num_cono_classes))
+        elif self.architecture == 'MLP2':
             self.deno_probe = nn.Sequential(
+                nn.Linear(300, 300),
+                nn.ReLU(),
+                nn.Dropout(p=self.dropout_p),
                 nn.Linear(300, 300),
                 nn.ReLU(),
                 nn.Linear(300, self.num_deno_classes),
@@ -745,16 +743,18 @@ class IdealGroundedConfig():
             self.cono_probe = nn.Sequential(
                 nn.Linear(300, 300),
                 nn.ReLU(),
+                nn.Dropout(p=self.dropout_p),
+                nn.Linear(300, 300),
+                nn.ReLU(),
                 nn.Linear(300, self.num_cono_classes),
                 nn.ReLU())
-        elif self.architecture == 'L3':
+        elif self.architecture == 'MLP2_large':
             self.deno_probe = nn.Sequential(
                 nn.Linear(300, 1024),
                 nn.ReLU(),
                 nn.Dropout(p=self.dropout_p),
                 nn.Linear(1024, 1024),
                 nn.ReLU(),
-                nn.Dropout(p=self.dropout_p),
                 nn.Linear(1024, self.num_deno_classes),
                 nn.ReLU())
             self.cono_probe = nn.Sequential(
@@ -763,10 +763,9 @@ class IdealGroundedConfig():
                 nn.Dropout(p=self.dropout_p),
                 nn.Linear(1024, 1024),
                 nn.ReLU(),
-                nn.Dropout(p=self.dropout_p),
                 nn.Linear(1024, self.num_cono_classes),
                 nn.ReLU())
-        elif self.architecture == 'L4':
+        elif self.architecture == 'MLP3':
             self.deno_probe = nn.Sequential(
                 nn.Linear(300, 300),
                 nn.ReLU(),
@@ -776,8 +775,7 @@ class IdealGroundedConfig():
                 nn.Dropout(p=self.dropout_p),
                 nn.Linear(300, 300),
                 nn.ReLU(),
-                nn.Linear(300, self.num_deno_classes),
-                nn.ReLU())
+                nn.Linear(300, self.num_deno_classes))
             self.cono_probe = nn.Sequential(
                 nn.Linear(300, 300),
                 nn.ReLU(),
@@ -787,9 +785,35 @@ class IdealGroundedConfig():
                 nn.Dropout(p=self.dropout_p),
                 nn.Linear(300, 300),
                 nn.ReLU(),
-                nn.Linear(300, self.num_cono_classes),
-                nn.ReLU())
-        elif self.architecture == 'L4L':
+                nn.Linear(300, self.num_cono_classes))
+        elif self.architecture == 'MLP4':
+            self.deno_probe = nn.Sequential(
+                nn.Linear(300, 300),
+                nn.ReLU(),
+                nn.Dropout(p=self.dropout_p),
+                nn.Linear(300, 300),
+                nn.ReLU(),
+                nn.Dropout(p=self.dropout_p),
+                nn.Linear(300, 300),
+                nn.ReLU(),
+                nn.Dropout(p=self.dropout_p),
+                nn.Linear(300, 300),
+                nn.ReLU(),
+                nn.Linear(300, self.num_deno_classes))
+            self.cono_probe = nn.Sequential(
+                nn.Linear(300, 300),
+                nn.ReLU(),
+                nn.Dropout(p=self.dropout_p),
+                nn.Linear(300, 300),
+                nn.ReLU(),
+                nn.Dropout(p=self.dropout_p),
+                nn.Linear(300, 300),
+                nn.ReLU(),
+                nn.Dropout(p=self.dropout_p),
+                nn.Linear(300, 300),
+                nn.ReLU(),
+                nn.Linear(300, self.num_cono_classes))
+        elif self.architecture == 'MLP4_large':
             self.deno_probe = nn.Sequential(
                 nn.Linear(300, 1024),
                 nn.ReLU(),
@@ -799,8 +823,10 @@ class IdealGroundedConfig():
                 nn.Dropout(p=self.dropout_p),
                 nn.Linear(1024, 1024),
                 nn.ReLU(),
-                nn.Linear(1024, self.num_deno_classes),
-                nn.ReLU())
+                nn.Dropout(p=self.dropout_p),
+                nn.Linear(1024, 1024),
+                nn.ReLU(),
+                nn.Linear(1024, self.num_deno_classes))
             self.cono_probe = nn.Sequential(
                 nn.Linear(300, 300),
                 nn.ReLU(),
@@ -810,36 +836,15 @@ class IdealGroundedConfig():
                 nn.Dropout(p=self.dropout_p),
                 nn.Linear(300, 300),
                 nn.ReLU(),
-                nn.Linear(300, self.num_cono_classes),
-                nn.ReLU())
-        elif self.architecture == 'L4S':
-            self.deno_probe = nn.Sequential(
+                nn.Dropout(p=self.dropout_p),
                 nn.Linear(300, 300),
-                nn.SELU(),
-                nn.AlphaDropout(p=self.dropout_p),
-                nn.Linear(300, 300),
-                nn.SELU(),
-                nn.AlphaDropout(p=self.dropout_p),
-                nn.Linear(300, 300),
-                nn.SELU(),
-                nn.Linear(300, self.num_deno_classes),
-                nn.SELU())
-            self.cono_probe = nn.Sequential(
-                nn.Linear(300, 300),
-                nn.SELU(),
-                nn.AlphaDropout(p=self.dropout_p),
-                nn.Linear(300, 300),
-                nn.SELU(),
-                nn.AlphaDropout(p=self.dropout_p),
-                nn.Linear(300, 300),
-                nn.SELU(),
-                nn.Linear(300, self.num_cono_classes),
-                nn.SELU())
+                nn.ReLU(),
+                nn.Linear(300, self.num_cono_classes))
         else:
             raise ValueError('Unknown architecture argument.')
 
-        assert self.cono_probe[-2].out_features == self.num_cono_classes
-        assert self.deno_probe[-2].out_features == self.num_deno_classes
+        assert self.cono_probe[-1].out_features == self.num_cono_classes
+        assert self.deno_probe[-1].out_features == self.num_deno_classes
 
 
 def main() -> None:
