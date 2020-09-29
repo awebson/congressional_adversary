@@ -356,7 +356,7 @@ class RecomposerConfig():
     encoder_update_cycle: int = 1  # per batch
     decoder_update_cycle: int = 1  # per batch
 
-    pretrained_embedding: Optional[Path] = Path(new_base_path + 'data/pretrained_word2vec/for_real_SGNS_method_A.txt')
+    pretrained_embedding: Optional[Path] = Path(new_base_path + 'data/pretrained_word2vec/for_real_SGNS_method_B.txt')
     freeze_embedding: bool = False
     optimizer: torch.optim.Optimizer = torch.optim.Adam
     # optimizer: torch.optim.Optimizer = torch.optim.SGD
@@ -526,7 +526,7 @@ def main() -> None:
     id2w = black_box.model.id_to_word
 
     # Experiment control knobs
-    experiment_name = "sort" # One of: cono, pos, sort
+    experiment_name = "cono" # One of: cono, pos, sort
     use_avg_prec = False
     transform_embeddings = False
     use_pca = True # Otherwise, ICA. Only applies if transform_embeddings is True.
@@ -612,7 +612,7 @@ def main() -> None:
         rvals = []
         for emb_pos in range(filtered_embeddings.shape[1]):
             rval, ptail = stats.spearmanr(query_conos, filtered_embeddings[:,emb_pos])
-            rvals.append((rval, emb_pos, ptail))
+            rvals.append(tuple(np.nan_to_num((rval, emb_pos, ptail))))
     
         rvals.sort()
         print("min, max cono corr:", rvals[0], rvals[-1])
@@ -620,12 +620,13 @@ def main() -> None:
         for deno in deno_choices:
             rvals = []
             for emb_pos in range(filtered_embeddings.shape[1]):
+                total_nonzero =  len(np.nonzero(filtered_embeddings[:,emb_pos])[0])
                 if use_avg_prec:
                     avg_prec_pos = average_precision_score(query_denos[deno], filtered_embeddings[:,emb_pos])
-                    rvals.append((avg_prec_pos, emb_pos))
+                    rvals.append(tuple(np.nan_to_num((avg_prec_pos, emb_pos, total_nonzero))))
                 else:
                     rval, pval = stats.pointbiserialr(query_denos[deno], filtered_embeddings[:,emb_pos])
-                    rvals.append((rval, emb_pos))
+                    rvals.append(tuple(np.nan_to_num((rval, emb_pos, total_nonzero))))
             rvals.sort()
             if use_avg_prec:
                 print("avg prec. deno corr ({:45s})".format(deno), rvals[-1])
