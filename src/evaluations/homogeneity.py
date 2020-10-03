@@ -15,7 +15,6 @@ query_pairs = [
     ('capitalism', 'free_market'),
     ('foreign_trade', 'international_trade'),
     ('public_option', 'governmentrun'),
-    ('federal_government', 'washington'),
 
     # CR Proxy
     ('trickledown', 'cut_taxes'),
