@@ -653,8 +653,6 @@ class IdealGroundedConfig():
 
     pretrained_embed_path: Optional[Path] = Path(
         '../../data/pretrained_word2vec/CR_context3.txt')
-        # '../../data/pretrained_word2vec/CR_ctx3_HS.txt')
-        # '../../data/pretrained_word2vec/CR_replica.txt')
 
     output_dir: Path = Path('../../results/debug')
     device: torch.device = torch.device('cuda')
