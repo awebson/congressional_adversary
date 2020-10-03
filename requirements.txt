@@ -12,6 +12,7 @@ flake8
 pytest
 tqdm
 editdistance
+rich
 # pytorch-categorical
 # tb-nightly
 # future  # for TensorBoard
