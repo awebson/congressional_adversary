@@ -712,10 +712,9 @@ class ProxyGroundedConfig():
     dev_path: Path = Path('../../data/ready/CR_proxy/0.7partisan_dev_words.txt')
     test_path: Path = Path('../../data/ready/CR_proxy/0.7partisan_test_words.txt')
     pretrained_embed_path: Optional[Path] = Path(
-        '../../data/pretrained_word2vec/CR_97_SGNS.txt')
+        '../../data/pretrained_word2vec/CR_proxy.txt')
     extra_grounding: Path = Path(
         '../../data/ready/CR_bill_context3/train_data.pickle')
-        # '../../data/ready/CR_topic_context3/train_data.pickle')
 
     # # Partisan News
     # corpus_path: Path = Path('../../data/ready/PN_proxy/train.pickle')
@@ -730,7 +729,7 @@ class ProxyGroundedConfig():
     # dev_path: Path = Path('../../data/ready/PN_proxy/0.7partisan_dev_words.txt')
     # test_path: Path = Path('../../data/ready/PN_proxy/0.7partisan_test_words.txt')
     # pretrained_embed_path: Optional[Path] = Path(
-    #     '../../data/pretrained_word2vec/PN_SGNS.txt')
+    #     '../../data/pretrained_word2vec/PN_proxy.txt')
 
     output_dir: Path = Path('../results/debug')
     device: torch.device = torch.device('cuda')

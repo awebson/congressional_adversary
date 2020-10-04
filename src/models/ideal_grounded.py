@@ -644,15 +644,8 @@ class IdealGroundedConfig():
     # num_deno_classes: int = 1029
     # num_cono_classes: int = 2
 
-    # corpus_path: str = '../../data/ready/CR_bill_context0/train_data.pickle'
-    # num_deno_classes: int = 1030
-    # num_cono_classes: int = 2
-    # corpus_path: str = '../../data/ready/CR_bill_context5/train_data.pickle'
-    # num_deno_classes: int = 1027
-    # num_cono_classes: int = 2
-
     pretrained_embed_path: Optional[Path] = Path(
-        '../../data/pretrained_word2vec/CR_context3.txt')
+        '../../data/pretrained_word2vec/CR_bill_topic_context3.txt')
 
     output_dir: Path = Path('../../results/debug')
     device: torch.device = torch.device('cuda')
