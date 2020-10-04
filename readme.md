@@ -6,7 +6,7 @@ This repository accompanies our EMNLP 2020 paper “Are ‘Undocumented Workers�
 clone https://github.com/awebson/congressional_adversary
 cd congressional_adversary
 python3 -m venv congressional_env  # or your preferred virtual environment solution
-./congressional_env/bin/activate
+source congressional_env/bin/activate
 pip install -r requirements
 pip install -e . 
 mkdir data
