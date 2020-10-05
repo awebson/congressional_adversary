@@ -528,6 +528,7 @@ def main() -> None:
     # Experiment control knobs
     experiment_name = "cono" # One of: cono, pos, sort
     use_avg_prec = False
+    binarize_embeddings = True # Implies !transform_embeddings
     transform_embeddings = False
     use_pca = True # Otherwise, ICA. Only applies if transform_embeddings is True.
     
@@ -599,7 +600,10 @@ def main() -> None:
     print("global_pos_list", global_pos_list)
     
     unfiltered_embeddings = filtered_embeddings
-    if transform_embeddings:
+    
+    if binarize_embeddings:
+        filtered_embeddings = np.where(filtered_embeddings>0, 1, 0)
+    elif transform_embeddings:
         if use_pca:
             ca = PCA()
         else:
