@@ -515,6 +515,31 @@ class RecomposerConfig():
             raise ValueError('Unknown architecture argument.')
 
 
+cherry_pairs = [
+    # Luntz Report, all GOP euphemisms
+    ('government', 'washington'),
+    # ('private_account', 'personal_account'),
+    # ('tax_reform', 'tax_simplification'),
+    ('estate_tax', 'death_tax'),
+    ('capitalism', 'free_market'),  # global economy, globalization
+    # ('outsourcing', 'innovation'),  # "root cause" of outsourcing, regulation
+    ('undocumented', 'illegal_aliens'),  # OOV undocumented_workers
+    ('foreign_trade', 'international_trade'),  # foreign, global all bad
+    # ('drilling_for_oil', 'exploring_for_energy'),
+    # ('drilling', 'energy_exploration'),
+    # ('tort_reform', 'lawsuit_abuse_reform'),
+    # ('trial_lawyer', 'personal_injury_lawyer'),  # aka ambulance chasers
+    # ('corporate_transparency', 'corporate_accountability'),
+    # ('school_choice', 'parental_choice'),  # equal_opportunity_in_education
+    # ('healthcare_choice', 'right_to_choose')
+
+    # Own Cherries
+    ('public_option', 'governmentrun'),
+    ('political_speech', 'campaign_spending'),  # hard example
+    ('cut_taxes', 'trickledown')  # OOV supplyside
+]
+
+
 def main() -> None:
     config = RecomposerConfig()
     black_box = RecomposerExperiment(config)
@@ -526,9 +551,9 @@ def main() -> None:
     id2w = black_box.model.id_to_word
 
     # Experiment control knobs
-    experiment_name = "cono" # One of: cono, pos, sort
+    experiment_name = "pairs" # One of: cono, pos, sort
     use_avg_prec = False
-    binarize_embeddings = True # Implies !transform_embeddings
+    binarize_embeddings = False # Implies !transform_embeddings
     transform_embeddings = False
     use_pca = True # Otherwise, ICA. Only applies if transform_embeddings is True.
     
@@ -678,7 +703,22 @@ def main() -> None:
 
         fig.tight_layout()
         plt.show()
-    
+    elif experiment_name == "pairs":
+        pair_argsort = None
+        for w1, w2 in cherry_pairs:
+            fig = plt.figure()
+            id1, id2 = w2id[w1], w2id[w2]
+            diff_vector = filtered_embeddings[id1] - filtered_embeddings[id2]
+            if pair_argsort is None:
+                pair_argsort = np.argsort(diff_vector)
+            ax = plt.axes()
+            ax.plot(diff_vector[pair_argsort])
+            ax.set_xlabel('Component')
+            ax.set_ylabel('Difference')
+            plt.title("{} vs {}".format(w1, w2))
+            plt.show()
+            
+
     else: # "sort"
         
         num_sort_components = 8 # Start at the left (might not be principal)
