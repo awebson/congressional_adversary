@@ -704,19 +704,28 @@ def main() -> None:
         fig.tight_layout()
         plt.show()
     elif experiment_name == "pairs":
-        pair_argsort = None
+        #pair_argsort = None
         for w1, w2 in cherry_pairs:
-            fig = plt.figure()
-            id1, id2 = w2id[w1], w2id[w2]
-            diff_vector = filtered_embeddings[id1] - filtered_embeddings[id2]
-            if pair_argsort is None:
-                pair_argsort = np.argsort(diff_vector)
-            ax = plt.axes()
-            ax.plot(diff_vector[pair_argsort])
-            ax.set_xlabel('Component')
-            ax.set_ylabel('Difference')
-            plt.title("{} vs {}".format(w1, w2))
-            plt.show()
+        
+            word_count = len(w2id)
+            randid1, randid2 = random.sample(range(word_count), 2)
+            wordid1, wordid2 = w2id[w1], w2id[w2]
+        
+            for id1, id2, isRand in [(randid1, randid2, True), (wordid1, wordid2, False)]:
+                fig = plt.figure()
+                diff_vector = filtered_embeddings[id1] - filtered_embeddings[id2]
+                #if pair_argsort is None:
+                #    pair_argsort = np.argsort(diff_vector)
+                ax = plt.axes()
+                #ax.plot(diff_vector[pair_argsort])
+                ax.plot(diff_vector)
+                ax.set_xlabel('Component')
+                ax.set_ylabel('Difference')
+                if isRand:
+                    plt.title("Random components")
+                else:
+                    plt.title("{} vs {}".format(w1, w2))
+                plt.show()
             
 
     else: # "sort"
