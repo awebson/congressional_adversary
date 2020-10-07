@@ -250,4 +250,4 @@ class Experiment(ABC):
             print('\nThe following words in the training corpus are out of '
                   'the vocabulary of the given pretrained embedding: ')
             print(out_of_vocabulary, end='\n\n')
-        return nn.Embedding.from_pretrained(embedding)
+        return nn.Embedding.from_pretrained(embedding), out_of_vocabulary
