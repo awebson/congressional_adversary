@@ -1,4 +1,4 @@
-This repository accompanies our EMNLP 2020 paper “Are ‘Undocumented Workers’ the Same as ‘Illegal Aliens’? Probing and Disentangling Denotation and Connotation in Vector Spaces”. 
+This repository accompanies our EMNLP 2020 paper “Are ‘Undocumented Workers’ the Same as ‘Illegal Aliens’? Disentangling Denotation and Connotation in Vector Spaces”. [arXiv link](http://arxiv.org/abs/2010.02976).
 
 # Setup
 (Python 3.7 or higher required.)
@@ -21,4 +21,4 @@ Run `src/models/ideal_grounding.py` for the CR bill and CR topic models, or `src
 ## Why is this repository codenamed “Congressional Adversary”?
 In typical lame academic humor, I thought it's funny that I implemented an adversarial neural net for Members of Congress, who are often adversarial, if not acrimonious, to each other. 
 
-We were also deciding between “Adversarial Congress” and “Congressional Adversary”. The former sounds like some political science book that refutes the deliberative theory of democracy, whereas the latter just sounds like someone’s evil archenemy. Since this was a paper submitted to Empirical Methods in Natural Language Processing, not the American Journal of Political Science, we went with “Congressional Adversary”.
+We were also deciding between “Adversarial Congress” and “Congressional Adversary”. The former sounds like a political science book that refutes the deliberative theory of democracy, whereas the latter just sounds like someone’s evil archenemy. Since this was a paper submitted to Empirical Methods in Natural Language Processing, not the American Journal of Political Science, we went with “Congressional Adversary”.
