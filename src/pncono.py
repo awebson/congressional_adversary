@@ -15,8 +15,9 @@ experiment_name = "cono" # One of: cono, pos, sort, pairs
 use_avg_prec = False
 binarize_embeddings = False # Implies !transform_embeddings
 transform_embeddings = False
-use_pca = True # Otherwise, ICA. Only applies if transform_embeddings is True.
+use_pca = False # Otherwise, ICA. Only applies if transform_embeddings is True.
 pickle_file = "../data/ready/PN_proxy/train.pickle"
+embedding_file = "../data/pretrained_word2vec/PN_proxy_method_B.txt"
 embedding_file = "../data/pretrained_word2vec/PN_heading_proxy.txt"
 
 
@@ -42,6 +43,7 @@ def calculate_cono(grounding, word):
         this_freq = grounding[word].cono[score_word]
         total_score += score_weight * this_freq
         total_freq += this_freq
+    
     
     return total_score / total_freq
         
@@ -126,6 +128,8 @@ for query_word in w2id.keys():
 filtered_embeddings = np.array(filtered_embeddings)
 unfiltered_embeddings = filtered_embeddings
 
+print("filtered_embeddings shape", filtered_embeddings.shape)
+
 if binarize_embeddings:
     filtered_embeddings = np.where(filtered_embeddings>0, 1, 0)
 elif transform_embeddings:
@@ -140,8 +144,13 @@ elif transform_embeddings:
 if experiment_name == "cono":
     rvals = []
     for emb_pos in range(filtered_embeddings.shape[1]):
-        rval, ptail = stats.spearmanr(query_conos, filtered_embeddings[:,emb_pos])
-        rvals.append(tuple(np.nan_to_num((rval, emb_pos, ptail))))
+    
+        if binarize_embeddings:
+            rval, pval = stats.pointbiserialr(filtered_embeddings[:,emb_pos], query_conos)
+        else:
+            rval, pval = stats.spearmanr(query_conos, filtered_embeddings[:,emb_pos])
+        
+        rvals.append(tuple(np.nan_to_num((rval, emb_pos, pval))))
 
     rvals.sort()
     print("min, max cono corr:", rvals[0], rvals[-1])
