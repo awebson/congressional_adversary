@@ -9,9 +9,10 @@ import seaborn as sns
 from tqdm.auto import tqdm
 from sklearn.manifold import TSNE
 from sklearn.decomposition import PCA
+from adjustText import adjust_text
 
 from data import GroundedWord
-# from models.ideal_grounded import Decomposer, Recomposer
+from models.ideal_grounded import Decomposer, Recomposer
 from models.proxy_grounded import ProxyGroundedDecomposer, ProxyGroundedRecomposer
 
 random.seed(42)
@@ -24,7 +25,7 @@ def plot(
         words: List[GroundedWord],
         path: Path
         ) -> None:
-    fig, ax = plt.subplots(figsize=(15, 10))
+    fig, ax = plt.subplots(figsize=(10, 10)) # (15, 10))
     skew = [w.R_ratio for w in words]
     freq = [w.freq for w in words]
     sns.scatterplot(
@@ -32,8 +33,9 @@ def plot(
         hue=skew, palette='coolwarm',  # hue_norm=(0, 1),
         size=freq, sizes=(200, 1000),
         legend=None, ax=ax)
-    for coord, w in zip(coordinates, words):
-        ax.annotate(w.text, coord, fontsize=8)
+    labels = [plt.text(coord[0], coord[1], w.text, fontsize=8)
+              for coord, w in zip(coordinates, words)]
+    adjust_text(labels)
     with open(path, 'wb') as file:
         fig.savefig(file, dpi=200)
     plt.close(fig)
@@ -103,10 +105,9 @@ def graph_en_masse(
 
 
 def main():
-    # in_path = Path('../../results/replica/CR_topic/LinRe/epoch100.pt')
-    # in_path = Path('../../results/replica/CR_bill/new ground/epoch50.pt')
-    # in_path = Path('../../results/replica/CR_skip/clip none extra/epoch6.pt')
-    in_path = Path('../../results/replica/CR_skip/naive LM LR1e-3 NO/epoch1_4.pt')
+    # in_path = Path('../../results/camera/CR_topic/GM5 LR1e-5/epoch24.pt')
+    in_path = Path('../../results/camera/CR_bill/GM5 rereplica LR1e-5/epoch100.pt')
+    # in_path = Path('../../results/camera/CR_proxy/GM5/epoch16.pt')
     # in_path = Path('../../results/replica/PN_skip/clip all/epoch20.pt')
     out_dir = in_path.parent
     model = torch.load(in_path, map_location='cpu')
@@ -121,14 +122,14 @@ def main():
         'undocumented', 'illegal_aliens',
         'capitalism', 'free_market',
 
-        'trickledown', 'cut_taxes',
-        'voodoo', 'supplyside',
-        'tax_expenditures', 'spending_programs',
-        'waterboarding', 'interrogation',
-        'socialized_medicine', 'singlepayer',
-        'political_speech', 'campaign_spending',
-        'star_wars', 'strategic_defense_initiative',
-        'nuclear_option', 'constitutional_option'
+        # 'trickledown', 'cut_taxes',
+        # 'voodoo', 'supplyside',
+        # 'tax_expenditures', 'spending_programs',
+        # 'waterboarding', 'interrogation',
+        # 'socialized_medicine', 'singlepayer',
+        # 'political_speech', 'campaign_spending',
+        # 'star_wars', 'strategic_defense_initiative',
+        # 'nuclear_option', 'constitutional_option'
 
         # # PN
         # 'government', 'washington',
@@ -153,18 +154,21 @@ def main():
     }
 
     grounded_words = [model.ground[w] for w in query_words]
-    for w in grounded_words:
-        w.init_plotting()
-        # print(w)
+    # import IPython
+    # IPython.embed()
+    for gw in grounded_words:
+        # CR
+        gw.freq = sum(gw.cono.values())
+        gw.R_ratio = gw.cono['R'] / gw.freq
 
     graph_en_masse(
         spaces, out_dir=out_dir / 'PCA', color_code='both',
         reduction='PCA', words=grounded_words)
 
-    for perplexity in (2, 4, 5, 6, 8, 10, 12):
-        graph_en_masse(
-            spaces, out_dir=out_dir / f't-SNE p{perplexity}', color_code='both',
-            reduction='TSNE', perplexity=perplexity, words=grounded_words)
+    # for perplexity in (2, 4, 5, 6, 8, 10, 12):
+    #     graph_en_masse(
+    #         spaces, out_dir=out_dir / f't-SNE p{perplexity}', color_code='both',
+    #         reduction='TSNE', perplexity=perplexity, words=grounded_words)
 
 if __name__ == "__main__":
     main()
