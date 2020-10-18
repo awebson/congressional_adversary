@@ -7,57 +7,95 @@ from scipy import stats
 import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
+import torch
 
 from utils.experiment import Experiment
+from ultradense import UltraDense
  
 # Experiment control knobs
-experiment_name = "cono" # One of: cono, pos, sort, pairs
+experiment_name = "dense" # One of: cono, pos, sort, pairs, dense
 use_avg_prec = False
 binarize_embeddings = False # Implies !transform_embeddings
 transform_embeddings = False
 use_pca = False # Otherwise, ICA. Only applies if transform_embeddings is True.
-pickle_file = "../data/ready/PN_proxy/train.pickle"
-embedding_file = "../data/pretrained_word2vec/PN_proxy_method_B.txt"
-embedding_file = "../data/pretrained_word2vec/PN_heading_proxy.txt"
+pn_corpus = False # Partisan News if True otherwise, Congressional Record
+use_saved_wordinfo = True
 
 
-def calculate_cono(grounding, word):
-    """Find the connotation score between 0.0 and 4.0 for this word
+saved_pickle_name = "intermediate.pickle"
+if pn_corpus:
+    pickle_file = "../data/ready/PN_proxy/train.pickle"
+    embedding_file = "../data/pretrained_word2vec/PN_proxy_method_B.txt"
+    embedding_file = "../data/pretrained_word2vec/PN_heading_proxy.txt"
+
+else:
+    pickle_file = "../data/ready/CR_proxy/train.pickle"
+    embedding_file = "../data/pretrained_word2vec/CR_proxy.txt"    
+
+
+if pn_corpus:
+    def calculate_cono(grounding, word):
+        """Find the connotation score between 0.0 and 4.0 for this word
     
-    4.0 = Right
-    2.0 = Center
-    0.0 = Left
-    """
+        Used for Partisan News corpus.
+    
+        4.0 = Right
+        2.0 = Center
+        0.0 = Left
+        """
 
-    score_dict = {
-        'left': 0,
-        'left-center': 1,
-        'least': 2,
-        'right-center': 3,
-        'right': 4
-    }
+        score_dict = {
+            'left': 0,
+            'left-center': 1,
+            'least': 2,
+            'right-center': 3,
+            'right': 4
+        }
 
-    total_freq = 0
-    total_score = 0
-    for score_word, score_weight in score_dict.items():
-        this_freq = grounding[word].cono[score_word]
-        total_score += score_weight * this_freq
-        total_freq += this_freq
+        total_freq = 0
+        total_score = 0
+        for score_word, score_weight in score_dict.items():
+            this_freq = grounding[word].cono[score_word]
+            total_score += score_weight * this_freq
+            total_freq += this_freq
     
     
-    return total_score / total_freq
+        return total_score / total_freq
+else:
+    def calculate_cono(grounding, word):
+        if grounding[word].majority_cono == 'D':
+            return 1
+        elif grounding[word].majority_cono == 'R':
+            return 0
+        else:
+            assert False
         
 
-with open(pickle_file, 'rb') as f:
+print("Loading Pickle file")
+with open(saved_pickle_name if use_saved_wordinfo else pickle_file, 'rb') as f:
     pick_data = pickle.load(f)
 
+w2id = pick_data["word_to_id"]
+id2w = pick_data["id_to_word"]
+ground = pick_data['ground']
+    
+if not use_saved_wordinfo:
+    new_pickle_root = {
+        "ground": ground,
+        "word_to_id": w2id,
+        "id_to_word": id2w
+    }
+    print("Saving Pickle file")
+    with open(saved_pickle_name, "wb") as fout:
+        pickle.dump(new_pickle_root, fout)
+
+
+print("Loading text embedding")
 raw_embed, out_of_vocabulary = Experiment.load_txt_embedding(embedding_file, pick_data["word_to_id"])
 
 p_embedding = raw_embed.weight.numpy()
 
 print("pretrained embedding shape", p_embedding.shape)
-w2id = pick_data["word_to_id"]
-id2w = pick_data["id_to_word"]
 
 
 if experiment_name == "pos":
@@ -65,7 +103,7 @@ if experiment_name == "pos":
     global_pos_list_l = list(global_pos_list)
     pos_one_hot = [[] for i in global_pos_list_l]
 
-ground = pick_data['ground']
+
 query_conos = []
 filtered_embeddings = []
 found_count = 0
@@ -84,7 +122,7 @@ for query_word in w2id.keys():
 
     id = w2id[query_word]
 
-    if experiment_name == "cono" or experiment_name == "sort":
+    if experiment_name in ["cono", "sort", "dense"]:
         #if "_" not in query_word:
         #    # Only use compound words
         #    continue
@@ -141,7 +179,88 @@ elif transform_embeddings:
     
     filtered_embeddings = ca.transform(filtered_embeddings)
 
-if experiment_name == "cono":
+
+if experiment_name == "dense":
+    
+    batch_size = 120
+    
+    filtered_embeddings = filtered_embeddings[:40000]
+    query_conos = query_conos[:40000]
+    
+    embedding_length = filtered_embeddings.shape[1]
+    
+    num_labels = len(query_conos)
+    num_1_labels = sum(query_conos)
+    num_0_labels = num_labels - num_1_labels
+    
+    base_label_cnt = min(num_1_labels, num_0_labels)
+    batches_per_epoch = int(base_label_cnt/batch_size)
+    
+    query_conos_np = np.array(query_conos)
+    
+    sort_lbl_idx = query_conos_np.argsort()
+    zero_idces = sort_lbl_idx[:num_0_labels] # 0-indices
+    one_idces = sort_lbl_idx[num_0_labels:] # 1-indicies
+        
+
+    
+    offset_choice = 3
+    model = UltraDense(embedding_length, offset_choice)
+    #optimizer = torch.optim.Adam(model.parameters(), lr=5)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.9)
+    
+    print("num_labels", num_labels, "num_1_labels", num_1_labels)
+    
+    
+    
+    num_epochs = 30
+    for e in range(num_epochs):
+        print("starting epoch", e)
+        
+        zero_epoch_idx = np.random.choice(zero_idces, batches_per_epoch * batch_size, False)
+        one_epoch_idx = np.random.choice(one_idces, batches_per_epoch * batch_size, False)
+        
+        total_intloss = 0
+        for b in range(batches_per_epoch):
+
+            batch_idx = np.concatenate((
+                zero_epoch_idx[b*batch_size:(b+1)*batch_size],
+                one_epoch_idx[b*batch_size:(b+1)*batch_size]
+                ))
+            optimizer.zero_grad()    
+            Lcts_result, Lct_result = model(filtered_embeddings[batch_idx], query_conos_np[batch_idx])
+            loss = model.loss_func(Lcts_result, Lct_result)
+            floatloss = float(loss)
+            if b % 10 == 0:
+                print("batch", b)
+                print("loss", floatloss)
+            total_intloss += floatloss
+            loss.backward()
+            optimizer.step()
+    
+            #print("Q before ortho:", model.Q)
+    
+            model.orthogonalize()
+    
+    
+        scheduler.step()
+        
+        #print("Q after ortho:", model.Q)
+    
+        output_ultradense = model.apply_q(filtered_embeddings)[:,offset_choice]
+        
+        #print("Epoch", e, output_ultradense)
+        #sorted_result_idx = np.argsort(output_ultradense)
+
+        #print("Sorted component", output_ultradense[sorted_result_idx])
+        #print("Sorted labels", labels[sorted_result_idx])
+
+        rval, pval = stats.spearmanr(query_conos, output_ultradense)
+        print("Correlation:", rval)
+        print("avg loss:", total_intloss / batches_per_epoch)
+
+elif experiment_name == "cono":
     rvals = []
     for emb_pos in range(filtered_embeddings.shape[1]):
     
