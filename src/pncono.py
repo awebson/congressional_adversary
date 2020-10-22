@@ -22,6 +22,11 @@ pn_corpus = False # Partisan News if True otherwise, Congressional Record
 use_saved_wordinfo = True
 
 
+albert_pick_file = "../albert_wordlist.pickle"
+
+with open(albert_pick_file, 'rb') as albert_file:
+    albert_pick = pickle.load(albert_file)
+
 saved_pickle_name = "intermediate.pickle"
 if pn_corpus:
     pickle_file = "../data/ready/PN_proxy/train.pickle"
@@ -115,7 +120,8 @@ query_denos = {d:[] for d in deno_choices}
 print("number of query words", len(w2id.keys()))
 
 
-for query_word in w2id.keys():
+#for query_word in w2id.keys():
+for query_word in albert_pick["word_to_id"].keys():
 
     if query_word in out_of_vocabulary:
         continue
@@ -182,10 +188,16 @@ elif transform_embeddings:
 
 if experiment_name == "dense":
     
-    batch_size = 120
+    lr_choices = [5,0.5,0.05,0.005,0.0005]
+    batch_size = 200
+    num_epochs = 50
+    offset_choice = 3
+    train_ratio = 0.9
+    embedding_clipping = None # Set to e.g. 10000
     
-    filtered_embeddings = filtered_embeddings[:40000]
-    query_conos = query_conos[:40000]
+    if embedding_clipping:
+        filtered_embeddings = filtered_embeddings[:embedding_clipping]
+        query_conos = query_conos[:embedding_clipping]
     
     embedding_length = filtered_embeddings.shape[1]
     
@@ -194,71 +206,119 @@ if experiment_name == "dense":
     num_0_labels = num_labels - num_1_labels
     
     base_label_cnt = min(num_1_labels, num_0_labels)
-    batches_per_epoch = int(base_label_cnt/batch_size)
     
     query_conos_np = np.array(query_conos)
     
     sort_lbl_idx = query_conos_np.argsort()
     zero_idces = sort_lbl_idx[:num_0_labels] # 0-indices
     one_idces = sort_lbl_idx[num_0_labels:] # 1-indicies
+    
+    np.random.shuffle(zero_idces)
+    np.random.shuffle(one_idces)
+    
+    num_train_examples = int(train_ratio * base_label_cnt)
+    num_test_examples = base_label_cnt - num_train_examples
+    
+    batches_per_epoch = int(num_train_examples/batch_size)
+    
+    holdout_set_zeroes = zero_idces[:num_test_examples]
+    holdout_set_ones = one_idces[:num_test_examples]
+    train_set_zeroes = zero_idces[num_test_examples:]
+    train_set_ones = one_idces[num_test_examples:]
+    
+    train_embedding = filtered_embeddings[np.concatenate((train_set_zeroes,train_set_ones))]
+    test_embedding = filtered_embeddings[np.concatenate((holdout_set_zeroes,holdout_set_ones))]
+    train_query_conos_np = query_conos_np[np.concatenate((train_set_zeroes,train_set_ones))]
+    test_query_conos_np = query_conos_np[np.concatenate((holdout_set_zeroes,holdout_set_ones))]
+    
+    print("Num 0 labels:", num_0_labels)
+    print("Num 1 labels:", num_1_labels)
         
+    loss_axes = []
+    corr_axes = [] 
+    testcorr_axes = []    
+    
+    for learning_rate in lr_choices:
+    
+        print("Running model with lr=", learning_rate)
+    
+        loss_per_epoch = []
+        corr_per_epoch = []
+        testcorr_per_epoch = []
+        
+        model = UltraDense(embedding_length, offset_choice)
+        optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
+        #optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.95)
 
-    
-    offset_choice = 3
-    model = UltraDense(embedding_length, offset_choice)
-    #optimizer = torch.optim.Adam(model.parameters(), lr=5)
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.9)
-    
-    print("num_labels", num_labels, "num_1_labels", num_1_labels)
-    
-    
-    
-    num_epochs = 30
-    for e in range(num_epochs):
-        print("starting epoch", e)
+        for e in range(num_epochs):
         
-        zero_epoch_idx = np.random.choice(zero_idces, batches_per_epoch * batch_size, False)
-        one_epoch_idx = np.random.choice(one_idces, batches_per_epoch * batch_size, False)
+            zero_epoch_idx = np.random.choice(train_set_zeroes, batches_per_epoch * batch_size, False)
+            one_epoch_idx = np.random.choice(train_set_ones, batches_per_epoch * batch_size, False)
         
-        total_intloss = 0
-        for b in range(batches_per_epoch):
+            total_intloss = 0
+            for b in range(batches_per_epoch):
 
-            batch_idx = np.concatenate((
-                zero_epoch_idx[b*batch_size:(b+1)*batch_size],
-                one_epoch_idx[b*batch_size:(b+1)*batch_size]
-                ))
-            optimizer.zero_grad()    
-            Lcts_result, Lct_result = model(filtered_embeddings[batch_idx], query_conos_np[batch_idx])
-            loss = model.loss_func(Lcts_result, Lct_result)
-            floatloss = float(loss)
-            if b % 10 == 0:
-                print("batch", b)
-                print("loss", floatloss)
-            total_intloss += floatloss
-            loss.backward()
-            optimizer.step()
+                batch_idx = np.concatenate((
+                    zero_epoch_idx[b*batch_size:(b+1)*batch_size],
+                    one_epoch_idx[b*batch_size:(b+1)*batch_size]
+                    ))
+                optimizer.zero_grad()    
+                Lcts_result, Lct_result = model(filtered_embeddings[batch_idx], query_conos_np[batch_idx])
+                loss = model.loss_func(Lcts_result, Lct_result)
+                floatloss = float(loss)
+                total_intloss += floatloss
+                loss.backward()
+                optimizer.step()
+                model.orthogonalize()
     
-            #print("Q before ortho:", model.Q)
-    
-            model.orthogonalize()
-    
-    
-        scheduler.step()
+            scheduler.step()
+            output_ultradense = model.apply_q(train_embedding)[:,offset_choice]
+            rval, pval = stats.spearmanr(train_query_conos_np, output_ultradense)
+            avg_loss_epoch = total_intloss / batches_per_epoch
+            output_ultradense_test = model.apply_q(test_embedding)[:,offset_choice]
+            test_rval, test_pval = stats.spearmanr(test_query_conos_np, output_ultradense_test)
+            print("Epoch: {} Correlation: {:.3f} (test): {:.3f} , Avg Loss: {:.3f} ".format(e, rval, test_rval, avg_loss_epoch))
+            
+            loss_per_epoch.append(avg_loss_epoch)
+            corr_per_epoch.append(rval)
+            testcorr_per_epoch.append(test_rval)
         
-        #print("Q after ortho:", model.Q)
-    
-        output_ultradense = model.apply_q(filtered_embeddings)[:,offset_choice]
+        loss_axes.append(loss_per_epoch)
+        corr_axes.append(corr_per_epoch)
+        testcorr_axes.append(testcorr_per_epoch)
         
-        #print("Epoch", e, output_ultradense)
-        #sorted_result_idx = np.argsort(output_ultradense)
-
-        #print("Sorted component", output_ultradense[sorted_result_idx])
-        #print("Sorted labels", labels[sorted_result_idx])
-
-        rval, pval = stats.spearmanr(query_conos, output_ultradense)
-        print("Correlation:", rval)
-        print("avg loss:", total_intloss / batches_per_epoch)
+    
+    fig = plt.figure()
+    ax = plt.axes()
+    for lr, lax in zip(lr_choices, loss_axes):
+        ax.plot(lax, label=str(lr))
+    ax.set_xlabel('Epoch')
+    ax.set_ylabel('Loss')
+    plt.title("Loss by learning rate")
+    plt.legend()
+    plt.show()
+    
+    
+    fig = plt.figure()
+    ax = plt.axes()
+    for lr, lax in zip(lr_choices, corr_axes):
+        ax.plot(lax, label=str(lr))
+    ax.set_xlabel('Epoch')
+    ax.set_ylabel('Spearman Correlation')
+    plt.title("Correlation by learning rate")
+    plt.legend()
+    plt.show()
+    
+    fig = plt.figure()
+    ax = plt.axes()
+    for lr, lax in zip(lr_choices, testcorr_axes):
+        ax.plot(lax, label=str(lr))
+    ax.set_xlabel('Epoch')
+    ax.set_ylabel('Spearman Correlation')
+    plt.title("Correlation (test) by learning rate")
+    plt.legend()
+    plt.show()
 
 elif experiment_name == "cono":
     rvals = []
