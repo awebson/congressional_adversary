@@ -8,18 +8,19 @@ import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 import torch
+import random
 
 from utils.experiment import Experiment
 from ultradense import UltraDense
  
 # Experiment control knobs
-experiment_name = "dense" # One of: cono, pos, sort, pairs, dense
+experiment_name = "pairs" # One of: cono, pos, sort, pairs, dense
 use_avg_prec = False
 binarize_embeddings = False # Implies !transform_embeddings
 transform_embeddings = False
 use_pca = False # Otherwise, ICA. Only applies if transform_embeddings is True.
-pn_corpus = False # Partisan News if True otherwise, Congressional Record
-use_saved_wordinfo = True
+pn_corpus = True # Partisan News if True otherwise, Congressional Record
+use_saved_wordinfo = False
 
 
 albert_pick_file = "../albert_wordlist.pickle"
@@ -31,12 +32,40 @@ saved_pickle_name = "intermediate.pickle"
 if pn_corpus:
     pickle_file = "../data/ready/PN_proxy/train.pickle"
     embedding_file = "../data/pretrained_word2vec/PN_proxy_method_B.txt"
-    embedding_file = "../data/pretrained_word2vec/PN_heading_proxy.txt"
+    #embedding_file = "../data/pretrained_word2vec/PN_heading_proxy.txt"
 
 else:
-    pickle_file = "../data/ready/CR_proxy/train.pickle"
-    embedding_file = "../data/pretrained_word2vec/CR_proxy.txt"    
 
+    embedding_file = "/Users/tberckma/Documents/Brown/Research/AlbertProject/newcong_ad_data/data/pretrained_word2vec/for_real_SGNS_method_B.txt"
+    pickle_file = "/Users/tberckma/Documents/Brown/Research/AlbertProject/congressional_adversary/data/ready/CR_proxy/train.pickle"
+
+    #pickle_file = "../data/ready/CR_proxy/train.pickle"
+    #embedding_file = "../data/pretrained_word2vec/CR_proxy.txt"    
+
+
+cherry_pairs = [
+    # Luntz Report, all GOP euphemisms
+    ('government', 'washington'),
+    # ('private_account', 'personal_account'),
+    # ('tax_reform', 'tax_simplification'),
+    ('estate_tax', 'death_tax'),
+    ('capitalism', 'free_market'),  # global economy, globalization
+    # ('outsourcing', 'innovation'),  # "root cause" of outsourcing, regulation
+    ('undocumented', 'illegal_aliens'),  # OOV undocumented_workers
+    ('foreign_trade', 'international_trade'),  # foreign, global all bad
+    # ('drilling_for_oil', 'exploring_for_energy'),
+    # ('drilling', 'energy_exploration'),
+    # ('tort_reform', 'lawsuit_abuse_reform'),
+    # ('trial_lawyer', 'personal_injury_lawyer'),  # aka ambulance chasers
+    # ('corporate_transparency', 'corporate_accountability'),
+    # ('school_choice', 'parental_choice'),  # equal_opportunity_in_education
+    # ('healthcare_choice', 'right_to_choose')
+
+    # Own Cherries
+    ('public_option', 'governmentrun'),
+    ('political_speech', 'campaign_spending'),  # hard example
+    ('cut_taxes', 'trickledown')  # OOV supplyside
+]
 
 if pn_corpus:
     def calculate_cono(grounding, word):
@@ -74,7 +103,6 @@ else:
             return 0
         else:
             assert False
-        
 
 print("Loading Pickle file")
 with open(saved_pickle_name if use_saved_wordinfo else pickle_file, 'rb') as f:
@@ -83,6 +111,8 @@ with open(saved_pickle_name if use_saved_wordinfo else pickle_file, 'rb') as f:
 w2id = pick_data["word_to_id"]
 id2w = pick_data["id_to_word"]
 ground = pick_data['ground']
+    
+print("length of w2id:", len(w2id))
     
 if not use_saved_wordinfo:
     new_pickle_root = {
@@ -393,27 +423,53 @@ elif experiment_name == "pos":
     plt.show()
 elif experiment_name == "pairs":
     #pair_argsort = None
+    fig_words = []
+    fig_rand = []
     for w1, w2 in cherry_pairs:
     
+
         word_count = len(w2id)
         randid1, randid2 = random.sample(range(word_count), 2)
         wordid1, wordid2 = w2id[w1], w2id[w2]
     
-        for id1, id2, isRand in [(randid1, randid2, True), (wordid1, wordid2, False)]:
-            fig = plt.figure()
-            diff_vector = filtered_embeddings[id1] - filtered_embeddings[id2]
+
+        for id1, id2, isRand, tgt_list in [(randid1, randid2, True, fig_rand), (wordid1, wordid2, False, fig_words)]:
+            diff_vector = p_embedding[id1] - p_embedding[id2]
             #if pair_argsort is None:
             #    pair_argsort = np.argsort(diff_vector)
-            ax = plt.axes()
-            #ax.plot(diff_vector[pair_argsort])
-            ax.plot(diff_vector)
-            ax.set_xlabel('Component')
-            ax.set_ylabel('Difference')
-            if isRand:
-                plt.title("Random components")
-            else:
-                plt.title("{} vs {}".format(w1, w2))
-            plt.show()
+            diff_vector.sort()
+            diff_vector = np.flip(diff_vector)
+            diff_vector = diff_vector[:300]
+            tgt_list.append(diff_vector)
+
+    fig = plt.figure()
+    ax = plt.axes()
+    #ax.plot(diff_vector[pair_argsort])
+    for diff_vector in fig_words:
+        ax.plot(diff_vector)
+    ax.set_xlabel('Component')
+    ax.set_ylabel('Difference')
+    plt.title("Random pair differences")
+    plt.ylim(-0.15, 0.15)
+    plt.show()
+    
+# Old way: throwing up individual charts
+
+#         for id1, id2, isRand in [(randid1, randid2, True), (wordid1, wordid2, False)]:
+#             fig = plt.figure()
+#             diff_vector = filtered_embeddings[id1] - filtered_embeddings[id2]
+#             #if pair_argsort is None:
+#             #    pair_argsort = np.argsort(diff_vector)
+#             ax = plt.axes()
+#             #ax.plot(diff_vector[pair_argsort])
+#             ax.plot(diff_vector)
+#             ax.set_xlabel('Component')
+#             ax.set_ylabel('Difference')
+#             if isRand:
+#                 plt.title("Random components")
+#             else:
+#                 plt.title("{} vs {}".format(w1, w2))
+#             plt.show()
         
 
 else: # "sort"
