@@ -1,4 +1,4 @@
-This repository accompanies our EMNLP 2020 paper “Are ‘Undocumented Workers’ the Same as ‘Illegal Aliens’? Disentangling Denotation and Connotation in Vector Spaces”. [arXiv link](http://arxiv.org/abs/2010.02976).
+This repository accompanies our EMNLP 2020 paper “Are ‘Undocumented Workers’ the Same as ‘Illegal Aliens’? Disentangling Denotation and Connotation in Vector Spaces”. [Paper](http://arxiv.org/abs/2010.02976). [Recorded talk](https://youtu.be/V2pdS6Y_8n0).
 
 # Setup
 (Python 3.7 or higher required.)
