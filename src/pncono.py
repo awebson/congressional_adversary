@@ -20,7 +20,7 @@ binarize_embeddings = False # Implies !transform_embeddings
 transform_embeddings = False
 use_pca = False # Otherwise, ICA. Only applies if transform_embeddings is True.
 pn_corpus = True # Partisan News if True otherwise, Congressional Record
-use_saved_wordinfo = False
+use_saved_wordinfo = True
 
 
 albert_pick_file = "../albert_wordlist.pickle"
@@ -150,54 +150,55 @@ query_denos = {d:[] for d in deno_choices}
 print("number of query words", len(w2id.keys()))
 
 
-#for query_word in w2id.keys():
-for query_word in albert_pick["word_to_id"].keys():
+if False: # Filter embeddings
+    #for query_word in w2id.keys():
+    for query_word in albert_pick["word_to_id"].keys():
 
-    if query_word in out_of_vocabulary:
-        continue
+        if query_word in out_of_vocabulary:
+            continue
 
-    id = w2id[query_word]
+        id = w2id[query_word]
 
-    if experiment_name in ["cono", "sort", "dense"]:
-        #if "_" not in query_word:
-        #    # Only use compound words
-        #    continue
+        if experiment_name in ["cono", "sort", "dense"]:
+            #if "_" not in query_word:
+            #    # Only use compound words
+            #    continue
 
-        query_cono = calculate_cono(ground, query_word)
-        query_conos.append(query_cono)
-        #query_deno = ground[query_word]['majority_deno']
+            query_cono = calculate_cono(ground, query_word)
+            query_conos.append(query_cono)
+            #query_deno = ground[query_word]['majority_deno']
         
-        #for deno in deno_choices:
-        #    if deno == query_deno:
-        #        query_denos[deno].append(1)
-        #    else:
-        #        query_denos[deno].append(0)
+            #for deno in deno_choices:
+            #    if deno == query_deno:
+            #        query_denos[deno].append(1)
+            #    else:
+            #        query_denos[deno].append(0)
 
-    elif experiment_name == "pos":
-        # POS experiment
-        if "_" in query_word:
-            # Skip compound words- won't be in dictionaries
-            continue
-        try:
-            this_word_posset = master_pos_dict[query_word.lower()]
-            if len(this_word_posset) != 1:
-                continue # Only use words with a single definition
-            found_count += 1
-        except KeyError:
-            #this_word_posset = set()
-            continue
+        elif experiment_name == "pos":
+            # POS experiment
+            if "_" in query_word:
+                # Skip compound words- won't be in dictionaries
+                continue
+            try:
+                this_word_posset = master_pos_dict[query_word.lower()]
+                if len(this_word_posset) != 1:
+                    continue # Only use words with a single definition
+                found_count += 1
+            except KeyError:
+                #this_word_posset = set()
+                continue
     
-        #alt_set = word_cat(query_word)
-        #if alt_set:
-        #    this_word_posset.add(alt_set)
+            #alt_set = word_cat(query_word)
+            #if alt_set:
+            #    this_word_posset.add(alt_set)
             
-        for idx, pos in enumerate(global_pos_list_l):
-            if pos in this_word_posset:
-                pos_one_hot[idx].append(1)
-            else:
-                pos_one_hot[idx].append(0)
+            for idx, pos in enumerate(global_pos_list_l):
+                if pos in this_word_posset:
+                    pos_one_hot[idx].append(1)
+                else:
+                    pos_one_hot[idx].append(0)
     
-    filtered_embeddings.append(p_embedding[id])
+        filtered_embeddings.append(p_embedding[id])
 
 filtered_embeddings = np.array(filtered_embeddings)
 unfiltered_embeddings = filtered_embeddings
@@ -430,7 +431,11 @@ elif experiment_name == "pairs":
 
         word_count = len(w2id)
         randid1, randid2 = random.sample(range(word_count), 2)
-        wordid1, wordid2 = w2id[w1], w2id[w2]
+        try:
+            wordid1, wordid2 = w2id[w1], w2id[w2]
+        except KeyError:
+            print("Skipping", w1, w2, "since not found")
+            continue
     
 
         for id1, id2, isRand, tgt_list in [(randid1, randid2, True, fig_rand), (wordid1, wordid2, False, fig_words)]:
@@ -445,11 +450,22 @@ elif experiment_name == "pairs":
     fig = plt.figure()
     ax = plt.axes()
     #ax.plot(diff_vector[pair_argsort])
-    for diff_vector in fig_words:
+    for diff_vector in fig_rand:
         ax.plot(diff_vector)
     ax.set_xlabel('Component')
     ax.set_ylabel('Difference')
     plt.title("Random pair differences")
+    plt.ylim(-0.15, 0.15)
+    plt.show()
+    
+    fig = plt.figure()
+    ax = plt.axes()
+    #ax.plot(diff_vector[pair_argsort])
+    for diff_vector in fig_words:
+        ax.plot(diff_vector)
+    ax.set_xlabel('Component')
+    ax.set_ylabel('Difference')
+    plt.title("Luntz-esque differences")
     plt.ylim(-0.15, 0.15)
     plt.show()
     
