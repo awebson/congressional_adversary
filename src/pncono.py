@@ -12,14 +12,15 @@ import random
 
 from utils.experiment import Experiment
 from ultradense import UltraDense
+from classifier import Classifier
  
 # Experiment control knobs
-experiment_name = "pairs" # One of: cono, pos, sort, pairs, dense
+experiment_name = "dense" # One of: cono, pos, sort, pairs, dense
 use_avg_prec = False
 binarize_embeddings = False # Implies !transform_embeddings
 transform_embeddings = False
 use_pca = False # Otherwise, ICA. Only applies if transform_embeddings is True.
-pn_corpus = True # Partisan News if True otherwise, Congressional Record
+pn_corpus = False # Partisan News if True otherwise, Congressional Record
 use_saved_wordinfo = True
 
 
@@ -36,11 +37,11 @@ if pn_corpus:
 
 else:
 
-    embedding_file = "/Users/tberckma/Documents/Brown/Research/AlbertProject/newcong_ad_data/data/pretrained_word2vec/for_real_SGNS_method_B.txt"
-    pickle_file = "/Users/tberckma/Documents/Brown/Research/AlbertProject/congressional_adversary/data/ready/CR_proxy/train.pickle"
+    #embedding_file = "/Users/tberckma/Documents/Brown/Research/AlbertProject/newcong_ad_data/data/pretrained_word2vec/for_real_SGNS_method_B.txt"
+    #pickle_file = "/Users/tberckma/Documents/Brown/Research/AlbertProject/congressional_adversary/data/ready/CR_proxy/train.pickle"
 
-    #pickle_file = "../data/ready/CR_proxy/train.pickle"
-    #embedding_file = "../data/pretrained_word2vec/CR_proxy.txt"    
+    pickle_file = "../data/ready/CR_proxy/train.pickle"
+    embedding_file = "../data/pretrained_word2vec/CR_proxy.txt"    
 
 
 cherry_pairs = [
@@ -150,7 +151,7 @@ query_denos = {d:[] for d in deno_choices}
 print("number of query words", len(w2id.keys()))
 
 
-if False: # Filter embeddings
+if True: # Filter embeddings
     #for query_word in w2id.keys():
     for query_word in albert_pick["word_to_id"].keys():
 
@@ -219,9 +220,11 @@ elif transform_embeddings:
 
 if experiment_name == "dense":
     
-    lr_choices = [5,0.5,0.05,0.005,0.0005]
+    classifier_type = False # As opposed to ultradense
+    
+    lr_choices = [0.5,0.05,0.005,0.0005]
     batch_size = 200
-    num_epochs = 50
+    num_epochs = 20
     offset_choice = 3
     train_ratio = 0.9
     embedding_clipping = None # Set to e.g. 10000
@@ -266,7 +269,8 @@ if experiment_name == "dense":
     print("Num 1 labels:", num_1_labels)
         
     loss_axes = []
-    corr_axes = [] 
+    corr_axes = []
+    acc_axes = []
     testcorr_axes = []    
     
     for learning_rate in lr_choices:
@@ -276,11 +280,16 @@ if experiment_name == "dense":
         loss_per_epoch = []
         corr_per_epoch = []
         testcorr_per_epoch = []
+        acc_par_batch = []
         
-        model = UltraDense(embedding_length, offset_choice)
-        optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
-        #optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
-        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.95)
+        if classifier_type:
+            model = Classifier(embedding_length, 2)
+            optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+        else:
+            model = UltraDense(embedding_length, offset_choice)
+            optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
+            #optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+            scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.95)
 
         for e in range(num_epochs):
         
@@ -294,29 +303,43 @@ if experiment_name == "dense":
                     zero_epoch_idx[b*batch_size:(b+1)*batch_size],
                     one_epoch_idx[b*batch_size:(b+1)*batch_size]
                     ))
-                optimizer.zero_grad()    
-                Lcts_result, Lct_result = model(filtered_embeddings[batch_idx], query_conos_np[batch_idx])
-                loss = model.loss_func(Lcts_result, Lct_result)
+                optimizer.zero_grad()
+                if classifier_type:
+                    logits = model(filtered_embeddings[batch_idx], query_conos_np[batch_idx])
+                    loss = model.loss_func(logits, query_conos_np[batch_idx])
+                else: 
+                    Lcts_result, Lct_result = model(filtered_embeddings[batch_idx], query_conos_np[batch_idx])
+                    loss = model.loss_func(Lcts_result, Lct_result)
                 floatloss = float(loss)
                 total_intloss += floatloss
                 loss.backward()
                 optimizer.step()
-                model.orthogonalize()
+                if not classifier_type:
+                    model.orthogonalize()
     
-            scheduler.step()
-            output_ultradense = model.apply_q(train_embedding)[:,offset_choice]
-            rval, pval = stats.spearmanr(train_query_conos_np, output_ultradense)
+            if not classifier_type:
+                scheduler.step()
+                output_ultradense = model.apply_q(train_embedding)[:,offset_choice]
+                rval, pval = stats.spearmanr(train_query_conos_np, output_ultradense)
+                corr_per_epoch.append(rval)
+
             avg_loss_epoch = total_intloss / batches_per_epoch
-            output_ultradense_test = model.apply_q(test_embedding)[:,offset_choice]
-            test_rval, test_pval = stats.spearmanr(test_query_conos_np, output_ultradense_test)
-            print("Epoch: {} Correlation: {:.3f} (test): {:.3f} , Avg Loss: {:.3f} ".format(e, rval, test_rval, avg_loss_epoch))
-            
             loss_per_epoch.append(avg_loss_epoch)
-            corr_per_epoch.append(rval)
-            testcorr_per_epoch.append(test_rval)
-        
+            
+            if classifier_type:
+                predictions = model.test_forward(test_embedding)
+                accuracy = sum(predictions == test_query_conos_np) / len(predictions)
+                print("Epoch: {} Accuracy: {:.3f} (test): {:.3f} , Avg Loss: {:.3f} ".format(e, accuracy, 0.0, avg_loss_epoch))
+                acc_par_batch.append(accuracy)
+            else:
+                output_ultradense_test = model.apply_q(test_embedding)[:,offset_choice]
+                test_rval, test_pval = stats.spearmanr(test_query_conos_np, output_ultradense_test)
+                print("Epoch: {} Correlation: {:.3f} (test): {:.3f} , Avg Loss: {:.3f} ".format(e, rval, test_rval, avg_loss_epoch))
+                testcorr_per_epoch.append(test_rval)
+
         loss_axes.append(loss_per_epoch)
         corr_axes.append(corr_per_epoch)
+        acc_axes.append(acc_par_batch)
         testcorr_axes.append(testcorr_per_epoch)
         
     
@@ -348,6 +371,16 @@ if experiment_name == "dense":
     ax.set_xlabel('Epoch')
     ax.set_ylabel('Spearman Correlation')
     plt.title("Correlation (test) by learning rate")
+    plt.legend()
+    plt.show()
+    
+    fig = plt.figure()
+    ax = plt.axes()
+    for lr, lax in zip(lr_choices, acc_axes):
+        ax.plot(lax, label=str(lr))
+    ax.set_xlabel('Epoch')
+    ax.set_ylabel('Accuracy')
+    plt.title("Accuracy by learning rate")
     plt.legend()
     plt.show()
 
