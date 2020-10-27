@@ -91,6 +91,24 @@ class UltraDense(nn.Module):
         u, s, vh = np.linalg.svd(self.Q.detach().numpy())
         self.Q.data = torch.tensor(np.matmul(u, vh))
 
+def distro_thresh(values, labels):
+
+    one_values = values[labels == 1]
+    zero_values = values[labels == 0]
+    
+    one_mean, one_var = np.mean(one_values), np.var(one_values)
+    zero_mean, zero_var = np.mean(zero_values), np.var(zero_values)
+
+    thresh = (one_mean + zero_mean) / 2.0
+
+    return thresh, one_mean > zero_mean
+
+def preds_from_vector(thresh, one_greater, values):
+
+    if one_greater:
+        return np.where(values > thresh, 1, 0)
+    else:
+        return np.where(values < thresh, 1, 0)
 
 if __name__ == "__main__":
 

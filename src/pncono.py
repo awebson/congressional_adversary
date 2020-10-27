@@ -11,7 +11,7 @@ import torch
 import random
 
 from utils.experiment import Experiment
-from ultradense import UltraDense
+from ultradense import UltraDense, distro_thresh, preds_from_vector
 from classifier import Classifier
  
 # Experiment control knobs
@@ -224,7 +224,7 @@ if experiment_name == "dense":
     
     lr_choices = [0.5,0.05,0.005,0.0005]
     batch_size = 200
-    num_epochs = 20
+    num_epochs = 30
     offset_choice = 3
     train_ratio = 0.9
     embedding_clipping = None # Set to e.g. 10000
@@ -317,25 +317,32 @@ if experiment_name == "dense":
                 if not classifier_type:
                     model.orthogonalize()
     
-            if not classifier_type:
+            if classifier_type:
+                rval = 0.0
+            else:
                 scheduler.step()
                 output_ultradense = model.apply_q(train_embedding)[:,offset_choice]
                 rval, pval = stats.spearmanr(train_query_conos_np, output_ultradense)
                 corr_per_epoch.append(rval)
+                thresh, one_greater = distro_thresh(output_ultradense, train_query_conos_np)
+                
 
             avg_loss_epoch = total_intloss / batches_per_epoch
             loss_per_epoch.append(avg_loss_epoch)
             
             if classifier_type:
                 predictions = model.test_forward(test_embedding)
-                accuracy = sum(predictions == test_query_conos_np) / len(predictions)
-                print("Epoch: {} Accuracy: {:.3f} (test): {:.3f} , Avg Loss: {:.3f} ".format(e, accuracy, 0.0, avg_loss_epoch))
-                acc_par_batch.append(accuracy)
+                test_rval = 0.0
             else:
                 output_ultradense_test = model.apply_q(test_embedding)[:,offset_choice]
+                predictions = preds_from_vector(thresh, one_greater, output_ultradense_test)
                 test_rval, test_pval = stats.spearmanr(test_query_conos_np, output_ultradense_test)
-                print("Epoch: {} Correlation: {:.3f} (test): {:.3f} , Avg Loss: {:.3f} ".format(e, rval, test_rval, avg_loss_epoch))
                 testcorr_per_epoch.append(test_rval)
+                
+            accuracy = sum(predictions == test_query_conos_np) / len(predictions)
+            acc_par_batch.append(accuracy)
+            print("Epoch: {} Correlation: {:.3f} (test): {:.3f}, Avg Loss: {:.3f}, Accuracy {:.3f}".format(e, rval, test_rval, avg_loss_epoch, accuracy))                
+
 
         loss_axes.append(loss_per_epoch)
         corr_axes.append(corr_per_epoch)
