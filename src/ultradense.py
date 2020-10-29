@@ -99,9 +99,11 @@ def distro_thresh(values, labels):
     one_mean, one_var = np.mean(one_values), np.var(one_values)
     zero_mean, zero_var = np.mean(zero_values), np.var(zero_values)
 
+    print("onemean/var", one_mean, one_var, "zeromean/var", zero_mean, zero_var)
+
     thresh = (one_mean + zero_mean) / 2.0
 
-    return thresh, one_mean > zero_mean
+    return thresh, one_mean > zero_mean, one_values, zero_values
 
 def preds_from_vector(thresh, one_greater, values):
 

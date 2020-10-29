@@ -244,10 +244,11 @@ if experiment_name == "dense":
     
     classifier_type = False # As opposed to ultradense
     
-    lr_choices = [0.05,0.005,0.0005]
+    #lr_choices = [0.05,0.005,0.0005]
+    lr_choices = [0.005]
     batch_size = 200
-    num_epochs = 30
-    offset_choice = 3
+    num_epochs = 15
+    offset_choice = 0
     train_ratio = 0.9
     embedding_clipping = None # Set to e.g. 10000
     
@@ -311,7 +312,10 @@ if experiment_name == "dense":
         acc_par_batch = []
         deno_acc_par_batch = []
         
-        deno_model = Classifier(embedding_length, len(deno_topic_table))
+        if classifier_type:
+            deno_model = Classifier(embedding_length, len(deno_topic_table))
+        else:
+            deno_model = Classifier(embedding_length - 1, len(deno_topic_table))
         deno_optimizer = torch.optim.Adam(deno_model.parameters(), lr=learning_rate)
         
         if classifier_type:
@@ -345,8 +349,8 @@ if experiment_name == "dense":
                 else: 
                     Lcts_result, Lct_result = model(filtered_embeddings[batch_idx], query_conos_np[batch_idx])
                     loss = model.loss_func(Lcts_result, Lct_result)
-                    ultra_dense_emb_space_batch = model.apply_q(filtered_embeddings[batch_idx])
-                    deno_logits = deno_model(ultra_dense_emb_space_batch, query_denos_np[batch_idx])
+                    ultra_dense_emb_space_batch = model.apply_q(filtered_embeddings)
+                    deno_logits = deno_model(ultra_dense_emb_space_batch[batch_idx,1:], query_denos_np[batch_idx])
                 
                 deno_loss = deno_model.loss_func(deno_logits, query_denos_np[batch_idx])
                     
@@ -370,7 +374,7 @@ if experiment_name == "dense":
                 output_ultradense = ultra_dense_emb_space[:,offset_choice]
                 rval, pval = stats.spearmanr(train_query_conos_np, output_ultradense)
                 corr_per_epoch.append(rval)
-                thresh, one_greater = distro_thresh(output_ultradense, train_query_conos_np)
+                thresh, one_greater, one_values, zero_values = distro_thresh(output_ultradense, train_query_conos_np)
                 
             deno_avg_loss_epoch = total_denointloss / batches_per_epoch
             avg_loss_epoch = total_intloss / batches_per_epoch
@@ -387,7 +391,7 @@ if experiment_name == "dense":
                 predictions = preds_from_vector(thresh, one_greater, output_ultradense_test)
                 test_rval, test_pval = stats.spearmanr(test_query_conos_np, output_ultradense_test)
                 testcorr_per_epoch.append(test_rval)
-                deno_predictions = deno_model.test_forward(ultra_dense_test_emb_space)
+                deno_predictions = deno_model.test_forward(ultra_dense_test_emb_space[:,1:])
                 
             deno_accuracy = sum(deno_predictions == test_query_denos_np) / len(deno_predictions)
             accuracy = sum(predictions == test_query_conos_np) / len(predictions)
@@ -403,6 +407,17 @@ if experiment_name == "dense":
         deno_acc_axes.append(deno_acc_par_batch)
         testcorr_axes.append(testcorr_per_epoch)
         
+    
+    fig = plt.figure()
+    ax = plt.axes()
+    n_bins = 100
+    ax.hist(zero_values, bins=n_bins)
+    ax.hist(one_values, bins=n_bins)
+    ax.set_xlabel('Connotation component values')
+    ax.set_ylabel('Count')
+    plt.title("Distribution of Rep./Demo. connotation in ultradense component")
+    plt.legend()
+    plt.show()
     
     fig = plt.figure()
     ax = plt.axes()
