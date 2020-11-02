@@ -242,12 +242,11 @@ elif transform_embeddings:
 
 if experiment_name == "dense":
     
-    classifier_type = False # As opposed to ultradense
+    classifier_type = True # As opposed to ultradense
     
-    #lr_choices = [0.05,0.005,0.0005]
-    lr_choices = [0.005]
+    lr_choices = [0.05,0.005,0.0005]
     batch_size = 200
-    num_epochs = 15
+    num_epochs = 40
     offset_choice = 0
     train_ratio = 0.9
     embedding_clipping = None # Set to e.g. 10000
@@ -408,16 +407,16 @@ if experiment_name == "dense":
         testcorr_axes.append(testcorr_per_epoch)
         
     
-    fig = plt.figure()
-    ax = plt.axes()
-    n_bins = 100
-    ax.hist(zero_values, bins=n_bins)
-    ax.hist(one_values, bins=n_bins)
-    ax.set_xlabel('Connotation component values')
-    ax.set_ylabel('Count')
-    plt.title("Distribution of Rep./Demo. connotation in ultradense component")
-    plt.legend()
-    plt.show()
+#     fig = plt.figure()
+#     ax = plt.axes()
+#     n_bins = 100
+#     ax.hist(zero_values, bins=n_bins)
+#     ax.hist(one_values, bins=n_bins)
+#     ax.set_xlabel('Connotation component values')
+#     ax.set_ylabel('Count')
+#     plt.title("Distribution of Rep./Demo. connotation in ultradense component")
+#     plt.legend()
+#     plt.show()
     
     fig = plt.figure()
     ax = plt.axes()
