@@ -40,10 +40,12 @@ else:
     #embedding_file = "/Users/tberckma/Documents/Brown/Research/AlbertProject/newcong_ad_data/data/pretrained_word2vec/for_real_SGNS_method_B.txt"
     #pickle_file = "/Users/tberckma/Documents/Brown/Research/AlbertProject/congressional_adversary/data/ready/CR_proxy/train.pickle"
 
-    #pickle_file = "../data/ready/CR_proxy/train.pickle"
+    pickle_file = "../data/ready/CR_topic_context3/train.pickle"
+    #pickle_file = "../../newcong_ad_data/data/processed/bill_mentions/train_data.pickle"
+    embedding_file = "../data/pretrained_word2vec/CR_bill_topic_context3.txt"    
+
     pickle_file = "../../newcong_ad_data/data/processed/bill_mentions/train_data.pickle"
     embedding_file = "../data/pretrained_word2vec/CR_proxy.txt"    
-
 
 cherry_pairs = [
     # Luntz Report, all GOP euphemisms
@@ -242,7 +244,7 @@ elif transform_embeddings:
 
 if experiment_name == "dense":
     
-    classifier_type = True # As opposed to ultradense
+    use_ultradense = True # As opposed to ultradense
     
     lr_choices = [0.05,0.005,0.0005]
     batch_size = 200
@@ -251,11 +253,14 @@ if experiment_name == "dense":
     train_ratio = 0.9
     embedding_clipping = None # Set to e.g. 10000
     
+    
     if embedding_clipping:
         filtered_embeddings = filtered_embeddings[:embedding_clipping]
         query_conos = query_conos[:embedding_clipping]
     
     embedding_length = filtered_embeddings.shape[1]
+    
+    classifier_input_size = (embedding_length - 1) if use_ultradense else embedding_length
     
     num_labels = len(query_conos)
     num_1_labels = sum(query_conos)
@@ -289,123 +294,126 @@ if experiment_name == "dense":
     train_query_denos_np = query_denos_np[np.concatenate((train_set_zeroes,train_set_ones))]
     test_query_conos_np = query_conos_np[np.concatenate((holdout_set_zeroes,holdout_set_ones))]
     test_query_denos_np = query_denos_np[np.concatenate((holdout_set_zeroes,holdout_set_ones))]
-    
-    print("Num 0 labels:", num_0_labels)
-    print("Num 1 labels:", num_1_labels)
-        
-    loss_axes = []
-    corr_axes = []
-    acc_axes = []
-    deno_acc_axes = []
-    deno_loss_axes = []
-    testcorr_axes = []    
-    
+
+    # Data to be graphed
+    axis_types = [
+        "cono_loss", # Training loss of connotation classifier
+        "deno_loss", # Training loss of denotation classifier
+        "cono_acc",  # Test accuracy of connotation classifier 
+        "deno_acc",  # Test accuracy of denotation classifier 
+        "ud_acc",    # Test accuracy of ultradense prediction
+        "ud_correlation", # Test correlation of ultradense vectors with labels
+        ]
+
+    axes = {tname: [] for tname in axis_types}   
+
     for learning_rate in lr_choices:
     
         print("Running model with lr=", learning_rate)
     
-        loss_per_epoch = []
-        deno_loss_per_epoch = []
-        corr_per_epoch = []
-        testcorr_per_epoch = []
-        acc_par_batch = []
-        deno_acc_par_batch = []
+        axis_datapoints = {tname: [] for tname in axis_types}
         
-        if classifier_type:
-            deno_model = Classifier(embedding_length, len(deno_topic_table))
-        else:
-            deno_model = Classifier(embedding_length - 1, len(deno_topic_table))
+        deno_model = Classifier(classifier_input_size, len(deno_topic_table))
         deno_optimizer = torch.optim.Adam(deno_model.parameters(), lr=learning_rate)
-        
-        if classifier_type:
-            model = Classifier(embedding_length, 2)
-            optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-        else:
-            model = UltraDense(embedding_length, offset_choice)
-            optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
+        cono_model = Classifier(classifier_input_size, 2)
+        cono_optimizer = torch.optim.Adam(deno_model.parameters(), lr=learning_rate)
+            
+        if use_ultradense:
+            ud_model = UltraDense(embedding_length, offset_choice)
+            ud_optimizer = torch.optim.SGD(ud_model.parameters(), lr=learning_rate)
             #optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-            scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.95)
+            ud_scheduler = torch.optim.lr_scheduler.StepLR(ud_optimizer, step_size=1, gamma=0.95)
 
         for e in range(num_epochs):
         
             zero_epoch_idx = np.random.choice(train_set_zeroes, batches_per_epoch * batch_size, False)
             one_epoch_idx = np.random.choice(train_set_ones, batches_per_epoch * batch_size, False)
         
-            total_intloss = 0
-            total_denointloss = 0
+            total_conoloss = 0
+            total_denoloss = 0
+            
             for b in range(batches_per_epoch):
 
                 batch_idx = np.concatenate((
                     zero_epoch_idx[b*batch_size:(b+1)*batch_size],
                     one_epoch_idx[b*batch_size:(b+1)*batch_size]
                     ))
-                optimizer.zero_grad()
+                cono_optimizer.zero_grad()
                 deno_optimizer.zero_grad()
-                if classifier_type:
-                    logits = model(filtered_embeddings[batch_idx], query_conos_np[batch_idx])
-                    loss = model.loss_func(logits, query_conos_np[batch_idx])
-                    deno_logits = deno_model(filtered_embeddings[batch_idx], query_denos_np[batch_idx])
-                else: 
-                    Lcts_result, Lct_result = model(filtered_embeddings[batch_idx], query_conos_np[batch_idx])
-                    loss = model.loss_func(Lcts_result, Lct_result)
-                    ultra_dense_emb_space_batch = model.apply_q(filtered_embeddings)
-                    deno_logits = deno_model(ultra_dense_emb_space_batch[batch_idx,1:], query_denos_np[batch_idx])
-                
+
+                if use_ultradense:
+                    ud_optimizer.zero_grad()
+                    Lcts_result, Lct_result = ud_model(filtered_embeddings[batch_idx], query_conos_np[batch_idx])
+                    ud_loss = ud_model.loss_func(Lcts_result, Lct_result)
+                    
+                    # Transform embedding matrix into ultradense space
+                    ultra_dense_emb_space_batch = ud_model.apply_q(filtered_embeddings)
+                    classifier_input = ultra_dense_emb_space_batch[batch_idx,1:]
+                else:
+                    classifier_input = filtered_embeddings[batch_idx]
+                    
+                cono_logits = cono_model(classifier_input, query_conos_np[batch_idx])
+                cono_loss = cono_model.loss_func(cono_logits, query_conos_np[batch_idx])
+                deno_logits = deno_model(classifier_input, query_denos_np[batch_idx])
                 deno_loss = deno_model.loss_func(deno_logits, query_denos_np[batch_idx])
                     
-                deno_floatloss = float(deno_loss)
-                floatloss = float(loss)
-                total_denointloss += deno_floatloss
-                total_intloss += floatloss
+                total_denoloss += float(deno_loss)
+                total_conoloss += float(cono_loss)
                 
                 deno_loss.backward()
-                loss.backward()
-                optimizer.step()
+                cono_loss.backward()
+                cono_optimizer.step()
                 deno_optimizer.step()
-                if not classifier_type:
-                    model.orthogonalize()
+                
+                if use_ultradense:
+                    ud_loss.backward()
+                    ud_optimizer.step()
+                    ud_model.orthogonalize()
     
-            if classifier_type:
-                rval = 0.0
-            else:
-                scheduler.step()
-                ultra_dense_emb_space =  model.apply_q(train_embedding)
+            if use_ultradense:
+                ud_scheduler.step()
+                
+                # Transform training space into ultradense, needed for threshold calculation
+                ultra_dense_emb_space =  ud_model.apply_q(train_embedding)
                 output_ultradense = ultra_dense_emb_space[:,offset_choice]
-                rval, pval = stats.spearmanr(train_query_conos_np, output_ultradense)
-                corr_per_epoch.append(rval)
+
+                # Determine threshold value for simple connotation prediction
                 thresh, one_greater, one_values, zero_values = distro_thresh(output_ultradense, train_query_conos_np)
-                
-            deno_avg_loss_epoch = total_denointloss / batches_per_epoch
-            avg_loss_epoch = total_intloss / batches_per_epoch
-            loss_per_epoch.append(avg_loss_epoch)
-            deno_loss_per_epoch.append(deno_avg_loss_epoch)
-            
-            if classifier_type:
-                predictions = model.test_forward(test_embedding)
-                deno_predictions = deno_model.test_forward(test_embedding)
-                test_rval = 0.0
+
+            deno_avg_loss_epoch = total_denoloss / batches_per_epoch
+            cono_avg_loss_epoch = total_conoloss / batches_per_epoch
+
+            if use_ultradense:
+                ultra_dense_test_emb_space = ud_model.apply_q(test_embedding)
+                classifier_input = ultra_dense_test_emb_space[:,1:]
             else:
-                ultra_dense_test_emb_space = model.apply_q(test_embedding)
-                output_ultradense_test = ultra_dense_test_emb_space[:,offset_choice]
-                predictions = preds_from_vector(thresh, one_greater, output_ultradense_test)
-                test_rval, test_pval = stats.spearmanr(test_query_conos_np, output_ultradense_test)
-                testcorr_per_epoch.append(test_rval)
-                deno_predictions = deno_model.test_forward(ultra_dense_test_emb_space[:,1:])
-                
+                classifier_input = test_embedding
+  
+            cono_predictions = cono_model.test_forward(classifier_input)
+            deno_predictions = deno_model.test_forward(classifier_input)
+            cono_accuracy = sum(cono_predictions == test_query_conos_np) / len(cono_predictions)
             deno_accuracy = sum(deno_predictions == test_query_denos_np) / len(deno_predictions)
-            accuracy = sum(predictions == test_query_conos_np) / len(predictions)
-            acc_par_batch.append(accuracy)
-            deno_acc_par_batch.append(deno_accuracy)
-            print("Epoch: {} Correlation: {:.3f} (test): {:.3f}, Avg Loss (cono): {:.3f}, Avg Loss (deno): {:.3f}, Accuracy {:.3f}, Accuracy (deno, test) {:.3f}".format(e, rval, test_rval, avg_loss_epoch, deno_avg_loss_epoch, accuracy, deno_accuracy))                
+            
+            if use_ultradense:
+                output_ultradense_test = ultra_dense_test_emb_space[:,offset_choice]
+                ud_predictions = preds_from_vector(thresh, one_greater, output_ultradense_test)
+                ud_accuracy = sum(ud_predictions == test_query_conos_np) / len(cono_predictions)
+                ud_corr, pval = stats.spearmanr(test_query_conos_np, output_ultradense_test)
+                
+            for data_item, data_value in (
+                    ("cono_loss", cono_avg_loss_epoch),
+                    ("deno_loss", deno_avg_loss_epoch),
+                    ("cono_acc", cono_accuracy),
+                    ("deno_acc", deno_accuracy),
+                    ("ud_acc", ud_accuracy),
+                    ("ud_correlation", ud_corr)):
+                axis_datapoints[data_item].append(data_value)
+
+            print("Epoch: {} Correlation: {:.3f}, Avg Loss (cono): {:.3f}, Avg Loss (deno): {:.3f}, Accuracy (cono) {:.3f}, Accuracy (deno) {:.3f}".format(e, ud_corr, cono_avg_loss_epoch, deno_avg_loss_epoch, cono_accuracy, deno_accuracy))                
 
 
-        deno_loss_axes.append(deno_loss_per_epoch)
-        loss_axes.append(loss_per_epoch)
-        corr_axes.append(corr_per_epoch)
-        acc_axes.append(acc_par_batch)
-        deno_acc_axes.append(deno_acc_par_batch)
-        testcorr_axes.append(testcorr_per_epoch)
-        
+        for data_item, data_list in axis_datapoints.items():
+            axes[data_item].append(data_list)
     
 #     fig = plt.figure()
 #     ax = plt.axes()
@@ -418,66 +426,16 @@ if experiment_name == "dense":
 #     plt.legend()
 #     plt.show()
     
-    fig = plt.figure()
-    ax = plt.axes()
-    for lr, lax in zip(lr_choices, loss_axes):
-        ax.plot(lax, label=str(lr))
-    ax.set_xlabel('Epoch')
-    ax.set_ylabel('Loss')
-    plt.title("Connotation Loss by learning rate")
-    plt.legend()
-    plt.show()
-    
-    fig = plt.figure()
-    ax = plt.axes()
-    for lr, lax in zip(lr_choices, deno_loss_axes):
-        ax.plot(lax, label=str(lr))
-    ax.set_xlabel('Epoch')
-    ax.set_ylabel('Loss')
-    plt.title("Denotation Loss by learning rate")
-    plt.legend()
-    plt.show()
-    
-    
-    fig = plt.figure()
-    ax = plt.axes()
-    for lr, lax in zip(lr_choices, corr_axes):
-        ax.plot(lax, label=str(lr))
-    ax.set_xlabel('Epoch')
-    ax.set_ylabel('Spearman Correlation')
-    plt.title("Correlation by learning rate")
-    plt.legend()
-    plt.show()
-    
-    fig = plt.figure()
-    ax = plt.axes()
-    for lr, lax in zip(lr_choices, testcorr_axes):
-        ax.plot(lax, label=str(lr))
-    ax.set_xlabel('Epoch')
-    ax.set_ylabel('Spearman Correlation')
-    plt.title("Correlation (test) by learning rate")
-    plt.legend()
-    plt.show()
-    
-    fig = plt.figure()
-    ax = plt.axes()
-    for lr, lax in zip(lr_choices, acc_axes):
-        ax.plot(lax, label=str(lr))
-    ax.set_xlabel('Epoch')
-    ax.set_ylabel('Accuracy')
-    plt.title("Cono Accuracy by learning rate")
-    plt.legend()
-    plt.show()
-    
-    fig = plt.figure()
-    ax = plt.axes()
-    for lr, lax in zip(lr_choices, deno_acc_axes):
-        ax.plot(lax, label=str(lr))
-    ax.set_xlabel('Epoch')
-    ax.set_ylabel('Accuracy')
-    plt.title("Deno Accuracy by learning rate")
-    plt.legend()
-    plt.show()
+    for data_item, axis_list in axes.items():
+        fig = plt.figure()
+        ax = plt.axes()
+        for lr, lax in zip(lr_choices, axis_list):
+            ax.plot(lax, label=str(lr))
+        ax.set_xlabel('Epoch')
+        ax.set_ylabel('Value')
+        plt.title(data_item)
+        plt.legend()
+        plt.show()
 
 elif experiment_name == "cono":
     rvals = []
