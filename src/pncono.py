@@ -21,8 +21,8 @@ binarize_embeddings = False # Implies !transform_embeddings
 transform_embeddings = False
 use_pca = False # Otherwise, ICA. Only applies if transform_embeddings is True.
 pn_corpus = False # Partisan News if True otherwise, Congressional Record
-use_saved_wordinfo = True
-grounding_name = 'grounding'
+use_saved_wordinfo = False
+grounding_name = 'ground'
 
 albert_pick_file = "../albert_wordlist.pickle"
 
@@ -40,12 +40,12 @@ else:
     #embedding_file = "/Users/tberckma/Documents/Brown/Research/AlbertProject/newcong_ad_data/data/pretrained_word2vec/for_real_SGNS_method_B.txt"
     #pickle_file = "/Users/tberckma/Documents/Brown/Research/AlbertProject/congressional_adversary/data/ready/CR_proxy/train.pickle"
 
-    pickle_file = "../data/ready/CR_topic_context3/train.pickle"
+    pickle_file = "../data/ready/CR_topic_context3/train_data.pickle"
     #pickle_file = "../../newcong_ad_data/data/processed/bill_mentions/train_data.pickle"
     embedding_file = "../data/pretrained_word2vec/CR_bill_topic_context3.txt"    
 
-    pickle_file = "../../newcong_ad_data/data/processed/bill_mentions/train_data.pickle"
-    embedding_file = "../data/pretrained_word2vec/CR_proxy.txt"    
+    #pickle_file = "../../newcong_ad_data/data/processed/bill_mentions/train_data.pickle"
+    #embedding_file = "../data/pretrained_word2vec/CR_proxy.txt"    
 
 cherry_pairs = [
     # Luntz Report, all GOP euphemisms
@@ -110,15 +110,16 @@ else:
         else:
             assert False
     
-    def calculate_cono(grounding, word):
-        skew = grounding[word]['R_ratio']
-        if skew < 0.5:
-            return 0
-        else:
-            return 1
+    #def calculate_cono(grounding, word):
+    #    skew = grounding[word]['R_ratio']
+    #    if skew < 0.5:
+    #        return 0
+    #    else:
+    #        return 1
     
     def calculate_deno(grounding, word):
-        topic = grounding[word]['majority_deno']
+        #topic = grounding[word]['majority_deno']
+        topic = grounding[word].majority_deno
         
         if topic not in deno_topic_table:
             deno_topic_table[topic] = len(deno_topic_table)
@@ -173,8 +174,8 @@ print("number of query words", len(w2id.keys()))
 
 
 if True: # Filter embeddings
-    #for query_word in w2id.keys():
-    for query_word in albert_pick["word_to_id"].keys():
+    for query_word in w2id.keys():
+    #for query_word in albert_pick["word_to_id"].keys():
 
         if query_word in out_of_vocabulary:
             continue
@@ -244,11 +245,11 @@ elif transform_embeddings:
 
 if experiment_name == "dense":
     
-    use_ultradense = True # As opposed to ultradense
+    use_ultradense = False
     
     lr_choices = [0.05,0.005,0.0005]
     batch_size = 200
-    num_epochs = 40
+    num_epochs = 80
     offset_choice = 0
     train_ratio = 0.9
     embedding_clipping = None # Set to e.g. 10000
@@ -265,6 +266,8 @@ if experiment_name == "dense":
     num_labels = len(query_conos)
     num_1_labels = sum(query_conos)
     num_0_labels = num_labels - num_1_labels
+    
+    print("num_0_labels", num_0_labels, "num_1_labels", num_1_labels)
     
     base_label_cnt = min(num_1_labels, num_0_labels)
     
@@ -295,15 +298,20 @@ if experiment_name == "dense":
     test_query_conos_np = query_conos_np[np.concatenate((holdout_set_zeroes,holdout_set_ones))]
     test_query_denos_np = query_denos_np[np.concatenate((holdout_set_zeroes,holdout_set_ones))]
 
+    
     # Data to be graphed
     axis_types = [
         "cono_loss", # Training loss of connotation classifier
         "deno_loss", # Training loss of denotation classifier
         "cono_acc",  # Test accuracy of connotation classifier 
-        "deno_acc",  # Test accuracy of denotation classifier 
-        "ud_acc",    # Test accuracy of ultradense prediction
-        "ud_correlation", # Test correlation of ultradense vectors with labels
+        "deno_acc"   # Test accuracy of denotation classifier 
         ]
+
+    if use_ultradense:
+        axis_types.extend([
+            "ud_acc",        # Test accuracy of ultradense prediction
+            "ud_correlation" # Test correlation of ultradense vectors with labels
+        ])
 
     axes = {tname: [] for tname in axis_types}   
 
@@ -316,14 +324,68 @@ if experiment_name == "dense":
         deno_model = Classifier(classifier_input_size, len(deno_topic_table))
         deno_optimizer = torch.optim.Adam(deno_model.parameters(), lr=learning_rate)
         cono_model = Classifier(classifier_input_size, 2)
-        cono_optimizer = torch.optim.Adam(deno_model.parameters(), lr=learning_rate)
+        cono_optimizer = torch.optim.Adam(cono_model.parameters(), lr=learning_rate)
             
         if use_ultradense:
+
             ud_model = UltraDense(embedding_length, offset_choice)
             ud_optimizer = torch.optim.SGD(ud_model.parameters(), lr=learning_rate)
             #optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
             ud_scheduler = torch.optim.lr_scheduler.StepLR(ud_optimizer, step_size=1, gamma=0.95)
 
+            for e in range(num_epochs):
+                # Copied from below
+                zero_epoch_idx = np.random.choice(train_set_zeroes, batches_per_epoch * batch_size, False)
+                one_epoch_idx = np.random.choice(train_set_ones, batches_per_epoch * batch_size, False)
+                
+                for b in range(batches_per_epoch):
+
+                    # Also copied from below
+                    batch_idx = np.concatenate((
+                        zero_epoch_idx[b*batch_size:(b+1)*batch_size],
+                        one_epoch_idx[b*batch_size:(b+1)*batch_size]
+                        ))
+                        
+                    ud_optimizer.zero_grad()
+                    Lcts_result, Lct_result = ud_model(filtered_embeddings[batch_idx], query_conos_np[batch_idx])
+                    ud_loss = ud_model.loss_func(Lcts_result, Lct_result)
+                    ud_loss.backward()
+                    ud_optimizer.step()
+                    ud_model.orthogonalize()
+
+                ud_scheduler.step()
+            
+                # Transform training space into ultradense, needed for threshold calculation
+                ultra_dense_train_emb_space =  ud_model.apply_q(train_embedding)
+                output_ultradense = ultra_dense_train_emb_space[:,offset_choice]
+
+                # Determine threshold value for simple connotation prediction
+                thresh, one_greater, one_values, zero_values = distro_thresh(output_ultradense, train_query_conos_np)
+
+                ultra_dense_test_emb_space = ud_model.apply_q(test_embedding)
+                output_ultradense_test = ultra_dense_test_emb_space[:,offset_choice]
+                ud_predictions = preds_from_vector(thresh, one_greater, output_ultradense_test)
+                ud_accuracy = sum(ud_predictions == test_query_conos_np) / len(test_query_conos_np)
+                ud_corr, pval = stats.spearmanr(test_query_conos_np, output_ultradense_test)
+
+                for data_item, data_value in (
+                        ("ud_acc", ud_accuracy),
+                        ("ud_correlation", ud_corr)):
+                    axis_datapoints[data_item].append(data_value)
+                
+                print("Epoch: {} Ud acc {:.3f}, Ud Corr: {:.3f}".format(e, ud_accuracy, ud_corr))                
+
+            ultra_dense_filtered_emb_space = ud_model.apply_q(filtered_embeddings)
+            filtered_embeddings_2nd = np.delete(ultra_dense_filtered_emb_space, offset_choice, axis=-1)
+            train_embedding_2nd = np.delete(ultra_dense_train_emb_space, offset_choice, axis=-1)
+            test_embedding_2nd = np.delete(ultra_dense_test_emb_space, offset_choice, axis=-1)
+
+        else:
+            # Definitions for 2nd stage (classifiers)
+            train_embedding_2nd = train_embedding
+            test_embedding_2nd = test_embedding
+            filtered_embeddings_2nd = filtered_embeddings
+                    
         for e in range(num_epochs):
         
             zero_epoch_idx = np.random.choice(train_set_zeroes, batches_per_epoch * batch_size, False)
@@ -341,16 +403,8 @@ if experiment_name == "dense":
                 cono_optimizer.zero_grad()
                 deno_optimizer.zero_grad()
 
-                if use_ultradense:
-                    ud_optimizer.zero_grad()
-                    Lcts_result, Lct_result = ud_model(filtered_embeddings[batch_idx], query_conos_np[batch_idx])
-                    ud_loss = ud_model.loss_func(Lcts_result, Lct_result)
-                    
-                    # Transform embedding matrix into ultradense space
-                    ultra_dense_emb_space_batch = ud_model.apply_q(filtered_embeddings)
-                    classifier_input = ultra_dense_emb_space_batch[batch_idx,1:]
-                else:
-                    classifier_input = filtered_embeddings[batch_idx]
+
+                classifier_input = filtered_embeddings_2nd[batch_idx]
                     
                 cono_logits = cono_model(classifier_input, query_conos_np[batch_idx])
                 cono_loss = cono_model.loss_func(cono_logits, query_conos_np[batch_idx])
@@ -364,52 +418,23 @@ if experiment_name == "dense":
                 cono_loss.backward()
                 cono_optimizer.step()
                 deno_optimizer.step()
-                
-                if use_ultradense:
-                    ud_loss.backward()
-                    ud_optimizer.step()
-                    ud_model.orthogonalize()
     
-            if use_ultradense:
-                ud_scheduler.step()
-                
-                # Transform training space into ultradense, needed for threshold calculation
-                ultra_dense_emb_space =  ud_model.apply_q(train_embedding)
-                output_ultradense = ultra_dense_emb_space[:,offset_choice]
-
-                # Determine threshold value for simple connotation prediction
-                thresh, one_greater, one_values, zero_values = distro_thresh(output_ultradense, train_query_conos_np)
-
             deno_avg_loss_epoch = total_denoloss / batches_per_epoch
             cono_avg_loss_epoch = total_conoloss / batches_per_epoch
-
-            if use_ultradense:
-                ultra_dense_test_emb_space = ud_model.apply_q(test_embedding)
-                classifier_input = ultra_dense_test_emb_space[:,1:]
-            else:
-                classifier_input = test_embedding
   
-            cono_predictions = cono_model.test_forward(classifier_input)
-            deno_predictions = deno_model.test_forward(classifier_input)
+            cono_predictions = cono_model.test_forward(test_embedding_2nd)
+            deno_predictions = deno_model.test_forward(test_embedding_2nd)
             cono_accuracy = sum(cono_predictions == test_query_conos_np) / len(cono_predictions)
             deno_accuracy = sum(deno_predictions == test_query_denos_np) / len(deno_predictions)
-            
-            if use_ultradense:
-                output_ultradense_test = ultra_dense_test_emb_space[:,offset_choice]
-                ud_predictions = preds_from_vector(thresh, one_greater, output_ultradense_test)
-                ud_accuracy = sum(ud_predictions == test_query_conos_np) / len(cono_predictions)
-                ud_corr, pval = stats.spearmanr(test_query_conos_np, output_ultradense_test)
-                
+
             for data_item, data_value in (
                     ("cono_loss", cono_avg_loss_epoch),
                     ("deno_loss", deno_avg_loss_epoch),
                     ("cono_acc", cono_accuracy),
-                    ("deno_acc", deno_accuracy),
-                    ("ud_acc", ud_accuracy),
-                    ("ud_correlation", ud_corr)):
+                    ("deno_acc", deno_accuracy)):
                 axis_datapoints[data_item].append(data_value)
 
-            print("Epoch: {} Correlation: {:.3f}, Avg Loss (cono): {:.3f}, Avg Loss (deno): {:.3f}, Accuracy (cono) {:.3f}, Accuracy (deno) {:.3f}".format(e, ud_corr, cono_avg_loss_epoch, deno_avg_loss_epoch, cono_accuracy, deno_accuracy))                
+            print("Epoch: {} Avg Loss (cono): {:.3f}, Avg Loss (deno): {:.3f}, Accuracy (cono) {:.3f}, Accuracy (deno) {:.3f}".format(e, cono_avg_loss_epoch, deno_avg_loss_epoch, cono_accuracy, deno_accuracy))                
 
 
         for data_item, data_list in axis_datapoints.items():
@@ -427,13 +452,24 @@ if experiment_name == "dense":
 #     plt.show()
     
     for data_item, axis_list in axes.items():
+    
+        ylabel_str, title_str = {
+            "cono_loss": ("Loss", "Connotation Loss"),
+            "deno_loss": ("Loss", "Denotation Loss"),
+            "cono_acc": ("Accuracy", "Connotation Accuracy"),
+            "deno_acc": ("Accuracy", "Denotation Accuracy"),
+            "ud_acc": ("Accuracy", "Ultradense Connotation Accuracy"),
+            "ud_correlation": ("Spearman Correlation", "Ultradense Connotation Correlation")
+            }[data_item]
         fig = plt.figure()
         ax = plt.axes()
         for lr, lax in zip(lr_choices, axis_list):
             ax.plot(lax, label=str(lr))
         ax.set_xlabel('Epoch')
-        ax.set_ylabel('Value')
-        plt.title(data_item)
+        ax.set_ylabel(ylabel_str)
+        if data_item in ["cono_loss", "deno_loss"]:
+            plt.ylim((-2, 5))
+        plt.title(title_str)
         plt.legend()
         plt.show()
 
