@@ -22,7 +22,7 @@ transform_embeddings = False
 use_pca = False # Otherwise, ICA. Only applies if transform_embeddings is True.
 pn_corpus = False # Partisan News if True otherwise, Congressional Record
 use_saved_wordinfo = False
-grounding_name = 'ground'
+grounding_name = 'grounding' # Or 'ground'
 
 albert_pick_file = "../albert_wordlist.pickle"
 
@@ -46,6 +46,9 @@ else:
 
     #pickle_file = "../../newcong_ad_data/data/processed/bill_mentions/train_data.pickle"
     #embedding_file = "../data/pretrained_word2vec/CR_proxy.txt"    
+
+    pickle_file = "../../newcong_ad_data/data/processed/bill_mentions/train_data.pickle"
+    embedding_file = "/Users/tberckma/Documents/Brown/Research/AlbertProject/newcong_ad_data/data/pretrained_word2vec/for_real_SGNS.txt"
 
 cherry_pairs = [
     # Luntz Report, all GOP euphemisms
@@ -102,24 +105,24 @@ if pn_corpus:
     
         return total_score / total_freq
 else:
-    def calculate_cono(grounding, word):
-        if grounding[word].majority_cono == 'D':
-            return 1
-        elif grounding[word].majority_cono == 'R':
-            return 0
-        else:
-            assert False
-    
     #def calculate_cono(grounding, word):
-    #    skew = grounding[word]['R_ratio']
-    #    if skew < 0.5:
+    #    if grounding[word].majority_cono == 'D':
+    #        return 1
+    #    elif grounding[word].majority_cono == 'R':
     #        return 0
     #    else:
-    #        return 1
+    #        assert False
+    
+    def calculate_cono(grounding, word):
+        skew = grounding[word]['R_ratio']
+        if skew < 0.5:
+            return 0
+        else:
+            return 1
     
     def calculate_deno(grounding, word):
-        #topic = grounding[word]['majority_deno']
-        topic = grounding[word].majority_deno
+        topic = grounding[word]['majority_deno']
+        #topic = grounding[word].majority_deno
         
         if topic not in deno_topic_table:
             deno_topic_table[topic] = len(deno_topic_table)
@@ -245,7 +248,7 @@ elif transform_embeddings:
 
 if experiment_name == "dense":
     
-    use_ultradense = False
+    use_ultradense = True
     
     lr_choices = [0.05,0.005,0.0005]
     batch_size = 200
