@@ -20,9 +20,10 @@ use_avg_prec = False
 binarize_embeddings = False # Implies !transform_embeddings
 transform_embeddings = False
 use_pca = False # Otherwise, ICA. Only applies if transform_embeddings is True.
-pn_corpus = False # Partisan News if True otherwise, Congressional Record
-use_saved_wordinfo = False
-grounding_name = 'grounding' # Or 'ground'
+pn_corpus = True # Partisan News if True otherwise, Congressional Record
+new_cr_corpus = False # Only applies if pn_corpus is false
+use_saved_wordinfo = True
+
 
 albert_pick_file = "../albert_wordlist.pickle"
 
@@ -32,23 +33,23 @@ with open(albert_pick_file, 'rb') as albert_file:
 saved_pickle_name = "intermediate.pickle"
 if pn_corpus:
     pickle_file = "../data/ready/PN_proxy/train.pickle"
-    embedding_file = "../data/pretrained_word2vec/PN_proxy_method_B.txt"
-    #embedding_file = "../data/pretrained_word2vec/PN_heading_proxy.txt"
+    embedding_file = "../data/pretrained_word2vec/PN_heading_proxy.txt"
 
 else:
 
     #embedding_file = "/Users/tberckma/Documents/Brown/Research/AlbertProject/newcong_ad_data/data/pretrained_word2vec/for_real_SGNS_method_B.txt"
     #pickle_file = "/Users/tberckma/Documents/Brown/Research/AlbertProject/congressional_adversary/data/ready/CR_proxy/train.pickle"
 
-    pickle_file = "../data/ready/CR_topic_context3/train_data.pickle"
-    #pickle_file = "../../newcong_ad_data/data/processed/bill_mentions/train_data.pickle"
-    embedding_file = "../data/pretrained_word2vec/CR_bill_topic_context3.txt"    
-
     #pickle_file = "../../newcong_ad_data/data/processed/bill_mentions/train_data.pickle"
     #embedding_file = "../data/pretrained_word2vec/CR_proxy.txt"    
 
-    pickle_file = "../../newcong_ad_data/data/processed/bill_mentions/train_data.pickle"
-    embedding_file = "/Users/tberckma/Documents/Brown/Research/AlbertProject/newcong_ad_data/data/pretrained_word2vec/for_real_SGNS.txt"
+    if new_cr_corpus:
+        pickle_file = "../data/ready/CR_topic_context3/train_data.pickle"
+        #pickle_file = "../../newcong_ad_data/data/processed/bill_mentions/train_data.pickle"
+        embedding_file = "../data/pretrained_word2vec/CR_bill_topic_context3.txt"    
+    else:
+        pickle_file = "../../newcong_ad_data/data/processed/bill_mentions/train_data.pickle"
+        embedding_file = "/Users/tberckma/Documents/Brown/Research/AlbertProject/newcong_ad_data/data/pretrained_word2vec/for_real_SGNS.txt"
 
 cherry_pairs = [
     # Luntz Report, all GOP euphemisms
@@ -73,6 +74,14 @@ cherry_pairs = [
     ('political_speech', 'campaign_spending'),  # hard example
     ('cut_taxes', 'trickledown')  # OOV supplyside
 ]
+
+if pn_corpus:
+    grounding_name = 'ground'
+else:
+    if new_cr_corpus:
+        grounding_name = 'ground'
+    else:
+        grounding_name = 'grounding'
 
 deno_topic_table = {}
 
@@ -104,33 +113,47 @@ if pn_corpus:
     
     
         return total_score / total_freq
+        
+    if experiment_name == "dense":
+        full_calc = calculate_cono
+        def calculate_cono(grounding, word):
+            score_val = full_calc(grounding, word)
+            if score_val > 2.0:
+                return 1
+            else:
+                return 0
+            
 else:
-    #def calculate_cono(grounding, word):
-    #    if grounding[word].majority_cono == 'D':
-    #        return 1
-    #    elif grounding[word].majority_cono == 'R':
-    #        return 0
-    #    else:
-    #        assert False
-    
-    def calculate_cono(grounding, word):
-        skew = grounding[word]['R_ratio']
-        if skew < 0.5:
-            return 0
-        else:
-            return 1
+    if new_cr_corpus:
+        def calculate_cono(grounding, word):
+            if grounding[word].majority_cono == 'D':
+                return 1
+            elif grounding[word].majority_cono == 'R':
+                return 0
+            else:
+                assert False
+    else:    
+        def calculate_cono(grounding, word):
+            skew = grounding[word]['R_ratio']
+            if skew < 0.5:
+                return 0
+            else:
+                return 1
     
     def calculate_deno(grounding, word):
-        topic = grounding[word]['majority_deno']
-        #topic = grounding[word].majority_deno
+        if new_cr_corpus:
+            topic = grounding[word].majority_deno
+        else:
+            topic = grounding[word]['majority_deno']
         
         if topic not in deno_topic_table:
             deno_topic_table[topic] = len(deno_topic_table)
             
         return deno_topic_table[topic]
 
-print("Loading Pickle file")
-with open(saved_pickle_name if use_saved_wordinfo else pickle_file, 'rb') as f:
+pickfname = saved_pickle_name if use_saved_wordinfo else pickle_file
+print("Loading Pickle file", pickfname)
+with open(pickfname, 'rb') as f:
     pick_data = pickle.load(f)
 
 w2id = pick_data["word_to_id"]
@@ -145,12 +168,12 @@ if not use_saved_wordinfo:
         "id_to_word": id2w
     }
     new_pickle_root[grounding_name] = ground
-    print("Saving Pickle file")
+    print("Saving Pickle file", saved_pickle_name)
     with open(saved_pickle_name, "wb") as fout:
         pickle.dump(new_pickle_root, fout)
 
 
-print("Loading text embedding")
+print("Loading text embedding", embedding_file)
 raw_embed, out_of_vocabulary = Experiment.load_txt_embedding(embedding_file, pick_data["word_to_id"])
 
 p_embedding = raw_embed.weight.numpy()
@@ -192,8 +215,10 @@ if True: # Filter embeddings
 
             query_cono = calculate_cono(ground, query_word)
             query_conos.append(query_cono)
-            query_deno = calculate_deno(ground, query_word)
-            query_denos.append(query_deno)
+            
+            if not pn_corpus:
+                query_deno = calculate_deno(ground, query_word)
+                query_denos.append(query_deno)
             #query_deno = ground[query_word]['majority_deno']
         
             #for deno in deno_choices:
@@ -248,11 +273,11 @@ elif transform_embeddings:
 
 if experiment_name == "dense":
     
-    use_ultradense = True
+    use_ultradense = False
     
     lr_choices = [0.05,0.005,0.0005]
     batch_size = 200
-    num_epochs = 80
+    num_epochs = 50
     offset_choice = 0
     train_ratio = 0.9
     embedding_clipping = None # Set to e.g. 10000
@@ -275,7 +300,8 @@ if experiment_name == "dense":
     base_label_cnt = min(num_1_labels, num_0_labels)
     
     query_conos_np = np.array(query_conos)
-    query_denos_np = np.array(query_denos)
+    if not pn_corpus:
+        query_denos_np = np.array(query_denos)
     
     sort_lbl_idx = query_conos_np.argsort()
     zero_idces = sort_lbl_idx[:num_0_labels] # 0-indices
@@ -297,18 +323,24 @@ if experiment_name == "dense":
     train_embedding = filtered_embeddings[np.concatenate((train_set_zeroes,train_set_ones))]
     test_embedding = filtered_embeddings[np.concatenate((holdout_set_zeroes,holdout_set_ones))]
     train_query_conos_np = query_conos_np[np.concatenate((train_set_zeroes,train_set_ones))]
-    train_query_denos_np = query_denos_np[np.concatenate((train_set_zeroes,train_set_ones))]
     test_query_conos_np = query_conos_np[np.concatenate((holdout_set_zeroes,holdout_set_ones))]
-    test_query_denos_np = query_denos_np[np.concatenate((holdout_set_zeroes,holdout_set_ones))]
 
+    if not pn_corpus:
+        train_query_denos_np = query_denos_np[np.concatenate((train_set_zeroes,train_set_ones))] 
+        test_query_denos_np = query_denos_np[np.concatenate((holdout_set_zeroes,holdout_set_ones))]
     
     # Data to be graphed
     axis_types = [
         "cono_loss", # Training loss of connotation classifier
-        "deno_loss", # Training loss of denotation classifier
         "cono_acc",  # Test accuracy of connotation classifier 
-        "deno_acc"   # Test accuracy of denotation classifier 
+
         ]
+
+    if not pn_corpus:
+        axis_types.extend([
+            "deno_acc"   # Test accuracy of denotation classifier 
+            "deno_loss", # Training loss of denotation classifier
+        ])
 
     if use_ultradense:
         axis_types.extend([
@@ -324,10 +356,12 @@ if experiment_name == "dense":
     
         axis_datapoints = {tname: [] for tname in axis_types}
         
-        deno_model = Classifier(classifier_input_size, len(deno_topic_table))
-        deno_optimizer = torch.optim.Adam(deno_model.parameters(), lr=learning_rate)
         cono_model = Classifier(classifier_input_size, 2)
         cono_optimizer = torch.optim.Adam(cono_model.parameters(), lr=learning_rate)
+        
+        if not pn_corpus:
+            deno_model = Classifier(classifier_input_size, len(deno_topic_table))
+            deno_optimizer = torch.optim.Adam(deno_model.parameters(), lr=learning_rate)
             
         if use_ultradense:
 
@@ -395,7 +429,9 @@ if experiment_name == "dense":
             one_epoch_idx = np.random.choice(train_set_ones, batches_per_epoch * batch_size, False)
         
             total_conoloss = 0
-            total_denoloss = 0
+            
+            if not pn_corpus:
+                total_denoloss = 0
             
             for b in range(batches_per_epoch):
 
@@ -404,40 +440,51 @@ if experiment_name == "dense":
                     one_epoch_idx[b*batch_size:(b+1)*batch_size]
                     ))
                 cono_optimizer.zero_grad()
-                deno_optimizer.zero_grad()
+                if not pn_corpus:
+                    deno_optimizer.zero_grad()
 
 
                 classifier_input = filtered_embeddings_2nd[batch_idx]
                     
                 cono_logits = cono_model(classifier_input, query_conos_np[batch_idx])
                 cono_loss = cono_model.loss_func(cono_logits, query_conos_np[batch_idx])
-                deno_logits = deno_model(classifier_input, query_denos_np[batch_idx])
-                deno_loss = deno_model.loss_func(deno_logits, query_denos_np[batch_idx])
-                    
-                total_denoloss += float(deno_loss)
-                total_conoloss += float(cono_loss)
                 
-                deno_loss.backward()
+                if not pn_corpus:
+                    deno_logits = deno_model(classifier_input, query_denos_np[batch_idx])
+                    deno_loss = deno_model.loss_func(deno_logits, query_denos_np[batch_idx])
+                    
+                
+                total_conoloss += float(cono_loss)
                 cono_loss.backward()
                 cono_optimizer.step()
-                deno_optimizer.step()
+                
+                if not pn_corpus:
+                    total_denoloss += float(deno_loss)
+                    deno_loss.backward()
+                    deno_optimizer.step()
     
-            deno_avg_loss_epoch = total_denoloss / batches_per_epoch
             cono_avg_loss_epoch = total_conoloss / batches_per_epoch
-  
             cono_predictions = cono_model.test_forward(test_embedding_2nd)
-            deno_predictions = deno_model.test_forward(test_embedding_2nd)
             cono_accuracy = sum(cono_predictions == test_query_conos_np) / len(cono_predictions)
-            deno_accuracy = sum(deno_predictions == test_query_denos_np) / len(deno_predictions)
+            if not pn_corpus:
+                deno_avg_loss_epoch = total_denoloss / batches_per_epoch
+                deno_predictions = deno_model.test_forward(test_embedding_2nd)
+                deno_accuracy = sum(deno_predictions == test_query_denos_np) / len(deno_predictions)
 
             for data_item, data_value in (
                     ("cono_loss", cono_avg_loss_epoch),
-                    ("deno_loss", deno_avg_loss_epoch),
-                    ("cono_acc", cono_accuracy),
-                    ("deno_acc", deno_accuracy)):
+                    ("cono_acc", cono_accuracy)):
                 axis_datapoints[data_item].append(data_value)
-
-            print("Epoch: {} Avg Loss (cono): {:.3f}, Avg Loss (deno): {:.3f}, Accuracy (cono) {:.3f}, Accuracy (deno) {:.3f}".format(e, cono_avg_loss_epoch, deno_avg_loss_epoch, cono_accuracy, deno_accuracy))                
+                
+            msg = "Epoch: {} Avg Loss (cono): {:.3f}, Accuracy (cono) {:.3f} ".format(e, cono_avg_loss_epoch, cono_accuracy)
+                
+            if not pn_corpus:
+                for data_item, data_value in (
+                        ("deno_loss", deno_avg_loss_epoch),
+                        ("deno_acc", deno_accuracy)):
+                    axis_datapoints[data_item].append(data_value)
+                msg += "Avg Loss (deno): {:.3f}, , Accuracy (deno) {:.3f}".format(deno_avg_loss_epoch, deno_accuracy)
+            print(msg)               
 
 
         for data_item, data_list in axis_datapoints.items():
