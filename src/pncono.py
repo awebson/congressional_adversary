@@ -189,6 +189,7 @@ if experiment_name == "pos":
 
 query_conos = []
 query_denos = []
+original_words = []
 filtered_embeddings = []
 found_count = 0
 
@@ -251,6 +252,7 @@ if True: # Filter embeddings
                 else:
                     pos_one_hot[idx].append(0)
     
+        original_words.append(query_word)
         filtered_embeddings.append(p_embedding[id])
 
 filtered_embeddings = np.array(filtered_embeddings)
@@ -273,14 +275,16 @@ elif transform_embeddings:
 
 if experiment_name == "dense":
     
-    use_ultradense = False
+    use_ultradense = True
     
     lr_choices = [0.05,0.005,0.0005]
+    lr_choices = [0.0005]
     batch_size = 200
-    num_epochs = 50
+    num_epochs = 30
     offset_choice = 0
     train_ratio = 0.9
     embedding_clipping = None # Set to e.g. 10000
+    print_cono_wordorder = True
     
     
     if embedding_clipping:
@@ -486,7 +490,27 @@ if experiment_name == "dense":
                 msg += "Avg Loss (deno): {:.3f}, , Accuracy (deno) {:.3f}".format(deno_avg_loss_epoch, deno_accuracy)
             print(msg)               
 
-
+        if use_ultradense and print_cono_wordorder:
+            wordorder = np.argsort(filtered_embeddings_2nd[:,offset_choice])
+            
+            top_ten_indices = wordorder[:10]
+            bottom_ten_indices = wordorder[-10:]
+            
+            print("\nTop ten ultradense words:\n")
+            for word_idx in top_ten_indices:
+                orig_word = original_words[word_idx]
+                print("orig", orig_word, 
+                      "ground", ground[orig_word],
+                      "val", filtered_embeddings_2nd[word_idx,offset_choice],
+                      "cono", calculate_cono(ground, orig_word))
+            print("\nBottom ten ultradense words:\n")
+            for word_idx in bottom_ten_indices:
+                orig_word = original_words[word_idx]
+                print("orig", orig_word, 
+                      "ground", ground[orig_word],
+                      "val", filtered_embeddings_2nd[word_idx,offset_choice],
+                      "cono", calculate_cono(ground, orig_word))
+            
         for data_item, data_list in axis_datapoints.items():
             axes[data_item].append(data_list)
     
