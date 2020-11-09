@@ -20,9 +20,9 @@ use_avg_prec = False
 binarize_embeddings = False # Implies !transform_embeddings
 transform_embeddings = False
 use_pca = False # Otherwise, ICA. Only applies if transform_embeddings is True.
-pn_corpus = True # Partisan News if True otherwise, Congressional Record
+pn_corpus = False # Partisan News if True otherwise, Congressional Record
 new_cr_corpus = False # Only applies if pn_corpus is false
-use_saved_wordinfo = True
+use_saved_wordinfo = False
 
 
 albert_pick_file = "../albert_wordlist.pickle"
@@ -278,9 +278,8 @@ if experiment_name == "dense":
     use_ultradense = True
     
     lr_choices = [0.05,0.005,0.0005]
-    lr_choices = [0.0005]
     batch_size = 200
-    num_epochs = 30
+    num_epochs = 50
     offset_choice = 0
     train_ratio = 0.9
     embedding_clipping = None # Set to e.g. 10000
@@ -342,7 +341,7 @@ if experiment_name == "dense":
 
     if not pn_corpus:
         axis_types.extend([
-            "deno_acc"   # Test accuracy of denotation classifier 
+            "deno_acc",   # Test accuracy of denotation classifier 
             "deno_loss", # Training loss of denotation classifier
         ])
 
@@ -500,14 +499,14 @@ if experiment_name == "dense":
             for word_idx in top_ten_indices:
                 orig_word = original_words[word_idx]
                 print("orig", orig_word, 
-                      "ground", ground[orig_word],
+                      "ground", ground[orig_word] if pn_corpus else ground[orig_word]['R_ratio'],
                       "val", filtered_embeddings_2nd[word_idx,offset_choice],
                       "cono", calculate_cono(ground, orig_word))
             print("\nBottom ten ultradense words:\n")
             for word_idx in bottom_ten_indices:
                 orig_word = original_words[word_idx]
                 print("orig", orig_word, 
-                      "ground", ground[orig_word],
+                      "ground", ground[orig_word] if pn_corpus else ground[orig_word]['R_ratio'],
                       "val", filtered_embeddings_2nd[word_idx,offset_choice],
                       "cono", calculate_cono(ground, orig_word))
             
