@@ -1,5 +1,6 @@
 import pickle
 
+from sklearn.neighbors import NearestNeighbors
 from sklearn.decomposition import PCA, FastICA
 from sklearn.manifold import TSNE
 from sklearn.metrics import average_precision_score
@@ -21,7 +22,7 @@ binarize_embeddings = False # Implies !transform_embeddings
 transform_embeddings = False
 use_pca = False # Otherwise, ICA. Only applies if transform_embeddings is True.
 pn_corpus = False # Partisan News if True otherwise, Congressional Record
-new_cr_corpus = False # Only applies if pn_corpus is false
+new_cr_corpus = True # Only applies if pn_corpus is false
 use_saved_wordinfo = False
 
 
@@ -273,19 +274,48 @@ elif transform_embeddings:
     filtered_embeddings = ca.transform(filtered_embeddings)
 
 
+def homogeneity_calc(embeddings, labels):
+    nbrs = NearestNeighbors(n_neighbors=10, algorithm='ball_tree').fit(embeddings)
+    distances, indices = nbrs.kneighbors(embeddings)
+    total_equal = 0
+    total_vals = 0
+    for word_offs, index_list in enumerate(indices):
+        label_list = []
+        for nbr_idx in index_list:
+            if nbr_idx != word_offs:
+                label_list.append(labels[nbr_idx])
+        total_equal += len(list(filter(lambda x:x==labels[word_offs], label_list)))
+        total_vals += len(label_list)
+    homogeneity = total_equal / total_vals
+    return homogeneity
+
+def show_tsne(embeddings, labels, indices):
+    """Show the TSNE projection of some embedding space, colored by labels"""
+    tsne_proj_eng = TSNE(n_components=3, random_state=0)
+    tsne_data = tsne_proj_eng.fit_transform(embeddings[indices,:])
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    ax.scatter(tsne_data[:,0], 
+               tsne_data[:,1],
+               tsne_data[:,2],
+               c=np.array(labels)[indices])
+    plt.axis('off')
+    plt.show()
+
 if experiment_name == "dense":
     
     use_ultradense = True
+    show_hom_tsne = True
     
     lr_choices = [0.05,0.005,0.0005]
+    lr_choices = [0.005]
     batch_size = 200
     num_epochs = 50
     offset_choice = 0
     train_ratio = 0.9
     embedding_clipping = None # Set to e.g. 10000
     print_cono_wordorder = True
-    
-    
+
     if embedding_clipping:
         filtered_embeddings = filtered_embeddings[:embedding_clipping]
         query_conos = query_conos[:embedding_clipping]
@@ -351,7 +381,15 @@ if experiment_name == "dense":
             "ud_correlation" # Test correlation of ultradense vectors with labels
         ])
 
-    axes = {tname: [] for tname in axis_types}   
+    axes = {tname: [] for tname in axis_types}
+    
+    if use_ultradense and show_hom_tsne:
+        print("Starting homogeneity")
+        homogeneity = homogeneity_calc(filtered_embeddings, query_conos)
+        print("Starting tSNE")
+        indices = [i for i in range(0,len(filtered_embeddings),10)]
+        show_tsne(filtered_embeddings, query_conos, indices)
+        print("Homogeneity was", homogeneity)
 
     for learning_rate in lr_choices:
     
@@ -419,6 +457,16 @@ if experiment_name == "dense":
             filtered_embeddings_2nd = np.delete(ultra_dense_filtered_emb_space, offset_choice, axis=-1)
             train_embedding_2nd = np.delete(ultra_dense_train_emb_space, offset_choice, axis=-1)
             test_embedding_2nd = np.delete(ultra_dense_test_emb_space, offset_choice, axis=-1)
+
+            if show_hom_tsne:
+                print("Starting homogeneity for ultradense")
+                homogeneity = homogeneity_calc(filtered_embeddings_2nd, query_conos)
+                print("Homogeneity for ultradense was", homogeneity)
+                print("Starting tSNE")
+                indices = [i for i in range(0,len(filtered_embeddings),10)]
+                show_tsne(filtered_embeddings_2nd, query_conos, indices)
+                print("Homogeneity was", homogeneity)
+            
 
         else:
             # Definitions for 2nd stage (classifiers)
@@ -499,17 +547,17 @@ if experiment_name == "dense":
             for word_idx in top_ten_indices:
                 orig_word = original_words[word_idx]
                 print("orig", orig_word, 
-                      "ground", ground[orig_word] if pn_corpus else ground[orig_word]['R_ratio'],
+                      "ground", ground[orig_word] if pn_corpus else 0,
                       "val", filtered_embeddings_2nd[word_idx,offset_choice],
                       "cono", calculate_cono(ground, orig_word))
             print("\nBottom ten ultradense words:\n")
             for word_idx in bottom_ten_indices:
                 orig_word = original_words[word_idx]
                 print("orig", orig_word, 
-                      "ground", ground[orig_word] if pn_corpus else ground[orig_word]['R_ratio'],
+                      "ground", ground[orig_word] if pn_corpus else 0,
                       "val", filtered_embeddings_2nd[word_idx,offset_choice],
                       "cono", calculate_cono(ground, orig_word))
-            
+
         for data_item, data_list in axis_datapoints.items():
             axes[data_item].append(data_list)
     
