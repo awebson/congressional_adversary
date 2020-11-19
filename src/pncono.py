@@ -350,6 +350,10 @@ if experiment_name == "dense":
     np.random.shuffle(zero_idces)
     np.random.shuffle(one_idces)
     
+    if False: # Normalize number of labels
+        zero_idces = zero_idces[:base_label_cnt]
+        one_idces = one_idces[:base_label_cnt]
+    
     num_train_examples = int(train_ratio * base_label_cnt)
     num_test_examples = base_label_cnt - num_train_examples
     
@@ -442,13 +446,13 @@ if experiment_name == "dense":
             
                 # Transform training space into ultradense, needed for threshold calculation
                 ultra_dense_train_emb_space =  ud_model.apply_q(train_embedding)
-                output_ultradense = ultra_dense_train_emb_space[:,offset_choice:offset_choice + ud_size]
+                output_ultradense = ud_model.get_ultradense_1d_vector(ultra_dense_train_emb_space)
 
                 # Determine threshold value for simple connotation prediction
                 thresh, one_greater, one_values, zero_values = distro_thresh(output_ultradense, train_query_conos_np)
 
                 ultra_dense_test_emb_space = ud_model.apply_q(test_embedding)
-                output_ultradense_test = ultra_dense_test_emb_space[:,offset_choice]
+                output_ultradense_test = ud_model.get_ultradense_1d_vector(ultra_dense_test_emb_space)
                 ud_predictions = preds_from_vector(thresh, one_greater, output_ultradense_test)
                 ud_accuracy = sum(ud_predictions == test_query_conos_np) / len(test_query_conos_np)
                 ud_corr, pval = stats.spearmanr(test_query_conos_np, output_ultradense_test)
@@ -457,13 +461,13 @@ if experiment_name == "dense":
                         ("ud_acc", ud_accuracy),
                         ("ud_correlation", ud_corr)):
                     axis_datapoints[data_item].append(data_value)
-                
                 print("Epoch: {} Ud acc {:.3f}, Ud Corr: {:.3f}".format(e, ud_accuracy, ud_corr))                
 
             ultra_dense_filtered_emb_space = ud_model.apply_q(filtered_embeddings)
-            filtered_embeddings_2nd = np.delete(ultra_dense_filtered_emb_space, offset_choice, axis=-1)
-            train_embedding_2nd = np.delete(ultra_dense_train_emb_space, offset_choice, axis=-1)
-            test_embedding_2nd = np.delete(ultra_dense_test_emb_space, offset_choice, axis=-1)
+            delete_slice = np.s_[offset_choice:offset_choice+ud_size]
+            filtered_embeddings_2nd = np.delete(ultra_dense_filtered_emb_space, delete_slice, axis=-1)
+            train_embedding_2nd = np.delete(ultra_dense_train_emb_space, delete_slice, axis=-1)
+            test_embedding_2nd = np.delete(ultra_dense_test_emb_space, delete_slice, axis=-1)
 
             if show_hom_tsne:
                 print("Starting homogeneity for ultradense")
@@ -545,14 +549,15 @@ if experiment_name == "dense":
             print(msg)               
 
         if use_ultradense and print_cono_wordorder:
-            wordorder = np.argsort(ultra_dense_filtered_emb_space[:,offset_choice])
+            wordorder = np.argsort(ud_model.get_ultradense_1d_vector(ultra_dense_filtered_emb_space))
             
             top_ten_indices = wordorder[:10]
             bottom_ten_indices = wordorder[-10:]
             
             def print_wordlist_line(word_idx):
                 orig_word = original_words[word_idx]
-                coeff_value = ultra_dense_filtered_emb_space[word_idx,offset_choice]
+                # Use trained transform to get coefficient
+                coeff_value = ud_model.get_ultradense_1d_vector(ultra_dense_filtered_emb_space)[word_idx]
                 label = calculate_cono(ground, orig_word)
                 base_string = "{:20.20s} val:{:+5.3f} lab:{}".format(orig_word, coeff_value, label)
                 

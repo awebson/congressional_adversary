@@ -17,16 +17,24 @@ class UltraDense(nn.Module):
         """
         super().__init__()
 
+        self.offset = tgt_comp
+        self.dc = ud_size
         self.d = embedding_size
-        self.Pc = np.zeros(embedding_size)
-        self.Pc[tgt_comp:tgt_comp + ud_size] = 1
-        self.Pc = torch.tensor(self.Pc, dtype=DTYPE)
+        Pc_before = np.zeros((self.dc, tgt_comp))
+        Pc_base = np.identity(self.dc)
+        Pc_after = np.zeros((self.dc, embedding_size - ud_size - tgt_comp))
+        Pc_composite = np.concatenate((Pc_before, Pc_base, Pc_after), axis=1)
+        self.Pc = torch.tensor(Pc_composite, dtype=DTYPE)
 
         # This should remain orthogonal
         self.Q = nn.Parameter(torch.randn((embedding_size, embedding_size), dtype=DTYPE) * 0.01)
 
     def apply_q(self, embeddings):
         return torch.matmul(torch.tensor(embeddings, dtype=DTYPE), self.Q).detach().numpy()
+    
+    def get_ultradense_1d_vector(self, embeddings):
+        ultradense_columns = embeddings[:,self.offset:self.offset + self.dc]
+        return ultradense_columns.reshape(-1)
 
     def forward(self, embeddings, labels):
 
