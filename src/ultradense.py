@@ -9,7 +9,7 @@ from scipy import stats
 DTYPE = torch.float32
 
 class UltraDense(nn.Module):
-    def __init__(self, embedding_size, tgt_comp):
+    def __init__(self, embedding_size, tgt_comp, ud_size):
         """
 
         :param embedding_size: Integer, the dimension of embedding space
@@ -19,7 +19,7 @@ class UltraDense(nn.Module):
 
         self.d = embedding_size
         self.Pc = np.zeros(embedding_size)
-        self.Pc[tgt_comp] = 1
+        self.Pc[tgt_comp:tgt_comp + ud_size] = 1
         self.Pc = torch.tensor(self.Pc, dtype=DTYPE)
 
         # This should remain orthogonal

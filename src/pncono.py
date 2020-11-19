@@ -20,10 +20,11 @@ experiment_name = "dense" # One of: cono, pos, sort, pairs, dense
 use_avg_prec = False
 binarize_embeddings = False # Implies !transform_embeddings
 transform_embeddings = False
+randomize_embeddings = False
 use_pca = False # Otherwise, ICA. Only applies if transform_embeddings is True.
-pn_corpus = False # Partisan News if True otherwise, Congressional Record
+pn_corpus = True # Partisan News if True otherwise, Congressional Record
 new_cr_corpus = True # Only applies if pn_corpus is false
-use_saved_wordinfo = False
+use_saved_wordinfo = True
 
 
 albert_pick_file = "../albert_wordlist.pickle"
@@ -265,13 +266,18 @@ print("Number of query denos", len(deno_topic_table))
 if binarize_embeddings:
     filtered_embeddings = np.where(filtered_embeddings>0, 1, 0)
 elif transform_embeddings:
-    if use_pca:
-        ca = PCA()
+    if randomize_embeddings:
+        random.shuffle(query_conos)
+        emb_shape = filtered_embeddings.shape
+        filtered_embeddings = np.random.randn(*emb_shape)
     else:
-        ca = FastICA()
-    ca.fit(filtered_embeddings)
+        if use_pca:
+            ca = PCA()
+        else:
+            ca = FastICA()
+        ca.fit(filtered_embeddings)
     
-    filtered_embeddings = ca.transform(filtered_embeddings)
+        filtered_embeddings = ca.transform(filtered_embeddings)
 
 
 def homogeneity_calc(embeddings, labels):
@@ -305,13 +311,14 @@ def show_tsne(embeddings, labels, indices):
 if experiment_name == "dense":
     
     use_ultradense = True
-    show_hom_tsne = True
+    show_hom_tsne = False
     
     lr_choices = [0.05,0.005,0.0005]
     lr_choices = [0.005]
     batch_size = 200
-    num_epochs = 50
+    num_epochs = 10
     offset_choice = 0
+    ud_size = 1
     train_ratio = 0.9
     embedding_clipping = None # Set to e.g. 10000
     print_cono_wordorder = True
@@ -322,7 +329,7 @@ if experiment_name == "dense":
     
     embedding_length = filtered_embeddings.shape[1]
     
-    classifier_input_size = (embedding_length - 1) if use_ultradense else embedding_length
+    classifier_input_size = (embedding_length - ud_size) if use_ultradense else embedding_length
     
     num_labels = len(query_conos)
     num_1_labels = sum(query_conos)
@@ -386,10 +393,10 @@ if experiment_name == "dense":
     if use_ultradense and show_hom_tsne:
         print("Starting homogeneity")
         homogeneity = homogeneity_calc(filtered_embeddings, query_conos)
+        print("Homogeneity was", homogeneity)
         print("Starting tSNE")
         indices = [i for i in range(0,len(filtered_embeddings),10)]
         show_tsne(filtered_embeddings, query_conos, indices)
-        print("Homogeneity was", homogeneity)
 
     for learning_rate in lr_choices:
     
@@ -406,7 +413,7 @@ if experiment_name == "dense":
             
         if use_ultradense:
 
-            ud_model = UltraDense(embedding_length, offset_choice)
+            ud_model = UltraDense(embedding_length, offset_choice, ud_size)
             ud_optimizer = torch.optim.SGD(ud_model.parameters(), lr=learning_rate)
             #optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
             ud_scheduler = torch.optim.lr_scheduler.StepLR(ud_optimizer, step_size=1, gamma=0.95)
@@ -435,7 +442,7 @@ if experiment_name == "dense":
             
                 # Transform training space into ultradense, needed for threshold calculation
                 ultra_dense_train_emb_space =  ud_model.apply_q(train_embedding)
-                output_ultradense = ultra_dense_train_emb_space[:,offset_choice]
+                output_ultradense = ultra_dense_train_emb_space[:,offset_choice:offset_choice + ud_size]
 
                 # Determine threshold value for simple connotation prediction
                 thresh, one_greater, one_values, zero_values = distro_thresh(output_ultradense, train_query_conos_np)
@@ -538,25 +545,40 @@ if experiment_name == "dense":
             print(msg)               
 
         if use_ultradense and print_cono_wordorder:
-            wordorder = np.argsort(filtered_embeddings_2nd[:,offset_choice])
+            wordorder = np.argsort(ultra_dense_filtered_emb_space[:,offset_choice])
             
             top_ten_indices = wordorder[:10]
             bottom_ten_indices = wordorder[-10:]
             
-            print("\nTop ten ultradense words:\n")
-            for word_idx in top_ten_indices:
+            def print_wordlist_line(word_idx):
                 orig_word = original_words[word_idx]
-                print("orig", orig_word, 
-                      "ground", ground[orig_word] if pn_corpus else 0,
-                      "val", filtered_embeddings_2nd[word_idx,offset_choice],
-                      "cono", calculate_cono(ground, orig_word))
-            print("\nBottom ten ultradense words:\n")
-            for word_idx in bottom_ten_indices:
-                orig_word = original_words[word_idx]
-                print("orig", orig_word, 
-                      "ground", ground[orig_word] if pn_corpus else 0,
-                      "val", filtered_embeddings_2nd[word_idx,offset_choice],
-                      "cono", calculate_cono(ground, orig_word))
+                coeff_value = ultra_dense_filtered_emb_space[word_idx,offset_choice]
+                label = calculate_cono(ground, orig_word)
+                base_string = "{:20.20s} val:{:+5.3f} lab:{}".format(orig_word, coeff_value, label)
+                
+                if pn_corpus:
+                    leaning_string = " l:{:4d} lc:{:4d} m:{:4d} rc:{:4d} r:{:4d}".format(
+                        ground[orig_word].cono.get('left', 0),
+                        ground[orig_word].cono.get('left-center', 0),
+                        ground[orig_word].cono.get('least', 0),
+                        ground[orig_word].cono.get('right-center', 0),
+                        ground[orig_word].cono.get('right', 0)
+                    )
+                    base_string += leaning_string
+                
+                print(base_string)
+                
+            if False: # Top ten
+                print("\nTop ten ultradense words:\n")
+                for word_idx in top_ten_indices:
+                    print_wordlist_line(word_idx)
+                print("\nBottom ten ultradense words:\n")
+                for word_idx in bottom_ten_indices:
+                    print_wordlist_line(word_idx)
+            else: # Entire list
+                for word_idx in wordorder:
+                    print_wordlist_line(word_idx)
+                
 
         for data_item, data_list in axis_datapoints.items():
             axes[data_item].append(data_list)
