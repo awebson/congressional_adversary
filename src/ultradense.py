@@ -29,12 +29,18 @@ class UltraDense(nn.Module):
         # This should remain orthogonal
         self.Q = nn.Parameter(torch.randn((embedding_size, embedding_size), dtype=DTYPE) * 0.01)
 
+        if self.dc > 1:
+            self.classify = nn.Parameter(torch.randn((ud_size, 1), dtype=DTYPE) * 0.01)
+
     def apply_q(self, embeddings):
         return torch.matmul(torch.tensor(embeddings, dtype=DTYPE), self.Q).detach().numpy()
     
     def get_ultradense_1d_vector(self, embeddings):
         ultradense_columns = embeddings[:,self.offset:self.offset + self.dc]
-        return ultradense_columns.reshape(-1)
+        if self.dc > 1:
+            return ultradense_columns.dot(self.classify.detach().numpy()).reshape(-1)
+        else:
+            return ultradense_columns.reshape(-1)
 
     def forward(self, embeddings, labels):
 
@@ -67,6 +73,8 @@ class UltraDense(nn.Module):
         
         Lcts_linear = torch.matmul(Lcts_batch_diff, self.Q)
         Lcts_result = torch.matmul(Lcts_linear, self.Pc.T)
+        if self.dc > 1:
+            Lcts_result = torch.matmul(Lcts_result, self.classify)
             
         # Lct
         u_idces_a = u_idces[:num_zeroes//2]
@@ -89,6 +97,8 @@ class UltraDense(nn.Module):
         
         Lct_linear = torch.matmul(Lct_batch_diff, self.Q)
         Lct_result = torch.matmul(Lct_linear, self.Pc.T)
+        if self.dc > 1:
+            Lct_result = torch.matmul(Lct_result, self.classify)
         
         return Lcts_result, Lct_result
 

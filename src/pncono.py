@@ -318,7 +318,7 @@ if experiment_name == "dense":
     batch_size = 200
     num_epochs = 10
     offset_choice = 0
-    ud_size = 1
+    ud_size = 10
     train_ratio = 0.9
     embedding_clipping = None # Set to e.g. 10000
     print_cono_wordorder = True
