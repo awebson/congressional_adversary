@@ -313,15 +313,16 @@ if experiment_name == "dense":
     use_ultradense = True
     show_hom_tsne = False
     
-    lr_choices = [0.05,0.005,0.0005]
-    lr_choices = [0.005]
+    #lr_choices = [0.05,0.005,0.0005]
+    lr_choices = [0.0005]
     batch_size = 200
-    num_epochs = 10
+    num_epochs = 20
     offset_choice = 0
-    ud_size = 10
+    ud_size = 1
     train_ratio = 0.9
     embedding_clipping = None # Set to e.g. 10000
     print_cono_wordorder = True
+    print_cono_top10 = False # Limit to top/bottom 10, meaningful if print_cono_wordorder
 
     if embedding_clipping:
         filtered_embeddings = filtered_embeddings[:embedding_clipping]
@@ -364,10 +365,13 @@ if experiment_name == "dense":
     train_set_zeroes = zero_idces[num_test_examples:]
     train_set_ones = one_idces[num_test_examples:]
     
-    train_embedding = filtered_embeddings[np.concatenate((train_set_zeroes,train_set_ones))]
-    test_embedding = filtered_embeddings[np.concatenate((holdout_set_zeroes,holdout_set_ones))]
-    train_query_conos_np = query_conos_np[np.concatenate((train_set_zeroes,train_set_ones))]
-    test_query_conos_np = query_conos_np[np.concatenate((holdout_set_zeroes,holdout_set_ones))]
+    train_indices = np.concatenate((train_set_zeroes,train_set_ones))
+    test_indices = np.concatenate((holdout_set_zeroes,holdout_set_ones))
+    
+    train_embedding = filtered_embeddings[train_indices]
+    test_embedding = filtered_embeddings[test_indices]
+    train_query_conos_np = query_conos_np[train_indices]
+    test_query_conos_np = query_conos_np[test_indices]
 
     if not pn_corpus:
         train_query_denos_np = query_denos_np[np.concatenate((train_set_zeroes,train_set_ones))] 
@@ -419,7 +423,7 @@ if experiment_name == "dense":
 
             ud_model = UltraDense(embedding_length, offset_choice, ud_size)
             ud_optimizer = torch.optim.SGD(ud_model.parameters(), lr=learning_rate)
-            #optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+            #ud_optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
             ud_scheduler = torch.optim.lr_scheduler.StepLR(ud_optimizer, step_size=1, gamma=0.95)
 
             for e in range(num_epochs):
@@ -485,6 +489,7 @@ if experiment_name == "dense":
             test_embedding_2nd = test_embedding
             filtered_embeddings_2nd = filtered_embeddings
                     
+        print("Starting classifier filtered embedding shape", filtered_embeddings_2nd.shape) 
         for e in range(num_epochs):
         
             zero_epoch_idx = np.random.choice(train_set_zeroes, batches_per_epoch * batch_size, False)
@@ -551,6 +556,8 @@ if experiment_name == "dense":
         if use_ultradense and print_cono_wordorder:
             wordorder = np.argsort(ud_model.get_ultradense_1d_vector(ultra_dense_filtered_emb_space))
             
+            test_index_wordorder = np.array(list(filter(lambda y: y in tgt, wordorder)))
+            
             top_ten_indices = wordorder[:10]
             bottom_ten_indices = wordorder[-10:]
             
@@ -573,7 +580,7 @@ if experiment_name == "dense":
                 
                 print(base_string)
                 
-            if False: # Top ten
+            if print_cono_top10: # Top ten
                 print("\nTop ten ultradense words:\n")
                 for word_idx in top_ten_indices:
                     print_wordlist_line(word_idx)
