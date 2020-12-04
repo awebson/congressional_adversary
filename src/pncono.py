@@ -22,10 +22,9 @@ binarize_embeddings = False # Implies !transform_embeddings
 transform_embeddings = False
 randomize_embeddings = False
 use_pca = False # Otherwise, ICA. Only applies if transform_embeddings is True.
-pn_corpus = True # Partisan News if True otherwise, Congressional Record
+pn_corpus = False # Partisan News if True otherwise, Congressional Record
 new_cr_corpus = True # Only applies if pn_corpus is false
-use_saved_wordinfo = True
-
+use_saved_wordinfo = False
 
 albert_pick_file = "../albert_wordlist.pickle"
 
@@ -88,7 +87,7 @@ else:
 deno_topic_table = {}
 
 if pn_corpus:
-    def calculate_cono(grounding, word):
+    def calculate_cono_raw(grounding, word):
         """Find the connotation score between 0.0 and 4.0 for this word
     
         Used for Partisan News corpus.
@@ -117,26 +116,31 @@ if pn_corpus:
         return total_score / total_freq
         
     if experiment_name == "dense":
-        full_calc = calculate_cono
         def calculate_cono(grounding, word):
-            score_val = full_calc(grounding, word)
+            score_val = calculate_cono_raw(grounding, word)
             if score_val > 2.0:
                 return 1
             else:
                 return 0
+    else:
+        calculate_cono = calculate_cono_raw
             
 else:
     if new_cr_corpus:
-        def calculate_cono(grounding, word):
+        def calculate_cono_raw(grounding, word):
             if grounding[word].majority_cono == 'D':
                 return 1
             elif grounding[word].majority_cono == 'R':
                 return 0
             else:
                 assert False
-    else:    
+        calculate_cono = calculate_cono_raw
+    else:
+        def calculate_cono_raw(grounding, word):
+            return grounding[word]['R_ratio']
+    
         def calculate_cono(grounding, word):
-            skew = grounding[word]['R_ratio']
+            skew = calculate_cono_raw(grounding, word)
             if skew < 0.5:
                 return 0
             else:
@@ -189,7 +193,8 @@ if experiment_name == "pos":
     pos_one_hot = [[] for i in global_pos_list_l]
 
 
-query_conos = []
+query_conos = [] # 0 or 1 label
+query_conos_raw = [] # sliding value
 query_denos = []
 original_words = []
 filtered_embeddings = []
@@ -218,6 +223,9 @@ if True: # Filter embeddings
 
             query_cono = calculate_cono(ground, query_word)
             query_conos.append(query_cono)
+            
+            query_cono_raw = calculate_cono_raw(ground, query_word)
+            query_conos_raw.append(query_cono_raw)
             
             if not pn_corpus:
                 query_deno = calculate_deno(ground, query_word)
@@ -285,15 +293,20 @@ def homogeneity_calc(embeddings, labels):
     distances, indices = nbrs.kneighbors(embeddings)
     total_equal = 0
     total_vals = 0
+    single_word_pct_list = []
     for word_offs, index_list in enumerate(indices):
         label_list = []
         for nbr_idx in index_list:
             if nbr_idx != word_offs:
                 label_list.append(labels[nbr_idx])
-        total_equal += len(list(filter(lambda x:x==labels[word_offs], label_list)))
-        total_vals += len(label_list)
-    homogeneity = total_equal / total_vals
-    return homogeneity
+        this_word_equal_cnt = len(list(filter(lambda x:x==labels[word_offs], label_list)))
+        this_word_cnt = len(label_list)
+        total_equal += this_word_equal_cnt
+        total_vals += this_word_cnt
+        this_word_pct = this_word_equal_cnt / this_word_cnt
+        single_word_pct_list.append(this_word_pct)
+    avg_homogeneity = total_equal / total_vals
+    return avg_homogeneity, single_word_pct_list
 
 def show_tsne(embeddings, labels, indices):
     """Show the TSNE projection of some embedding space, colored by labels"""
@@ -310,23 +323,29 @@ def show_tsne(embeddings, labels, indices):
 
 if experiment_name == "dense":
     
-    use_ultradense = True
+    use_ultradense = True # Use both Ultradense and classifier, otherwise class. only
     show_hom_tsne = False
+    print_cono_wordorder = True
+    print_cono_top10 = True # Limit to top/bottom 10, meaningful if print_cono_wordorder
+    use_test_wordorder = False # Limit to test set, meaningful if print_cono_wordorder
+    use_mse_loss = False # Otherwise, use UD loss
+    use_sgd = True # Otherwise, Adam
     
-    #lr_choices = [0.05,0.005,0.0005]
-    lr_choices = [0.0005]
+    lr_choices = [0.05,0.005,0.0005]
+    #lr_choices = [0.005]
     batch_size = 200
     num_epochs = 20
     offset_choice = 0
     ud_size = 1
     train_ratio = 0.9
     embedding_clipping = None # Set to e.g. 10000
-    print_cono_wordorder = True
-    print_cono_top10 = False # Limit to top/bottom 10, meaningful if print_cono_wordorder
 
     if embedding_clipping:
         filtered_embeddings = filtered_embeddings[:embedding_clipping]
         query_conos = query_conos[:embedding_clipping]
+    
+    if use_mse_loss:
+        ud_size = max(ud_size, 2) # Need classifier in loop
     
     embedding_length = filtered_embeddings.shape[1]
     
@@ -340,6 +359,7 @@ if experiment_name == "dense":
     
     base_label_cnt = min(num_1_labels, num_0_labels)
     
+    query_conos_raw_np = np.array(query_conos_raw)
     query_conos_np = np.array(query_conos)
     if not pn_corpus:
         query_denos_np = np.array(query_denos)
@@ -400,11 +420,12 @@ if experiment_name == "dense":
     
     if use_ultradense and show_hom_tsne:
         print("Starting homogeneity")
-        homogeneity = homogeneity_calc(filtered_embeddings, query_conos)
+        homogeneity, single_word_homogeneity_before = homogeneity_calc(filtered_embeddings, query_conos)
         print("Homogeneity was", homogeneity)
-        print("Starting tSNE")
-        indices = [i for i in range(0,len(filtered_embeddings),10)]
-        show_tsne(filtered_embeddings, query_conos, indices)
+        if False: # Show tSNE as well
+            print("Starting tSNE")
+            indices = [i for i in range(0,len(filtered_embeddings),10)]
+            show_tsne(filtered_embeddings, query_conos, indices)
 
     for learning_rate in lr_choices:
     
@@ -421,10 +442,13 @@ if experiment_name == "dense":
             
         if use_ultradense:
 
-            ud_model = UltraDense(embedding_length, offset_choice, ud_size)
-            ud_optimizer = torch.optim.SGD(ud_model.parameters(), lr=learning_rate)
-            #ud_optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-            ud_scheduler = torch.optim.lr_scheduler.StepLR(ud_optimizer, step_size=1, gamma=0.95)
+            ud_model = UltraDense(embedding_length, offset_choice, ud_size, mse_loss=use_mse_loss)
+            if use_sgd:
+                ud_optimizer = torch.optim.SGD(ud_model.parameters(), lr=learning_rate)
+                ud_scheduler = torch.optim.lr_scheduler.StepLR(ud_optimizer, step_size=1, gamma=0.95)
+            else:
+                ud_optimizer = torch.optim.Adam(ud_model.parameters(), lr=learning_rate)
+            
 
             for e in range(num_epochs):
                 # Copied from below
@@ -440,13 +464,20 @@ if experiment_name == "dense":
                         ))
                         
                     ud_optimizer.zero_grad()
-                    Lcts_result, Lct_result = ud_model(filtered_embeddings[batch_idx], query_conos_np[batch_idx])
-                    ud_loss = ud_model.loss_func(Lcts_result, Lct_result)
+                    
+                    if use_mse_loss:
+                        labels = query_conos_raw_np[batch_idx]
+                    else:
+                        labels = query_conos_np[batch_idx]
+                    
+                    model_result = ud_model(filtered_embeddings[batch_idx], labels)
+                    ud_loss = ud_model.loss_func(model_result, labels)
                     ud_loss.backward()
                     ud_optimizer.step()
                     ud_model.orthogonalize()
 
-                ud_scheduler.step()
+                if use_sgd:
+                    ud_scheduler.step()
             
                 # Transform training space into ultradense, needed for threshold calculation
                 ultra_dense_train_emb_space =  ud_model.apply_q(train_embedding)
@@ -465,7 +496,8 @@ if experiment_name == "dense":
                         ("ud_acc", ud_accuracy),
                         ("ud_correlation", ud_corr)):
                     axis_datapoints[data_item].append(data_value)
-                print("Epoch: {} Ud acc {:.3f}, Ud Corr: {:.3f}".format(e, ud_accuracy, ud_corr))                
+                print("Epoch: {} Ud acc {:.3f}, Ud Corr: {:.3f} Final Loss: {:.3f} Thresh: {:.3f}".format(
+                    e, ud_accuracy, ud_corr, ud_loss, thresh))                
 
             ultra_dense_filtered_emb_space = ud_model.apply_q(filtered_embeddings)
             delete_slice = np.s_[offset_choice:offset_choice+ud_size]
@@ -475,12 +507,12 @@ if experiment_name == "dense":
 
             if show_hom_tsne:
                 print("Starting homogeneity for ultradense")
-                homogeneity = homogeneity_calc(filtered_embeddings_2nd, query_conos)
+                homogeneity, single_word_homogeneity_after = homogeneity_calc(filtered_embeddings_2nd, query_conos)
                 print("Homogeneity for ultradense was", homogeneity)
-                print("Starting tSNE")
-                indices = [i for i in range(0,len(filtered_embeddings),10)]
-                show_tsne(filtered_embeddings_2nd, query_conos, indices)
-                print("Homogeneity was", homogeneity)
+                if False:
+                    print("Starting tSNE")
+                    indices = [i for i in range(0,len(filtered_embeddings),10)]
+                    show_tsne(filtered_embeddings_2nd, query_conos, indices)
             
 
         else:
@@ -555,21 +587,26 @@ if experiment_name == "dense":
 
         if use_ultradense and print_cono_wordorder:
             wordorder = np.argsort(ud_model.get_ultradense_1d_vector(ultra_dense_filtered_emb_space))
-            
-            test_index_wordorder = np.array(list(filter(lambda y: y in tgt, wordorder)))
+            if use_test_wordorder:
+                test_index_wordorder = np.array(list(filter(lambda y: y in test_indices, wordorder)))
+                wordorder = test_index_wordorder
             
             top_ten_indices = wordorder[:10]
             bottom_ten_indices = wordorder[-10:]
             
+            ud_1d_vector = ud_model.get_ultradense_1d_vector(ultra_dense_filtered_emb_space)
+            
             def print_wordlist_line(word_idx):
                 orig_word = original_words[word_idx]
                 # Use trained transform to get coefficient
-                coeff_value = ud_model.get_ultradense_1d_vector(ultra_dense_filtered_emb_space)[word_idx]
+                coeff_value = ud_1d_vector[word_idx]
                 label = calculate_cono(ground, orig_word)
+                raw_label = calculate_cono_raw(ground, orig_word)
                 base_string = "{:20.20s} val:{:+5.3f} lab:{}".format(orig_word, coeff_value, label)
                 
                 if pn_corpus:
-                    leaning_string = " l:{:4d} lc:{:4d} m:{:4d} rc:{:4d} r:{:4d}".format(
+                    leaning_string = " raw:{:+5.3f} l:{:4d} lc:{:4d} m:{:4d} rc:{:4d} r:{:4d}".format(
+                        raw_label,
                         ground[orig_word].cono.get('left', 0),
                         ground[orig_word].cono.get('left-center', 0),
                         ground[orig_word].cono.get('least', 0),
@@ -577,6 +614,13 @@ if experiment_name == "dense":
                         ground[orig_word].cono.get('right', 0)
                     )
                     base_string += leaning_string
+                
+                if show_hom_tsne:
+                    homogeneity_pct_before =  single_word_homogeneity_before[word_idx] * 100
+                    homogeneity_pct_after = single_word_homogeneity_after[word_idx] * 100
+                    pct_string = " hbef:{:3.1f} haft:{:3.1f}".format(homogeneity_pct_before, homogeneity_pct_after)
+                    base_string += pct_string
+                    
                 
                 print(base_string)
                 

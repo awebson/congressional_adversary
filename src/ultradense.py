@@ -9,7 +9,7 @@ from scipy import stats
 DTYPE = torch.float32
 
 class UltraDense(nn.Module):
-    def __init__(self, embedding_size, tgt_comp, ud_size):
+    def __init__(self, embedding_size, tgt_comp, ud_size, mse_loss=False):
         """
 
         :param embedding_size: Integer, the dimension of embedding space
@@ -20,6 +20,9 @@ class UltraDense(nn.Module):
         self.offset = tgt_comp
         self.dc = ud_size
         self.d = embedding_size
+        self.mse_loss = mse_loss
+        if mse_loss:
+            self.mse_loss_func = loss = nn.MSELoss()
         Pc_before = np.zeros((self.dc, tgt_comp))
         Pc_base = np.identity(self.dc)
         Pc_after = np.zeros((self.dc, embedding_size - ud_size - tgt_comp))
@@ -30,15 +33,16 @@ class UltraDense(nn.Module):
         self.Q = nn.Parameter(torch.randn((embedding_size, embedding_size), dtype=DTYPE) * 0.01)
 
         if self.dc > 1:
-            self.classify = nn.Parameter(torch.randn((ud_size, 1), dtype=DTYPE) * 0.01)
+            self.classify = nn.Linear(ud_size, 1)
 
     def apply_q(self, embeddings):
         return torch.matmul(torch.tensor(embeddings, dtype=DTYPE), self.Q).detach().numpy()
     
+    @torch.no_grad()
     def get_ultradense_1d_vector(self, embeddings):
         ultradense_columns = embeddings[:,self.offset:self.offset + self.dc]
         if self.dc > 1:
-            return ultradense_columns.dot(self.classify.detach().numpy()).reshape(-1)
+            return self.classify(torch.tensor(ultradense_columns)).numpy().reshape(-1)
         else:
             return ultradense_columns.reshape(-1)
 
@@ -53,57 +57,68 @@ class UltraDense(nn.Module):
         :return: Lcts result (batch_size / 2, 1), Lct result (batch_size / 2, 1)
         """
         
-        # Establishing the sets Lc~ and Lc~/
-        num_ones = sum(labels)
-        num_zeroes = len(labels) - num_ones
+        if self.mse_loss:
+            transformed = torch.matmul(torch.tensor(embeddings, dtype=DTYPE), self.Q)
+            constrained = torch.matmul(transformed, self.Pc.T)
+            classified = self.classify(constrained)
+            return classified
+        else:
         
-        assert num_zeroes == num_ones
-        assert num_zeroes % 2 == 0 # Is even
+            # Establishing the sets Lc~ and Lc~/
+            num_ones = sum(labels)
+            num_zeroes = len(labels) - num_ones
         
-        sort_lbl_idx = labels.argsort()
+            assert num_zeroes == num_ones
+            assert num_zeroes % 2 == 0 # Is even
         
-        # Lcts
-        u_idces = sort_lbl_idx[:num_zeroes] # 0-indices
-        v_idces = sort_lbl_idx[num_zeroes:] # 1-indicies
+            sort_lbl_idx = labels.argsort()
         
-        u_batch_lcts = embeddings[u_idces]
-        v_batch_lcts = embeddings[v_idces]
-        Lcts_batch_diff = u_batch_lcts - v_batch_lcts
-        Lcts_batch_diff = torch.tensor(Lcts_batch_diff, dtype=DTYPE)
+            # Lcts
+            u_idces = sort_lbl_idx[:num_zeroes] # 0-indices
+            v_idces = sort_lbl_idx[num_zeroes:] # 1-indicies
         
-        Lcts_linear = torch.matmul(Lcts_batch_diff, self.Q)
-        Lcts_result = torch.matmul(Lcts_linear, self.Pc.T)
-        if self.dc > 1:
-            Lcts_result = torch.matmul(Lcts_result, self.classify)
+            u_batch_lcts = embeddings[u_idces]
+            v_batch_lcts = embeddings[v_idces]
+            Lcts_batch_diff = u_batch_lcts - v_batch_lcts
+            Lcts_batch_diff = torch.tensor(Lcts_batch_diff, dtype=DTYPE)
+        
+            Lcts_linear = torch.matmul(Lcts_batch_diff, self.Q)
+            Lcts_result = torch.matmul(Lcts_linear, self.Pc.T)
+            if self.dc > 1:
+                Lcts_result = self.classify(Lcts_result)
             
-        # Lct
-        u_idces_a = u_idces[:num_zeroes//2]
-        u_idces_b = u_idces[num_zeroes//2:]
-        v_idces_a = v_idces[:num_ones//2]
-        v_idces_b = v_idces[num_ones//2:]
+            # Lct
+            u_idces_a = u_idces[:num_zeroes//2]
+            u_idces_b = u_idces[num_zeroes//2:]
+            v_idces_a = v_idces[:num_ones//2]
+            v_idces_b = v_idces[num_ones//2:]
         
-        u_batch_a_lct = embeddings[u_idces_a]
-        u_batch_b_lct = embeddings[u_idces_b]
-        v_batch_a_lct = embeddings[v_idces_a]
-        v_batch_b_lct = embeddings[v_idces_b]
+            u_batch_a_lct = embeddings[u_idces_a]
+            u_batch_b_lct = embeddings[u_idces_b]
+            v_batch_a_lct = embeddings[v_idces_a]
+            v_batch_b_lct = embeddings[v_idces_b]
         
-        Lct_u_diff = u_batch_a_lct - u_batch_b_lct
-        Lct_v_diff = v_batch_a_lct - v_batch_b_lct
-        Lct_u_diff = torch.tensor(Lct_u_diff, dtype=DTYPE)
-        Lct_v_diff = torch.tensor(Lct_v_diff, dtype=DTYPE)
+            Lct_u_diff = u_batch_a_lct - u_batch_b_lct
+            Lct_v_diff = v_batch_a_lct - v_batch_b_lct
+            Lct_u_diff = torch.tensor(Lct_u_diff, dtype=DTYPE)
+            Lct_v_diff = torch.tensor(Lct_v_diff, dtype=DTYPE)
         
-        Lct_batch_diff = torch.cat((Lct_u_diff, Lct_v_diff))
+            Lct_batch_diff = torch.cat((Lct_u_diff, Lct_v_diff))
 
         
-        Lct_linear = torch.matmul(Lct_batch_diff, self.Q)
-        Lct_result = torch.matmul(Lct_linear, self.Pc.T)
-        if self.dc > 1:
-            Lct_result = torch.matmul(Lct_result, self.classify)
+            Lct_linear = torch.matmul(Lct_batch_diff, self.Q)
+            Lct_result = torch.matmul(Lct_linear, self.Pc.T)
+            if self.dc > 1:
+                Lct_result = self.classify(Lct_result)
         
-        return Lcts_result, Lct_result
+            return Lcts_result, Lct_result
 
-    def loss_func(self, Lcts_result, Lct_result):
-        return torch.sum(torch.abs(Lct_result)) - torch.sum(torch.abs(Lcts_result))
+    def loss_func(self, model_pred, label):
+        if self.mse_loss:
+            return self.mse_loss_func(torch.squeeze(model_pred), torch.tensor(label, dtype=DTYPE))
+        else:
+            Lcts_result, Lct_result = model_pred
+            return torch.sum(torch.abs(Lct_result)) - torch.sum(torch.abs(Lcts_result))
 
     def orthogonalize(self):
         u, s, vh = np.linalg.svd(self.Q.detach().numpy())
